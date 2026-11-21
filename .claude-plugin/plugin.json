@@ -1,0 +1,33 @@
+{
+  "name": "factory-panel",
+  "version": "0.1.0",
+  "description": "Panes beside the chat for running an Agent IX factory: machines, named focuses, ix-relay escalations and announcements, and team health.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "prometheusUrl": {
+      "type": "string",
+      "description": "Prometheus the panes query (no token needed)",
+      "default": "http://localhost:9090",
+      "title": "Prometheus URL"
+    },
+    "grafanaUrl": {
+      "type": "string",
+      "description": "Grafana, for the panes' dashboard links",
+      "default": "http://localhost:3000",
+      "title": "Grafana URL"
+    },
+    "teams": {
+      "type": "string",
+      "description": "Comma-separated herdr workspace labels ix-board agents should report on",
+      "default": "",
+      "title": "ix-board teams"
+    },
+    "refreshSeconds": {
+      "type": "number",
+      "description": "How often Prometheus and herdr are polled",
+      "default": 15,
+      "title": "Refresh interval (seconds)"
+    }
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "agent-ix-factory-panel",
+  "description": "Agent IX factory panel mod",
+  "owner": {
+    "name": "Agent IX"
+  },
+  "plugins": [
+    {
+      "name": "factory-panel",
+      "source": "./",
+      "description": "Live factory pane: machines, herdr, ix-relay and ix-board beside the chat.",
+      "version": "0.1.0"
+    }
+  ]
+}
