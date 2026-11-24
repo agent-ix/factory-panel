@@ -2,7 +2,10 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { FocusMeta, FocusProject, FocusView } from '../types'
-import { CARD_BG, INK, ago, errorText, progressBar, runJson, runText } from './shared'
+import { widgets } from './ui/widgets'
+import { ACCENT } from './ui/glyphs'
+import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
+import { gatedBoard } from './linear'
 import type { Options } from './shared'
 
 // The Focus pane: one card per named focus. A focus belongs to a coordinator agent: its
@@ -12,10 +15,11 @@ import type { Options } from './shared'
 
 const PANE = 'focus'
 const TITLE = 'Focus'
+export const PANE_SPEC = { id: PANE, title: TITLE }
 const POLL_MS = 2 * 60 * 1000
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
-  shape: 'focuses-1',
+  shape: 'focuses-2',
 })
 const focusMeta = atom(
   { plugin: 'factory-panel', key: 'focusMeta' } as const,
@@ -28,7 +32,7 @@ const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as 
 // ---------------------------------------------------------------- data
 
 type WorkReport = {
-  binding?: { machine?: string; kind?: string; address?: string }
+  binding?: { machine?: string; kind?: string; model?: string; address?: string }
   scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number }
   focus?: { summary?: string; reported_at_ms?: number }
 }
@@ -66,11 +70,30 @@ const scopeArgs = (report: WorkReport): string[] => [
   ...(report.scope?.tickets ?? []).flatMap(id => ['--issue', id]),
 ]
 
-async function focusOf($: EngineInterface, lead: string, report: WorkReport): Promise<FocusView> {
+type FocusRead = { fetchedAt: number | null; ready: number; projects: FocusProject[] }
+
+async function readFocus($: EngineInterface, args: string[]): Promise<FocusRead> {
+  const status = await runJson<FocusStatus>($, ['ix-board', '--json', 'focus', 'status', ...args], 180_000)
+  return {
+    fetchedAt: typeof status.fetched_at === 'number' ? status.fetched_at * 1000 : null,
+    ready: status.ready_queue?.length ?? 0,
+    projects: (status.projects ?? []).map(
+      (p): FocusProject => ({
+        name: p.name,
+        done: p.progress?.done ?? 0,
+        total: p.progress?.total ?? 0,
+        inProgress: Math.max(0, Math.min(p.in_progress?.length ?? 0, (p.progress?.total ?? 0) - (p.progress?.done ?? 0))),
+      }),
+    ),
+  }
+}
+
+async function focusOf($: EngineInterface, lead: string, report: WorkReport, manual: boolean): Promise<FocusView> {
   const view: FocusView = {
     address: report.binding?.address ?? lead,
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
+    model: report.binding?.model ?? null,
     summary: report.focus?.summary ?? '',
     scope: {
       initiatives: report.scope?.initiatives?.length ?? 0,
@@ -85,25 +108,14 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport): Pr
   }
   const args = scopeArgs(report)
   if (args.length === 0) return view
-  try {
-    const status = await runJson<FocusStatus>($, ['ix-board', '--json', 'focus', 'status', ...args], 180_000)
-    view.fetchedAt = typeof status.fetched_at === 'number' ? status.fetched_at * 1000 : null
-    view.ready = status.ready_queue?.length ?? 0
-    view.projects = (status.projects ?? []).map(
-      (p): FocusProject => ({
-        name: p.name,
-        done: p.progress?.done ?? 0,
-        total: p.progress?.total ?? 0,
-        inProgress: p.in_progress?.length ?? 0,
-      }),
-    )
-  } catch (error) {
-    view.error = errorText(error)
-  }
+  const read = await gatedBoard($, `focus:${args.join(' ')}`, () => readFocus($, args), { manual })
+  if (read.data) Object.assign(view, read.data)
+  const now = await $.clock.now()
+  view.error = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
   return view
 }
 
-async function pollFocus($: EngineInterface): Promise<void> {
+async function pollFocus($: EngineInterface, manual = false): Promise<void> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     const leads = await listLeads($)
@@ -112,7 +124,7 @@ async function pollFocus($: EngineInterface): Promise<void> {
       (r): r is { lead: string; report: WorkReport } =>
         r.report !== null && (scopeArgs(r.report).length > 0 || Boolean(r.report.focus?.summary)),
     )
-    const views = await Promise.all(withFocus.map(r => focusOf($, r.lead, r.report)))
+    const views = await Promise.all(withFocus.map(r => focusOf($, r.lead, r.report, manual)))
     views.sort((a, b) => a.address.localeCompare(b.address))
     await update($, focuses, () => views)
     const now = await $.clock.now()
@@ -134,10 +146,9 @@ async function toggleShowDone($: EngineInterface): Promise<void> {
 
 // ---------------------------------------------------------------- pane
 
-/** Registers the command, opens the pane and starts polling; called once at session start. */
+/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startFocus($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'focuses', description: 'Open the Focus pane: named focuses and their progress' })
-  void $.ui.open({ id: PANE, title: TITLE })
   void pollFocus($)
   $.clock.every(POLL_MS, () => pollFocus($))
 }
@@ -151,8 +162,9 @@ export function registerFocus(on: On, _options: Options): void {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text, Button, Progress } = els
-    const Svg = 'Svg' in els ? els.Svg : null
+    const { Box, Text, Button } = els
+    const { segmentBar, progressRow, legend } = widgets(els)
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const [list, meta, collapsed, showDone] = await Promise.all([
       read($, focuses),
       read($, focusMeta),
@@ -162,11 +174,9 @@ export function registerFocus(on: On, _options: Options): void {
     const now = await $.clock.now()
     const width = Math.max(30, e.props.bodyColumns ?? 60)
 
-    const bar = (done: number, total: number, cells: number, key: string) =>
-      Svg ? (
-        <Svg source={progressBar(done, total, cells * 7)} alt={`${done} of ${total} done`} width={cells * 7} height={6} />
-      ) : (
-        <Progress key={key} label="" value={done} max={Math.max(1, total)} />
+    const bar = (done: number, inProgress: number, ready: number, total: number, cells: number) =>
+      Svg && (
+      <Svg source={progressBar(done, total, cells * 7, total > 0 && done >= total ? INK.good : INK.calm, inProgress, ready)} alt={`${done} of ${total} done`} width={cells * 7} height={6} />
       )
 
     if (e.props.placement === 'widget') {
@@ -185,13 +195,15 @@ export function registerFocus(on: On, _options: Options): void {
       const done = f.projects.reduce((s, p) => s + p.done, 0)
       const total = f.projects.reduce((s, p) => s + p.total, 0)
       const inProgress = f.projects.reduce((s, p) => s + p.inProgress, 0)
-      const left = total - done
       const isOpen = !collapsed.includes(f.address)
       const open = f.projects.filter(p => p.done < p.total).sort((a, b) => b.total - b.done - (a.total - a.done))
       const finished = f.projects.filter(p => p.total > 0 && p.done >= p.total)
       const rows = showDone ? [...open, ...finished] : open
       const nameCells = Math.min(38, Math.max(16, ...rows.map(p => p.name.length)))
-      const barCells = Math.max(6, Math.min(18, width - nameCells - 22))
+      const barCells = Math.max(6, Math.min(18, width - nameCells - 14))
+      // Terminal row width = name + bar + 10-column count + 2 gaps, inside the card's padding of 1 each side.
+      const termBarCells = Math.max(6, Math.min(16, Math.floor(width / 4)))
+      const termNameCells = Math.max(8, Math.min(30, width - 2 - termBarCells - 12))
 
       return (
         <Box key={f.address} flexDirection="column" padding={1} gap={1} backgroundColor={CARD_BG}>
@@ -203,7 +215,7 @@ export function registerFocus(on: On, _options: Options): void {
               onPress={() => void toggleCollapsed($, f.address)}
             />
             {total > 0 && (
-              <Text weight="semibold" size="heading" tabular>
+              <Text weight="semibold" size="heading" tabular color={Svg ? undefined : ACCENT}>
                 {Math.round((100 * done) / total)}%
               </Text>
             )}
@@ -217,21 +229,29 @@ export function registerFocus(on: On, _options: Options): void {
 
           {total > 0 && (
             <Box flexDirection="column">
-              {bar(done, total, Math.max(10, Math.min(48, width - 6)), `all-${f.address}`)}
+              {Svg
+                ? bar(done, inProgress, f.ready, total, Math.max(10, Math.min(48, width - 6)))
+                : segmentBar(`all-${f.address}`, done, inProgress, f.ready, total, Math.max(10, Math.min(48, width - 6)))}
               <Box flexDirection="row" gap={2}>
-                <Text size="caption" tabular>
-                  {done}/{total} done
-                </Text>
-                <Text dimColor size="caption" tabular>
-                  {left} left
-                </Text>
-                <Text dimColor size="caption" tabular>
-                  {inProgress} in progress
-                </Text>
-                <Text dimColor size="caption" tabular>
-                  {f.ready} ready
-                </Text>
+                {Svg ? (
+                  <Box flexDirection="row" gap={2}>
+                    <Text size="caption" tabular>
+                      {done} / {total} done
+                    </Text>
+                    <Text dimColor size="caption" tabular>
+                      {inProgress} in progress
+                    </Text>
+                    <Text dimColor size="caption" tabular>
+                      {f.ready} ready
+                    </Text>
+                  </Box>
+                ) : (
+                  <Text dimColor size="caption" tabular wrap="truncate-end">
+                    {done}/{total} done · {inProgress} in progress · {f.ready} ready
+                  </Text>
+                )}
               </Box>
+              {legend()}
             </Box>
           )}
 
@@ -243,26 +263,25 @@ export function registerFocus(on: On, _options: Options): void {
 
           {isOpen && rows.length > 0 && (
             <Box flexDirection="column">
-              {rows.map(p => (
-                <Box key={p.name} flexDirection="row" gap={1} alignItems="center">
-                  <Box width={nameCells}>
-                    <Text dimColor={p.done >= p.total} wrap="truncate-end">
-                      {p.name}
-                    </Text>
-                  </Box>
-                  {bar(p.done, p.total, barCells, `p-${f.address}-${p.name}`)}
-                  <Box width={8}>
-                    <Text dimColor size="caption" tabular>
-                      {p.done}/{p.total}
-                    </Text>
-                  </Box>
-                  {p.done < p.total && (
-                    <Text size="caption" tabular>
-                      {p.total - p.done} left
-                    </Text>
+              {Svg
+                ? rows.map(p => (
+                    <Box key={p.name} flexDirection="row" gap={1} alignItems="center">
+                      <Box width={nameCells}>
+                        <Text dimColor={p.done >= p.total} wrap="truncate-end">
+                          {p.name}
+                        </Text>
+                      </Box>
+                      {bar(p.done, p.inProgress, 0, p.total, barCells)}
+                      <Box width={10} justifyContent="flex-end">
+                        <Text dimColor size="caption" tabular>
+                          {p.done}/{p.total}
+                        </Text>
+                      </Box>
+                    </Box>
+                  ))
+                : rows.map(p =>
+                    progressRow(`p-${f.address}-${p.name}`, p.name, p.done, p.inProgress, 0, p.total, termNameCells, termBarCells, p.done >= p.total),
                   )}
-                </Box>
-              ))}
             </Box>
           )}
 
@@ -275,11 +294,19 @@ export function registerFocus(on: On, _options: Options): void {
             />
           )}
 
-          <Text dimColor size="caption">
-            {f.kind && `${f.kind} · `}
-            {f.fetchedAt !== null ? `Linear ${ago(f.fetchedAt, now)}` : 'no tracker data'}
-            {f.focusReportedAt !== null && ` · focus set ${ago(f.focusReportedAt, now)}`}
-          </Text>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text dimColor size="caption">
+              {modelName(f.model) ?? f.kind}
+            </Text>
+            <Text dimColor size="caption" tabular>
+              {[
+                f.focusReportedAt !== null && `focus ${age(f.focusReportedAt, now)}`,
+                f.fetchedAt !== null && `synced ${age(f.fetchedAt, now)}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          </Box>
         </Box>
       )
     }
@@ -295,7 +322,7 @@ export function registerFocus(on: On, _options: Options): void {
               {list.length} {list.length === 1 ? 'focus' : 'focuses'}
             </Text>
           </Box>
-          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollFocus($)} />
+          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollFocus($, true)} />
         </Box>
 
         {list.length === 0 && (
@@ -316,4 +343,18 @@ export function registerFocus(on: On, _options: Options): void {
       </Box>
     )
   })
+}
+
+/** An age without the "ago": 19h, 6m. */
+const age = (at: number, now: number): string => ago(at, now).replace(/ ago$/, '')
+
+/** A model id as people say it: claude-opus-5-5 → Opus 5.5, gpt-6.1-sol → GPT-6.1 Sol. */
+export const modelName = (id: string | null): string | null => {
+  if (!id) return null
+  const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1)
+  const claude = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
+  if (claude) return `${cap(claude[1] ?? '')} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
+  const gpt = /^gpt-([\d.]+)(?:-(.+))?$/.exec(id)
+  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map(cap).join(' ')}` : ''}`
+  return id
 }

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Announcement, Escalation, EscalationStatus, RelayMeta } from '../types'
-import { CARD_BG, CARD_BG_OPEN, ago, errorText, runText } from './shared'
+import { CARD_BG, CARD_BG_OPEN, ago, errorText, runJson, runText } from './shared'
 import type { Options } from './shared'
 
 // The Relay pane: the operator's escalation inbox and the broadcast channel, both through
@@ -11,6 +11,7 @@ import type { Options } from './shared'
 
 const PANE = 'relay'
 const TITLE = 'Relay'
+export const PANE_SPEC = { id: PANE, title: TITLE }
 const POLL_MS = 60 * 1000
 
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], {
@@ -25,7 +26,12 @@ const relayMeta = atom(
   { shape: 'relayMeta-1' },
 )
 const relayLeads = atom({ plugin: 'factory-panel', key: 'relayLeads' } as const, [] as string[])
-const relayFilter = atom({ plugin: 'factory-panel', key: 'relayFilter' } as const, 'waiting' as EscalationStatus)
+const relayFilter = atom({ plugin: 'factory-panel', key: 'relayFilter' } as const, 'waiting' as RelayFilter)
+/** Escalation ids cleared from the pane. ix-relay has no way to close one without a decision, so this is the pane's own. */
+const relayCleared = atom({ plugin: 'factory-panel', key: 'relayCleared' } as const, [] as string[])
+/** Each opened escalation's lead, as an address `send` takes; '' when its session has ended. */
+const relayAddress = atom({ plugin: 'factory-panel', key: 'relayAddress' } as const, {} as Record<string, string>)
+const CLEARED_KEY = 'clearedEscalations'
 const relaySelected = atom({ plugin: 'factory-panel', key: 'relaySelected' } as const, '')
 const relayDraft = atom({ plugin: 'factory-panel', key: 'relayDraft' } as const, '')
 const relayAnnounce = atom({ plugin: 'factory-panel', key: 'relayAnnounce' } as const, '')
@@ -36,6 +42,7 @@ const relayNotice = atom({ plugin: 'factory-panel', key: 'relayNotice' } as cons
 // ---------------------------------------------------------------- parsing
 
 const STATUSES: readonly EscalationStatus[] = ['waiting', 'investigating', 'resolved']
+type RelayFilter = EscalationStatus | 'cleared'
 
 /** `e30  waiting  ENG-101  session/…  11-20 16:29`, one per line. */
 export function parseEscalationList(text: string): Escalation[] {
@@ -170,9 +177,86 @@ async function selectEscalation($: EngineInterface, id: string): Promise<void> {
   await update($, relaySelected, () => (current === id ? '' : id))
   await update($, relayDraft, () => '')
   await update($, relayConfirm, () => '')
+  if (current !== id) void lookupAddress($, id)
 }
 
-async function setFilter($: EngineInterface, status: EscalationStatus): Promise<void> {
+/**
+ * The lead's address now. An escalation names its lead as `session/<machine>/<session>`, both
+ * hex: herdr maps the session to its pane, and `agent-msg find` maps the pane to an address.
+ */
+async function leadAddress($: EngineInterface, lead: string): Promise<string> {
+  if (lead.split(':').length === 3) return lead
+  const m = /^session\/([0-9a-f]+)\/([0-9a-f]+)$/.exec(lead)
+  if (!m) return ''
+  const machine = hexText(m[1] ?? '')
+  const session = hexText(m[2] ?? '')
+  type Agents = { result?: { agents?: { pane_id?: string; agent_session?: { value?: string } }[] } }
+  const list = await runJson<Agents>($, ['herdr', '--machine', machine, 'agent', 'list'], 20_000).catch(() =>
+    runJson<Agents>($, ['herdr', 'agent', 'list'], 20_000),
+  )
+  const pane = list.result?.agents?.find(a => a.agent_session?.value === session)?.pane_id
+  if (!pane) return ''
+  const rows = (await runText($, ['agent-msg', 'find', '--json', pane], 20_000))
+    .split('\n')
+    .filter(line => line.startsWith('{'))
+    .map(line => JSON.parse(line) as { address?: string; machine?: string })
+  return rows.find(r => r.machine === machine)?.address ?? rows[0]?.address ?? ''
+}
+
+const hexText = (hex: string): string =>
+  (hex.match(/../g) ?? []).map(b => String.fromCharCode(parseInt(b, 16))).join('')
+
+async function lookupAddress($: EngineInterface, id: string): Promise<void> {
+  const x = (await read($, escalations)).find(e => e.id === id)
+  if (!x) return
+  let address = ''
+  try {
+    address = await leadAddress($, x.lead)
+  } catch {
+    address = ''
+  }
+  await update($, relayAddress, all => ({ ...all, [id]: address }))
+}
+
+async function replyEscalation($: EngineInterface, id: string): Promise<void> {
+  const text = (await read($, relayDraft)).trim()
+  const address = (await read($, relayAddress))[id]
+  if (!text) {
+    await notice($, `Write a reply to ${id} first.`)
+    return
+  }
+  if (!address) {
+    await notice($, `${id}'s lead is no longer running, so there is no one to reply to.`)
+    return
+  }
+  if (!(await armed($, `reply:${id}`))) return
+  const x = (await read($, escalations)).find(e => e.id === id)
+  const about = x?.ticket ? `${id} (${x.ticket})` : id
+  try {
+    await runText($, ['agent-msg', 'send', address, `Operator, on escalation ${about}: ${text}`], 60_000)
+    await update($, relayDraft, () => '')
+    await notice($, `Replied to ${address}; ${id} stays open.`)
+  } catch (error) {
+    await notice($, `Reply to ${address} failed: ${errorText(error)}`)
+  }
+}
+
+async function loadCleared($: EngineInterface): Promise<void> {
+  const stored = await $.store.get(CLEARED_KEY)
+  const ids = Array.isArray(stored) ? stored.filter((v): v is string => typeof v === 'string') : []
+  await update($, relayCleared, () => ids)
+}
+
+async function toggleCleared($: EngineInterface, id: string): Promise<void> {
+  const before = await read($, relayCleared)
+  const after = before.includes(id) ? before.filter(c => c !== id) : [...before, id]
+  await update($, relayCleared, () => after)
+  await $.store.set(CLEARED_KEY, after)
+  await update($, relaySelected, () => '')
+  await notice($, before.includes(id) ? `Restored ${id}.` : `Cleared ${id} from the pane.`)
+}
+
+async function setFilter($: EngineInterface, status: RelayFilter): Promise<void> {
   await update($, relayFilter, () => status)
   await update($, relaySelected, () => '')
   await update($, relayConfirm, () => '')
@@ -257,10 +341,10 @@ function filedAgo(filed: string, now: number): string {
   return ago(at.getTime(), now)
 }
 
-/** Registers the command, opens the pane and starts polling; called once at session start. */
+/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startRelay($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'relay', description: 'Open the Relay pane: escalations and announcements' })
-  void $.ui.open({ id: PANE, title: TITLE })
+  await loadCleared($)
   void pollRelay($)
   $.clock.every(POLL_MS, () => pollRelay($))
 }
@@ -274,7 +358,7 @@ export function registerRelay(on: On, _options: Options): void {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Input, Select } = $.ui.resolve(e)
-    const [list, posts, meta, leads, filter, selected, draft, announce, target, confirm, said] =
+    const [all, posts, meta, leads, filter, selected, draft, announce, target, confirm, said, cleared, addresses] =
       await Promise.all([
         read($, escalations),
         read($, announcements),
@@ -287,7 +371,10 @@ export function registerRelay(on: On, _options: Options): void {
         read($, relayTarget),
         read($, relayConfirm),
         read($, relayNotice),
+        read($, relayCleared),
+        read($, relayAddress),
       ])
+    const list = all.filter(x => !cleared.includes(x.id))
     const now = await $.clock.now()
     const count = (s: EscalationStatus) => list.filter(x => x.status === s).length
     const waiting = count('waiting')
@@ -303,7 +390,8 @@ export function registerRelay(on: On, _options: Options): void {
       )
     }
 
-    const shown = list.filter(x => x.status === filter)
+    const shown = filter === 'cleared' ? all.filter(x => cleared.includes(x.id)) : list.filter(x => x.status === filter)
+    const clearedCount = all.filter(x => cleared.includes(x.id)).length
     const mark = (s: EscalationStatus) => (s === 'waiting' ? '▲' : s === 'investigating' ? '◐' : '✓')
     const markColor = (s: EscalationStatus) =>
       s === 'waiting' ? 'warning' : s === 'investigating' ? 'claude' : 'success'
@@ -351,13 +439,21 @@ export function registerRelay(on: On, _options: Options): void {
               Decision
             </Text>
             <Text>{x.decision || 'Recorded without text.'}</Text>
+            <Box flexDirection="row" justifyContent="flex-end">
+              <Button
+                key={`clear-${x.id}`}
+                plain
+                label={cleared.includes(x.id) ? 'Restore' : 'Clear'}
+                onPress={() => void toggleCleared($, x.id)}
+              />
+            </Box>
           </Box>
         ) : (
           <Box flexDirection="column" gap={1}>
             <Input
               key={`decision-${x.id}`}
               label="Decision"
-              placeholder="Your decision, sent to the lead and posted to the ticket"
+              placeholder="A decision closes it and posts to the ticket; a reply only goes to the lead"
               value={draft}
               rows={3}
               submitLabel="Resolve"
@@ -372,12 +468,30 @@ export function registerRelay(on: On, _options: Options): void {
                 onPress={() => void resolveEscalation($, x.id)}
               />
               <Button
+                key={`reply-${x.id}`}
+                label={
+                  addresses[x.id] === ''
+                    ? 'Lead ended'
+                    : confirm === `reply:${x.id}`
+                      ? `Confirm reply`
+                      : 'Reply'
+                }
+                onPress={() => void replyEscalation($, x.id)}
+              />
+              <Button
                 key={`investigate-${x.id}`}
                 label={confirm === `investigate:${x.id}` ? 'Confirm investigate' : 'Investigate'}
                 onPress={() => void investigateEscalation($, x.id)}
               />
               {confirm && <Button key="cancel" plain label="cancel" onPress={() => void cancelArmed($)} />}
+              <Box flexGrow={1} />
+              <Button key={`clear-${x.id}`} plain label={cleared.includes(x.id) ? 'Restore' : 'Clear'} onPress={() => void toggleCleared($, x.id)} />
             </Box>
+            {confirm === `reply:${x.id}` && (
+              <Text dimColor size="caption">
+                Sends to {addresses[x.id]}; the escalation stays open.
+              </Text>
+            )}
             {confirm === `investigate:${x.id}` && (
               <Text dimColor size="caption">
                 Opens a Claude Code session on {x.machine || 'the lead’s machine'} in the lead’s folder.
@@ -409,6 +523,15 @@ export function registerRelay(on: On, _options: Options): void {
               onPress={() => void setFilter($, s)}
             />
           ))}
+          {clearedCount > 0 && (
+            <Button
+              key="filter-cleared"
+              plain={filter === 'cleared' ? undefined : true}
+              variant={filter === 'cleared' ? 'primary' : undefined}
+              label={`cleared ${clearedCount}`}
+              onPress={() => void setFilter($, 'cleared')}
+            />
+          )}
         </Box>
 
         <Box flexDirection="column" gap={1}>

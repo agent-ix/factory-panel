@@ -12,6 +12,8 @@ refreshes in place.
 
 Anything that leaves the Relay pane (resolve, investigate, send) takes a second press to confirm.
 
+ix-board reads share a rate-limit gate across sessions on a machine: it keeps each read's result and any Linear retry time in `~/.cache/factory-panel/linear-gate.json` (under `$HOME`), runs each read at most once every 15 minutes (60 seconds for a manual refresh), and calls ix-board again only after a Linear rate limit has passed.
+
 ## Setup
 
 Point Claude Code at this folder, for example in `~/.claude/settings.json`:
@@ -29,3 +31,5 @@ Factory pane, and the Factory refresh interval.
 claude plugin validate .
 claude plugin test .
 ```
+
+Style: see [docs/STYLE.md](docs/STYLE.md) for the colours, spacing, number formats and widgets the panes share.

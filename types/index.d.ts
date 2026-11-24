@@ -84,6 +84,8 @@ export type FocusView = {
   address: string
   machine: string
   kind: string
+  /** The model, e.g. claude-opus-5-5, once ix-relay reports it in the work binding. */
+  model: string | null
   summary: string
   scope: { initiatives: number; projects: number; tickets: number }
   focusReportedAt: number | null
@@ -153,7 +155,9 @@ declare module 'claude-code' {
       announcements: Shaped<Announcement[]>
       relayMeta: Shaped<RelayMeta>
       relayLeads: string[]
-      relayFilter: EscalationStatus
+      relayFilter: EscalationStatus | 'cleared'
+      relayCleared: string[]
+      relayAddress: Record<string, string>
       relaySelected: string
       relayDraft: string
       relayAnnounce: string
