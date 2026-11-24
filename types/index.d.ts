@@ -162,6 +162,7 @@ declare module 'claude-code' {
       escalationFilter: EscalationFilter
       escalationHidden: string[]
       escalationAddress: Record<string, string>
+      escalationBusy: string[]
       escalationSelected: string
       escalationDraft: string
       escalationConfirm: string

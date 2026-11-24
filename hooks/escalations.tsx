@@ -4,7 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { Escalation, EscalationFilter, EscalationStatus, RelayMeta } from '../types'
 import { CARD_BG, CARD_BG_OPEN, ago, errorText, runJson, runText } from './shared'
 import type { Options } from './shared'
-import { ACCENT, DOING, READY } from './ui/glyphs'
+import { ACCENT, DOING } from './ui/glyphs'
 
 // The Escalations pane: the operator's inbox of escalations from the leads, through `agent-msg`.
 // A row resolves in one press with its recommendation, or hides. The header hides or resolves
@@ -29,11 +29,15 @@ const escalationFilter = atom({ plugin: 'factory-panel', key: 'escalationFilter'
 const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden' } as const, [] as string[])
 /** Each opened escalation's lead, as an address `send` takes; '' when its session has ended. */
 const escalationAddress = atom({ plugin: 'factory-panel', key: 'escalationAddress' } as const, {} as Record<string, string>)
+/** Ids with a send in flight ('all' while Resolve all runs), mirrored from `inFlight` so the rows can draw as busy. */
+const escalationBusy = atom({ plugin: 'factory-panel', key: 'escalationBusy' } as const, [] as string[])
 const escalationSelected = atom({ plugin: 'factory-panel', key: 'escalationSelected' } as const, '')
 const escalationDraft = atom({ plugin: 'factory-panel', key: 'escalationDraft' } as const, '')
 const escalationConfirm = atom({ plugin: 'factory-panel', key: 'escalationConfirm' } as const, '')
 const escalationNotice = atom({ plugin: 'factory-panel', key: 'escalationNotice' } as const, '')
 
+/** The same set, read and written synchronously so a second press cannot slip in between a check and a mark. */
+const inFlight = new Set<string>()
 const HIDDEN_KEY = 'hiddenEscalations'
 /** What the Relay pane called hiding: bare ids, which hide a row whatever its status. */
 const LEGACY_KEY = 'clearedEscalations'
@@ -99,6 +103,7 @@ export function parseEscalationDetail(text: string): Partial<Escalation> {
 
 const isOpen = (x: Escalation) => x.status !== 'resolved'
 const hideKey = (x: Escalation) => `${x.id}|${x.status}`
+const idOf = (entry: string) => entry.split('|')[0] ?? entry
 const isHidden = (hidden: readonly string[], x: Escalation) => hidden.includes(hideKey(x)) || hidden.includes(x.id)
 
 /** The rows of one view, newest first (the poll keeps them sorted). */
@@ -131,10 +136,32 @@ async function pollEscalations($: EngineInterface): Promise<void> {
     // Newest first: ids count up as escalations are filed.
     merged.sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)))
     await update($, escalations, () => merged)
+    await settleHidden($, merged)
     await update($, escalationMeta, m => ({ ...m, at: now, error: null }))
   } catch (error) {
     await update($, escalationMeta, m => ({ ...m, error: errorText(error) }))
   }
+}
+
+/**
+ * Brings the hidden list in line with what is listed: a bare id from the old Relay list becomes
+ * `id|status` at the status it has now, and an entry for a row that is gone or whose status has
+ * moved is dropped, so the list cannot grow without bound. An empty listing changes nothing.
+ */
+async function settleHidden($: EngineInterface, listed: readonly Escalation[]): Promise<void> {
+  if (listed.length === 0) return
+  const before = await read($, escalationHidden)
+  const byId = new Map(listed.map(x => [x.id, x]))
+  const after = [
+    ...new Set(
+      before.flatMap(h => {
+        const x = byId.get(idOf(h))
+        return x ? (hideKey(x) === h || h === x.id ? [hideKey(x)] : []) : []
+      }),
+    ),
+  ]
+  if (after.length === before.length && after.every((h, i) => h === before[i])) return
+  await saveHidden($, after)
 }
 
 const pick = (x: Escalation): Partial<Escalation> => ({
@@ -157,9 +184,27 @@ async function notice($: EngineInterface, text: string): Promise<void> {
 /** A first press arms the action; a second press on the same action runs it. */
 async function armed($: EngineInterface, action: string): Promise<boolean> {
   const current = await read($, escalationConfirm)
-  if (current === action) return true
+  if (current === action) {
+    // The confirm is spent before anything is sent, so a press while it runs arms again instead of sending again.
+    await update($, escalationConfirm, () => '')
+    return true
+  }
   await update($, escalationConfirm, () => action)
   return false
+}
+
+/** Runs one send unless one for `key` (or Resolve all) is already running. Returns whether it ran. */
+async function exclusive($: EngineInterface, key: string, run: () => Promise<void>): Promise<boolean> {
+  if (inFlight.has(key) || inFlight.has('all') || (key === 'all' && inFlight.size > 0)) return false
+  inFlight.add(key)
+  await update($, escalationBusy, () => [...inFlight])
+  try {
+    await run()
+  } finally {
+    inFlight.delete(key)
+    await update($, escalationBusy, () => [...inFlight])
+  }
+  return true
 }
 
 async function selectEscalation($: EngineInterface, id: string): Promise<void> {
@@ -222,38 +267,58 @@ async function replyEscalation($: EngineInterface, id: string): Promise<void> {
   if (!(await armed($, `reply:${id}`))) return
   const x = (await read($, escalations)).find(e => e.id === id)
   const about = x?.ticket ? `${id} (${x.ticket})` : id
-  try {
-    await runText($, ['agent-msg', 'send', address, `Operator, on escalation ${about}: ${text}`], 60_000)
-    await update($, escalationDraft, () => '')
-    await notice($, `Replied to ${address}; ${id} stays open.`)
-  } catch (error) {
-    await notice($, `Reply to ${address} failed: ${errorText(error)}`)
-  }
+  await exclusive($, id, async () => {
+    try {
+      await runText($, ['agent-msg', 'send', address, `Operator, on escalation ${about}: ${text}`], 60_000)
+      await update($, escalationDraft, () => '')
+      await notice($, `Replied to ${address}; ${id} stays open.`)
+    } catch (error) {
+      await notice($, `Reply to ${address} failed: ${errorText(error)}`)
+    }
+  })
 }
 
+/**
+ * Reads the hidden list, folding in what the Relay pane called hiding, and writes the merged list
+ * back once with the old key emptied, so a restore is not undone by the next start. A store that
+ * cannot be read leaves the list empty; polling starts regardless.
+ */
 async function loadHidden($: EngineInterface): Promise<void> {
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
-  const ids = [...strings(await $.store.get(HIDDEN_KEY)), ...strings(await $.store.get(LEGACY_KEY))]
-  await update($, escalationHidden, () => [...new Set(ids)])
+  try {
+    const legacy = strings(await $.store.get(LEGACY_KEY))
+    const ids = [...new Set([...strings(await $.store.get(HIDDEN_KEY)), ...legacy])]
+    await update($, escalationHidden, () => ids)
+    if (legacy.length > 0) {
+      await $.store.set(HIDDEN_KEY, ids)
+      await $.store.set(LEGACY_KEY, [])
+    }
+  } catch {
+    await update($, escalationHidden, () => [])
+  }
 }
 
 async function saveHidden($: EngineInterface, after: string[]): Promise<void> {
   await update($, escalationHidden, () => after)
-  await $.store.set(HIDDEN_KEY, after)
+  try {
+    await $.store.set(HIDDEN_KEY, after)
+  } catch (error) {
+    await update($, escalationNotice, () => `Could not save the hidden list: ${errorText(error)}`)
+  }
 }
 
 async function hideOne($: EngineInterface, id: string): Promise<void> {
   const x = (await read($, escalations)).find(e => e.id === id)
   if (!x) return
   const before = await read($, escalationHidden)
-  await saveHidden($, [...before.filter(h => h !== x.id), hideKey(x)])
+  await saveHidden($, [...before.filter(h => idOf(h) !== x.id), hideKey(x)])
   await update($, escalationSelected, () => '')
   await notice($, `Hid ${id}.`)
 }
 
 async function restoreOne($: EngineInterface, id: string): Promise<void> {
   const before = await read($, escalationHidden)
-  await saveHidden($, before.filter(h => h !== id && !h.startsWith(`${id}|`)))
+  await saveHidden($, before.filter(h => idOf(h) !== id))
   await update($, escalationSelected, () => '')
   await notice($, `Restored ${id}.`)
 }
@@ -264,7 +329,7 @@ async function hideAll($: EngineInterface): Promise<void> {
   const rows = viewOf(all, hidden, filter)
   if (rows.length === 0 || filter === 'hidden') return
   const ids = new Set(rows.map(x => x.id))
-  await saveHidden($, [...hidden.filter(h => !ids.has(h)), ...rows.map(hideKey)])
+  await saveHidden($, [...hidden.filter(h => !ids.has(idOf(h))), ...rows.map(hideKey)])
   await update($, escalationSelected, () => '')
   await notice($, `Hid ${rows.length}. Nothing was sent.`)
 }
@@ -295,14 +360,16 @@ async function resolveEscalation($: EngineInterface, id: string): Promise<void> 
     return
   }
   if (!(await armed($, `resolve:${id}`))) return
-  try {
-    const out = await resolveCommand($, id, decision)
-    await update($, escalationDraft, () => '')
-    await update($, escalationSelected, () => '')
-    await notice($, out.trim().split('\n').pop() || `Resolved ${id}.`)
-  } catch (error) {
-    await notice($, `Resolve ${id} failed: ${errorText(error)}`)
-  }
+  await exclusive($, id, async () => {
+    try {
+      const out = await resolveCommand($, id, decision)
+      await update($, escalationDraft, () => '')
+      await update($, escalationSelected, () => '')
+      await notice($, out.trim().split('\n').pop() || `Resolved ${id}.`)
+    } catch (error) {
+      await notice($, `Resolve ${id} failed: ${errorText(error)}`)
+    }
+  })
   void pollEscalations($)
 }
 
@@ -313,54 +380,81 @@ async function resolveRecommended($: EngineInterface, id: string): Promise<void>
     await notice($, `${id} has no recommendation; open it to write a decision.`)
     return
   }
-  try {
-    const out = await resolveCommand($, id, x.recommendation)
-    await update($, escalationSelected, () => '')
-    await notice($, out.trim().split('\n').pop() || `Resolved ${id}.`)
-  } catch (error) {
-    await notice($, `Resolve ${id} failed: ${errorText(error)}`)
-  }
-  void pollEscalations($)
+  const recommendation = x.recommendation
+  const ran = await exclusive($, id, async () => {
+    try {
+      const out = await resolveCommand($, id, recommendation)
+      await update($, escalationSelected, () => '')
+      await notice($, out.trim().split('\n').pop() || `Resolved ${id}.`)
+    } catch (error) {
+      await notice($, `Resolve ${id} failed: ${errorText(error)}`)
+    }
+  })
+  if (ran) void pollEscalations($)
+}
+
+/** The rows Resolve all would send: every open row of the open view that has a recommendation, and how many it leaves out. */
+function bulkSet(all: readonly Escalation[], hidden: readonly string[], filter: EscalationFilter) {
+  const open = filter === 'open' ? viewOf(all, hidden, 'open') : []
+  const rows = open.filter(x => x.recommendation)
+  // The arm key lists the exact ids, so a changed set is a new first press, not a confirm.
+  const key = `resolve-all:${rows.map(x => x.id).sort().join(',')}`
+  return { open, rows, skipped: open.length - rows.length, key }
 }
 
 /**
  * Resolves every open row of the view with its own recommendation; rows without one are
- * skipped and counted. The first press arms it with the count, the second sends. A failed
- * item is reported and the rest carry on.
+ * skipped and counted. The first press arms it with the exact ids, the second sends exactly
+ * those, skipping any no longer open. A failed item is reported and the rest carry on; a press
+ * while it runs does nothing.
  */
 async function resolveAll($: EngineInterface): Promise<void> {
+  if (inFlight.size > 0) return
   const [all, hidden, filter] = await Promise.all([read($, escalations), read($, escalationHidden), read($, escalationFilter)])
-  const open = filter === 'open' ? viewOf(all, hidden, 'open') : []
-  const rows = open.filter(x => x.recommendation)
-  const skipped = open.length - rows.length
+  const { open, rows, skipped, key } = bulkSet(all, hidden, filter)
   if (rows.length === 0) {
     await notice($, open.length === 0 ? 'Nothing is open.' : `Nothing to resolve: none of the ${open.length} open has a recommendation.`)
     return
   }
-  if (!(await armed($, `resolve-all:${rows.length}:${skipped}`))) return
-  const failed: string[] = []
-  for (const x of rows) {
-    try {
-      await resolveCommand($, x.id, x.recommendation)
-    } catch (error) {
-      failed.push(`${x.id} failed: ${errorText(error)}`)
+  if (!(await armed($, key))) return
+  await exclusive($, 'all', async () => {
+    const failed: string[] = []
+    let gone = 0
+    for (const x of rows) {
+      const now = await read($, escalations)
+      const current = now.find(e => e.id === x.id)
+      if (!current || !isOpen(current)) {
+        gone++
+        continue
+      }
+      try {
+        await resolveCommand($, x.id, x.recommendation)
+      } catch (error) {
+        failed.push(`${x.id} failed: ${errorText(error)}`)
+      }
     }
-  }
-  const done = rows.length - failed.length
-  const head = `Resolved ${done} of ${rows.length}${skipped > 0 ? `; skipped ${skipped} with no recommendation` : ''}.`
-  await update($, escalationSelected, () => '')
-  await notice($, [head, ...failed].join('\n'))
+    const done = rows.length - failed.length - gone
+    const head =
+      `Resolved ${done} of ${rows.length}` +
+      (skipped > 0 ? `; skipped ${skipped} with no recommendation` : '') +
+      (gone > 0 ? `; ${gone} no longer open` : '') +
+      '.'
+    await update($, escalationSelected, () => '')
+    await notice($, [head, ...failed].join('\n'))
+  })
   void pollEscalations($)
 }
 
 async function investigateEscalation($: EngineInterface, id: string): Promise<void> {
   if (!(await armed($, `investigate:${id}`))) return
-  try {
-    const out = await runText($, ['agent-msg', 'investigate', id], 60_000)
-    await notice($, out.trim().split('\n').pop() || `Opened an investigation session for ${id}.`)
-  } catch (error) {
-    await notice($, `Investigate ${id} failed: ${errorText(error)}`)
-  }
+  await exclusive($, id, async () => {
+    try {
+      const out = await runText($, ['agent-msg', 'investigate', id], 60_000)
+      await notice($, out.trim().split('\n').pop() || `Opened an investigation session for ${id}.`)
+    } catch (error) {
+      await notice($, `Investigate ${id} failed: ${errorText(error)}`)
+    }
+  })
   void pollEscalations($)
 }
 
@@ -397,7 +491,7 @@ export function registerEscalations(on: On, _options: Options): void {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Input } = els
     const isTerminal = e.surface === 'terminal'
-    const [all, meta, filter, selected, draft, confirm, said, hidden, addresses] = await Promise.all([
+    const [all, meta, filter, selected, draft, confirm, said, hidden, addresses, busy] = await Promise.all([
       read($, escalations),
       read($, escalationMeta),
       read($, escalationFilter),
@@ -407,6 +501,7 @@ export function registerEscalations(on: On, _options: Options): void {
       read($, escalationNotice),
       read($, escalationHidden),
       read($, escalationAddress),
+      read($, escalationBusy),
     ])
     const now = await $.clock.now()
     const openRows = viewOf(all, hidden, 'open')
@@ -420,19 +515,19 @@ export function registerEscalations(on: On, _options: Options): void {
     if (e.props.placement === 'widget') {
       return (
         <Box flexDirection="row" gap={1}>
-          <Text color={waiting > 0 ? 'warning' : 'success'} weight="semibold">
-            {waiting} waiting
-          </Text>
+          <Text color={waiting > 0 ? 'warning' : 'success'}>{waiting > 0 ? '▲' : '●'}</Text>
+          <Text weight="semibold">{waiting} waiting</Text>
           <Text dimColor>escalations</Text>
         </Box>
       )
     }
 
     const shown = viewOf(all, hidden, filter)
-    const withRec = openRows.filter(x => x.recommendation).length
-    const skipped = openRows.length - withRec
+    const { rows: bulkRows, skipped, key: bulkKey } = bulkSet(all, hidden, filter)
+    const withRec = bulkRows.length
+    const isBusy = (id: string) => busy.includes(id) || busy.includes('all')
     const mark = (s: EscalationStatus) => (s === 'waiting' ? '▲' : s === 'investigating' ? '◐' : '✓')
-    const markColor = (s: EscalationStatus) => (s === 'waiting' ? 'warning' : s === 'investigating' ? DOING : READY)
+    const markColor = (s: EscalationStatus) => (s === 'waiting' ? 'warning' : s === 'investigating' ? DOING : ACCENT)
 
     const detail = (x: Escalation) => (
       <Box flexDirection="column" gap={isTerminal ? 0 : 1} paddingLeft={2} paddingTop={isTerminal ? 0 : 1}>
@@ -539,7 +634,8 @@ export function registerEscalations(on: On, _options: Options): void {
           <Button key={`restore-${x.id}`} plain={isTerminal ? true : undefined} label="Restore" onPress={() => void restoreOne($, x.id)} />
         ) : (
           <>
-            {isOpen(x) && x.recommendation && (
+            {isOpen(x) && x.recommendation && isBusy(x.id) && <Text dimColor>resolving…</Text>}
+            {isOpen(x) && x.recommendation && !isBusy(x.id) && (
               <Button
                 key={`quick-${x.id}`}
                 plain={isTerminal ? true : undefined}
@@ -589,7 +685,8 @@ export function registerEscalations(on: On, _options: Options): void {
       />
     )
 
-    const bulkArmed = confirm.startsWith('resolve-all:')
+    // Armed only while the open set is the one that was confirmed; a changed set drops the confirm.
+    const bulkArmed = confirm === bulkKey
     const noticeLines = said.split('\n').filter(Boolean)
 
     return (
@@ -615,7 +712,8 @@ export function registerEscalations(on: On, _options: Options): void {
         {filter !== 'hidden' && shown.length > 0 && (
           <Box flexDirection="row" gap={2} flexWrap="wrap">
             <Button key="hide-all" plain={isTerminal ? true : undefined} label={`Hide all ${shown.length}`} onPress={() => void hideAll($)} />
-            {filter === 'open' && (
+            {filter === 'open' && busy.includes('all') && <Text dimColor>resolving…</Text>}
+            {filter === 'open' && !busy.includes('all') && (
               <Button
                 key="resolve-all"
                 plain={isTerminal ? true : undefined}
@@ -635,7 +733,7 @@ export function registerEscalations(on: On, _options: Options): void {
 
         <Box flexDirection="column" gap={isTerminal ? 0 : 1}>
           {shown.length === 0 && <Text dimColor>No {filter} escalations.</Text>}
-          {shown.slice(0, 40).map(row)}
+          {shown.map(row)}
         </Box>
 
         <Box flexDirection="row" justifyContent="space-between">

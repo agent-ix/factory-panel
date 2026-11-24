@@ -125,7 +125,7 @@ const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', 
 function engine(
   on: Parameters<TestBody>[1],
   ran: string[][],
-  options: { teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
+  options: { teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; gate?: Promise<void>; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
 ): void {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   const opened = new Map<string, boolean>()
@@ -154,7 +154,7 @@ function engine(
     files.set(e.path, e.text)
     return { value: undefined }
   })
-  const store = new Map<string, unknown>()
+  const store = options.store ?? new Map<string, unknown>()
   on('store.get', (_, e) => ({ value: store.get(e.key) }))
   on('store.set', (_, e) => {
     store.set(e.key, e.value)
@@ -165,7 +165,7 @@ function engine(
     const isTeam = e.url.endsWith('/query_range') && body.includes('ix_team_verified_path_closed_24h')
     return { value: { status: 200, ok: true, headers: {}, text: options.teamMetrics && isTeam ? TEAM_RANGE : EMPTY } }
   })
-  on('process.run', (_, e) => {
+  on('process.run', async (_, e) => {
     const argv = [...e.argv]
     ran.push(argv)
     const line = argv.join(' ')
@@ -175,14 +175,15 @@ function engine(
     if (line.startsWith('agent-msg work --lead')) return fail('agent-msg: work target is unavailable')
     if (line.startsWith('ix-board --json focus status --initiative 00000000'))
       return options.rateLimited ? fail('Linear rate limited; retry in 3600.005s') : ok(FOCUS_STATUS)
-    if (line === 'agent-msg escalations') return ok(ESCALATIONS)
+    if (line === 'agent-msg escalations') return ok(options.escalations?.() ?? ESCALATIONS)
     if (line === 'agent-msg escalation show e30') return ok(SHOW_E30)
     if (line === 'agent-msg escalation show e28') return ok(SHOW_E28)
     if (line === 'agent-msg escalation show e31') return ok(SHOW_E31)
     if (line === 'agent-msg escalation show e32') return ok(SHOW_E32)
-    if (line.startsWith('agent-msg log')) return ok(LOG)
+    if (line.startsWith('agent-msg log')) return options.failLog ? fail('relay unreachable') : ok(LOG)
     if (line === 'herdr --machine hub agent list') return ok(HERDR_AGENTS)
     if (line === 'agent-msg find --json w1F:p13') return ok(FIND_PANE)
+    if (line.startsWith('agent-msg resolve')) await options.gate
     if (line.startsWith('agent-msg resolve'))
       return argv[2] === options.failResolve ? fail('relay down') : ok(`resolved ${argv[2]}; told the lead; posted to ENG-101`)
     if (line.startsWith('agent-msg send')) return ok('')
@@ -429,6 +430,128 @@ test('Resolve all says so when no open escalation has a recommendation', async (
   expect((await ui.find({ type: 'Text', text: /^Nothing to resolve/ }))?.text).toBe('Nothing to resolve: none of the 1 open has a recommendation.')
   expect(ran.some(a => a[1] === 'resolve')).toBe(false)
   await ui.unmount()
+})
+
+test('a hidden row comes back when its status changes, and the stale hide is dropped', async ($, on) => {
+  const ran: string[][] = []
+  const store = new Map<string, unknown>()
+  let list = ESCALATIONS
+  engine(on, ran, { teamMetrics: false, store, escalations: () => list })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+
+  await ui.press({ key: 'hide-e30' })
+  expect(store.get('hiddenEscalations')).toEqual(['e30|waiting'])
+  expect(await ui.find({ key: 'sel-e30' })).toBeUndefined()
+
+  // The lead's session picks it up: same id, new status.
+  list = list.replace('e30  waiting', 'e30  investigating')
+  await ui.press({ key: 'refresh' })
+  expect((await ui.find({ key: 'sel-e30' }))?.text).toBe('ENG-101')
+  expect((await ui.find({ key: 'filter-hidden' }))?.text).toBe('hidden 0')
+  expect(store.get('hiddenEscalations')).toEqual([])
+  await ui.unmount()
+})
+
+test('the hidden list is pruned to the rows still listed', async ($, on) => {
+  const ran: string[][] = []
+  const store = new Map<string, unknown>([['hiddenEscalations', ['e1|waiting', 'e30|waiting']]])
+  engine(on, ran, { teamMetrics: false, store })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+  expect((await ui.find({ key: 'filter-hidden' }))?.text).toBe('hidden 1')
+  expect(store.get('hiddenEscalations')).toEqual(['e30|waiting'])
+  await ui.unmount()
+})
+
+test('Relay’s old clearedEscalations list migrates once, and a restored row stays restored after a restart', async ($, on) => {
+  const ran: string[][] = []
+  const store = new Map<string, unknown>([['clearedEscalations', ['e30']]])
+  engine(on, ran, { teamMetrics: false, store })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+
+  // Migrated: hidden, now keyed to its status, and the old key emptied.
+  expect(await ui.find({ key: 'sel-e30' })).toBeUndefined()
+  expect(store.get('hiddenEscalations')).toEqual(['e30|waiting'])
+  expect(store.get('clearedEscalations')).toEqual([])
+
+  await ui.press({ key: 'filter-hidden' })
+  await ui.press({ key: 'restore-e30' })
+  expect(store.get('hiddenEscalations')).toEqual([])
+  await ui.unmount()
+
+  // A restart reads the store again: the row is still shown.
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const again = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+  await again.press({ key: 'filter-open' })
+  expect((await again.find({ key: 'sel-e30' }))?.text).toBe('ENG-101')
+  await again.unmount()
+})
+
+test('a press during Resolve all does not start a second run', async ($, on) => {
+  const ran: string[][] = []
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => (release = r))
+  engine(on, ran, { teamMetrics: false, gate })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+  const sent = () => ran.filter(a => a[1] === 'resolve').map(a => a[2])
+
+  await ui.press({ key: 'resolve-all' })
+  // The second press sends and is held at the gate; presses made meanwhile must not start another run.
+  const sending = ui.press({ key: 'resolve-all' })
+  const more = [ui.press({ key: 'resolve-all' }), ui.press({ key: 'resolve-all' })]
+  release()
+  await Promise.all([sending, ...more])
+  await ui.press({ key: 'refresh' })
+  expect(sent()).toEqual(['e32', 'e30'])
+  await ui.unmount()
+})
+
+test('two quick presses on one row send one resolve', async ($, on) => {
+  const ran: string[][] = []
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => (release = r))
+  engine(on, ran, { teamMetrics: false, gate })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+  const presses = [ui.press({ key: 'quick-e30' }), ui.press({ key: 'quick-e30' }), ui.press({ key: 'quick-e30' })]
+  release()
+  await Promise.all(presses)
+  expect(ran.filter(a => a[1] === 'resolve').map(a => a[2])).toEqual(['e30'])
+  await ui.unmount()
+})
+
+test('Resolve all sends only the confirmed set: a changed list needs a new confirm', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
+
+  await ui.press({ key: 'resolve-all' })
+  expect((await ui.find({ key: 'resolve-all' }))?.text).toBe('Confirm resolve 2')
+  // A row leaves the open set under the confirm: it is dropped, not honoured.
+  await ui.press({ key: 'hide-e30' })
+  expect((await ui.find({ key: 'resolve-all' }))?.text).toBe('Resolve all')
+  await ui.press({ key: 'resolve-all' })
+  expect(ran.some(a => a[1] === 'resolve')).toBe(false)
+  expect((await ui.find({ key: 'resolve-all' }))?.text).toBe('Confirm resolve 1')
+  await ui.press({ key: 'resolve-all' })
+  expect(ran.filter(a => a[1] === 'resolve').map(a => a[2])).toEqual(['e32'])
+  await ui.unmount()
+})
+
+test('a failed log or who read shows in the Relay footer and widget instead of silence', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false, failLog: true })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('relay', 'Relay'), surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /^log: relay unreachable/ }))?.text).toBe('log: relay unreachable')
+  await ui.unmount()
+  const widget = await $.ui.mount({ ...pane('relay', 'Relay'), props: { ...pane('relay', 'Relay').props, placement: 'widget' }, surface: 'desktop' })
+  expect((await widget.find({ type: 'Text', text: 'relay read failed' }))?.text).toBe('relay read failed')
+  await widget.unmount()
 })
 
 test('the Relay pane shows broadcasts and sends an announcement after a confirm', async ($, on) => {

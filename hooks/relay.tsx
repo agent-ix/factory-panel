@@ -43,21 +43,26 @@ export function parseAnnouncements(text: string): Announcement[] {
 
 async function pollRelay($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
-  try {
-    const [logText, whoText] = await Promise.all([
-      runText($, ['agent-msg', 'log', '--since', '14d', '--max', '2000'], 30_000).catch(() => ''),
-      runText($, ['agent-msg', 'who'], 20_000).catch(() => ''),
-    ])
-    await update($, announcements, () => parseAnnouncements(logText).slice(0, 30))
+  const failed: string[] = []
+  const read1 = (what: string, argv: string[], timeoutMs: number) =>
+    runText($, argv, timeoutMs).catch(error => {
+      failed.push(`${what}: ${errorText(error)}`)
+      return null
+    })
+  const [logText, whoText] = await Promise.all([
+    read1('log', ['agent-msg', 'log', '--since', '14d', '--max', '2000'], 30_000),
+    read1('who', ['agent-msg', 'who'], 20_000),
+  ])
+  // What was read is kept; what failed keeps its last value and the footer says why.
+  if (logText !== null) await update($, announcements, () => parseAnnouncements(logText).slice(0, 30))
+  if (whoText !== null) {
     const leads = whoText
       .split('\n')
       .map(line => line.trim().split(/\s+/)[0] ?? '')
       .filter(a => a.split(':').length === 3)
     await update($, relayLeads, () => [...new Set(leads)].sort())
-    await update($, relayMeta, m => ({ ...m, at: now, error: null }))
-  } catch (error) {
-    await update($, relayMeta, m => ({ ...m, error: errorText(error) }))
   }
+  await update($, relayMeta, m => ({ ...m, at: failed.length === 0 ? now : m.at, error: failed[0] ?? null }))
 }
 
 // ---------------------------------------------------------------- actions
@@ -138,8 +143,9 @@ export function registerRelay(on: On, _options: Options): void {
     if (e.props.placement === 'widget') {
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{leads.length}</Text>
-          <Text dimColor>leads on the relay</Text>
+          <Text color={meta.error ? 'warning' : 'success'}>{meta.error ? '▲' : '●'}</Text>
+          <Text weight="semibold">{meta.error ? 'relay read failed' : leads.length}</Text>
+          {!meta.error && <Text dimColor>leads on the relay</Text>}
         </Box>
       )
     }
