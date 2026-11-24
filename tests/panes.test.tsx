@@ -197,27 +197,25 @@ test('the Focus pane draws a coordinator’s focus, its progress and its open pr
       // One row per open project: a bar and one done/total count each, no percentage text.
       expect((await ui.findAll({ type: 'Text', text: /^\d+\/\d+$/ })).map(t => t.text)).toEqual(['34/39', '65/67'])
       expect((await ui.findAll({ type: 'Text', text: /^\d+%$/ })).map(t => t.text)).toEqual(['94%'])
-      // Each bar is runs of [foreground, background, text]: whole █ cells per section, and an eighth block at each boundary
-      // whose foreground is the section on the left and background the section on the right.
+      // Each bar is runs of [colour, text]: whole █ cells per section, no background and no partial blocks.
       const runsOf = async (key: string) =>
-        ((await ui.find({ key }))?.children as { props: { color?: string; backgroundColor?: string }; children: string[] }[]).map(c => [
-          c.props.color,
-          c.props.backgroundColor,
-          c.children[0],
-        ])
+        ((await ui.find({ key }))?.children as { props: { color?: string; backgroundColor?: string }; children: string[] }[]).map(c => {
+          expect(c.props.backgroundColor).toBeUndefined()
+          return [c.props.color, c.children[0]]
+        })
       const rowBar = (name: string) => runsOf(`p-hub:ENG:arch-${name}-bar`)
-      // Ledger is 34 done + 4 in progress of 39 on 16 cells (128 units): 14 done cells, one whole in-progress cell,
-      // then 5 in-progress eighths over the track.
-      expect(await rowBar('Payments ledger')).toEqual([[ACCENT, undefined, '█'.repeat(14)], [DOING, undefined, '█'], [DOING, TRACK, '▋']])
-      // Export is 65 of 67 done: one unit is cut so the bar never reads full; the last cell shows done over the track.
-      expect(await rowBar('Payments export')).toEqual([[ACCENT, undefined, '█'.repeat(15)], [ACCENT, TRACK, '▍']])
-      // The overall bar is 117 done + 6 in progress of 124 on 48 cells.
-      expect(await runsOf('all-hub:ENG:arch')).toEqual([
-        [ACCENT, undefined, '█'.repeat(45)],
-        [ACCENT, DOING, '▎'],
-        [DOING, undefined, '█'],
-        [DOING, TRACK, '▋'],
-      ])
+      // At 90 columns a row is a 15-cell name, the bar, and a 10-cell count with two gaps inside the card padding of 1 and one spare column:
+      // 90 - 3 - 12 - 15 = 60 bar cells, and the overall bar is the same width so they line up.
+      const colours = (runs: unknown[][]) => runs.map(r => r[0])
+      const cells = (runs: unknown[][]) => runs.reduce((n: number, r) => n + (r[1] as string).length, 0)
+      const ledger = await rowBar('Payments ledger')
+      const exportBar = await rowBar('Payments export')
+      const overall = await runsOf('all-hub:ENG:arch')
+      expect([cells(ledger), cells(exportBar), cells(overall)]).toEqual([60, 60, 60])
+      // done, then in progress, then (open items left) the track.
+      expect(colours(ledger)).toEqual([ACCENT, DOING, TRACK])
+      expect(colours(exportBar)).toEqual([ACCENT, DOING])
+      expect(colours(overall)).toEqual([ACCENT, DOING, TRACK])
       expect(await ui.find({ type: 'Progress' })).toBeUndefined()
     }
     await ui.press({ key: 'done-hub:ENG:arch' })
@@ -532,4 +530,22 @@ test('a failing gate file or home lookup never leaves the board busy and keeps t
   const marks = (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(t => t.text)
   expect(marks.slice(0, 3)[2]).toBe('●')
   await ui.unmount()
+})
+
+test('the Focus bars fill the row at the sidebar width, and the overall bar matches the rows', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const base = pane('focus', 'Focus')
+  for (const [columns, bar] of [[60, 30], [90, 60], [40, 10]] as const) {
+    // a row is 15 name cells + bar + 10 count cells + 2 gaps inside 2 padding cells: columns - 3 - 12 - 15 cells of bar,
+    // (the name column shrinks only when the bar would drop under 8 cells).
+    const ui = await $.ui.mount({ ...base, props: { ...base.props, bodyColumns: columns }, surface: 'terminal' })
+    const count = async (key: string) =>
+      ((await ui.find({ key }))?.children as { children: string[] }[]).reduce((n, c) => n + c.children[0]!.length, 0)
+    expect(await count('p-hub:ENG:arch-Payments ledger-bar')).toBe(bar)
+    expect(await count('p-hub:ENG:arch-Payments export-bar')).toBe(bar)
+    expect(await count('all-hub:ENG:arch')).toBe(bar)
+    await ui.unmount()
+  }
 })
