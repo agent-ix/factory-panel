@@ -113,7 +113,7 @@ const run = (stdout: string, exitCode = 0) => ({
   value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-test('the pane draws machines, herdr, relay and board from seeded answers', { options: { teams: 'ENG,ix-relay,web' } }, async ($, on) => {
+test('the pane draws machines, herdr, relay and board from seeded answers', { options: { teams: 'ENG,ix-relay,web', role: 'coordinator' } }, async ($, on) => {
   engine(on)
   on('http.fetch', (_, e) => {
     const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
@@ -122,6 +122,7 @@ test('the pane draws machines, herdr, relay and board from seeded answers', { op
   on('process.run', (_, e) => {
     const [bin] = e.argv
     if (bin === 'printenv') return run('/home/test\n')
+    if (bin === 'hostname') return run('node-a\n')
     if (bin === 'herdr') return run(herdrSnapshot)
     if (bin === 'agent-msg') return run(doctor)
     if (bin === 'ix-board') {
@@ -186,6 +187,20 @@ test('the pane draws machines, herdr, relay and board from seeded answers', { op
 
     await ui.unmount()
   }
+
+  // The classic-layout band reads the same state: a coordinator sees each host with its mark.
+  const band = await $.ui.mount({
+    plugin: 'factory-panel',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 4, bodyColumns: 180, scroll: { offset: 0, bodyRows: 4 }, view: {} } as never,
+    viewport: { columns: 200, rows: 50, isFullscreen: false },
+  })
+  const hosts = (await band.find({ key: 'health' }))?.text ?? ''
+  expect(hosts).toMatch(/● node-a/)
+  expect(hosts).toMatch(/○ node-b|▲ node-b|node-b/)
+  expect((await band.find({ type: 'Text', text: /not reporting/ }))?.text).toMatch(/node-b not reporting/)
+  await band.unmount()
 })
 
 test('the widget seat draws one glance line', async ($, on) => {

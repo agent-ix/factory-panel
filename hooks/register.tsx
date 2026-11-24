@@ -5,6 +5,7 @@ import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './fact
 import { PANE_SPEC as FOCUS_PANE, registerFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
+import { registerBand, renderBand, startBand, syncStatus } from './band'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
 
 // Each pane lives in its own file; open panes show as tabs beside the chat.
@@ -22,11 +23,11 @@ let isLayoutDecided = false
 const HINT = 'panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
 
 /** Opens the panes once the layout is known to dock them; otherwise leaves a hint. */
-function decideLayout($: EngineInterface, viewport: RenderViewport | undefined): void {
+function decideLayout($: EngineInterface, viewport: RenderViewport | undefined, inlineView: string): void {
   if (!isInteractive || isLayoutDecided || viewport?.isFullscreen === undefined) return
   isLayoutDecided = true
   if (viewport.isFullscreen !== true) {
-    $.ui.status(HINT)
+    if (inlineView === 'off') $.ui.status(HINT)
     return
   }
   PANES.forEach(p => everOpened.add(p.id))
@@ -44,6 +45,7 @@ export const register: Register = (on, rawOptions) => {
   registerEscalations(on, options)
   registerRelay(on, options)
   registerTeam(on, options)
+  registerBand(on, options)
 
   // One session-start hook for the whole mod: each pane registers its command and polls (a
   // failing one is logged, the others carry on). The panes are not opened here: see above.
@@ -53,6 +55,7 @@ export const register: Register = (on, rawOptions) => {
     await guarded($, 'Escalations start', () => startEscalations($, options))
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
+    await guarded($, 'Band start', () => startBand($, options))
     isInteractive = e.isInteractive
     return next(e)
   })
@@ -60,7 +63,15 @@ export const register: Register = (on, rawOptions) => {
   // The prompt band is drawn on every terminal, so its first render carries the layout. The
   // hook adds nothing to the band.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    decideLayout($, e.viewport)
+    decideLayout($, e.viewport, options.inlineView)
+    // A classic layout has no dock, so the band is the compact view; fullscreen keeps its panes.
+    if (isInteractive && e.viewport?.isFullscreen === false) {
+      await syncStatus($, options, false)
+      if (options.inlineView === 'band') {
+        const band = await renderBand($, e, options)
+        if (band !== null) return band
+      }
+    }
     return next(e)
   })
 

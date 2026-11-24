@@ -141,6 +141,9 @@ export type TeamView = { team: string; metrics: TeamMetric[] }
 
 export type TeamMeta = { at: number | null; error: string | null }
 
+/** What /band set for this session: switched off, or a module list that replaces the role's. */
+export type BandOverride = { off: boolean; modules: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'factory-panel': {
@@ -173,6 +176,7 @@ declare module 'claude-code' {
       relayNotice: string
       teams: Shaped<TeamView[]>
       teamMeta: Shaped<TeamMeta>
+      bandOverride: Shaped<BandOverride>
     }
   }
 }

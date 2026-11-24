@@ -198,7 +198,7 @@ const MAIN_SCREEN = { columns: 200, rows: 50, isFullscreen: false }
 /** Draws the prompt band, the first render that tells the mod which layout it is in. */
 async function drawBand($: Parameters<TestBody>[0], viewport?: typeof FULLSCREEN): Promise<void> {
   const band = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 4, bodyColumns: 180, scroll: { offset: 0, bodyRows: 4 }, view: {} } as never, viewport })
-  await new Promise(resolve => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(() => resolve(), 150)) // the open the band's hook starts is not awaited
+  await new Promise<void>(resolve => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(() => resolve(), 150)) // the open the band's hook starts is not awaited
   await band.unmount()
 }
 
@@ -733,7 +733,7 @@ test('a throwing open is reported and never breaks startup', async ($, on) => {
   await ui.unmount()
 })
 
-test('on the main screen no pane is opened over the chat; the status line says how to open them', async ($, on) => {
+test('on the main screen with the band off no pane is opened over the chat; the status line says how to open them', { options: { inlineView: 'off' } }, async ($, on) => {
   const ran: string[][] = []
   const opens: string[] = []
   const statuses: (string | undefined)[] = []
@@ -883,4 +883,32 @@ test('the Focus bars fill the row at the sidebar width, and the overall bar matc
     expect(await count('all-hub:ENG:arch')).toBe(bar)
     await ui.unmount()
   }
+})
+
+const BAND = {
+  hasSurvey: false,
+  isCollapsed: false,
+  isWorking: false,
+  maxRows: 4,
+  bodyColumns: 180,
+  scroll: { offset: 0, bodyRows: 4 },
+  view: {},
+} as never
+
+test('the classic-layout band draws the role’s modules as buttons, and a press opens that module’s pane', { options: { role: 'coordinator' } }, async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  engine(on, ran, { teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: BAND, viewport: MAIN_SCREEN })
+  expect((await ui.find({ key: 'health' }))?.text).toBe('hosts —')
+  expect(await ui.find({ key: 'local' })).toBeUndefined()
+  await ui.press({ key: 'health' })
+  expect(opens).toEqual(['factory'])
+  await ui.unmount()
+
+  // Fullscreen docks the panes, so no band is drawn there.
+  const docked = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: BAND, viewport: FULLSCREEN })
+  expect(await docked.find({ key: 'health' })).toBeUndefined()
+  await docked.unmount()
 })

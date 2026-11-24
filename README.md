@@ -46,3 +46,16 @@ claude plugin test .
 ```
 
 Style: see [docs/STYLE.md](docs/STYLE.md) for the colours, spacing, number formats and widgets the panes share.
+
+## The band (non-fullscreen sessions)
+
+Panes dock beside the chat only in the fullscreen layout (`/tui fullscreen`). Any other layout gets the band: one row above the prompt, one cell per module, each with a digit. Type the digit at an empty prompt, or focus the band, to open that module's full pane; Esc closes it.
+
+| Role | Default modules |
+| --- | --- |
+| coordinator | health, focus, attention, relay |
+| code-lead | local, focus, lead, lanes |
+| planner | focus, queue, lead |
+| worker | local |
+
+Set `role` (or leave it `auto`, which reads the relay address and falls back to code-lead), `bandModules` to replace the list, `bandFocus` to pick the focus the bar follows, and `inlineView` to `status` (one status-line summary) or `off`. `/band` changes it for the current session.
