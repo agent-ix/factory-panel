@@ -155,7 +155,7 @@ export async function startFocus($: EngineInterface, _options: Options): Promise
 
 export function registerFocus(on: On, _options: Options): void {
   on('command.run', { command: 'focuses' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
     void pollFocus($)
     return { text: opened.isPlaced ? 'Focus pane opened.' : `Focus pane waits: ${opened.reason}` }
   })

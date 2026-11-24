@@ -562,7 +562,7 @@ export async function startEscalations($: EngineInterface, _options: Options): P
 
 export function registerEscalations(on: On, _options: Options): void {
   on('command.run', { command: 'escalations' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
     void pollEscalations($)
     return { text: opened.isPlaced ? 'Escalations pane opened.' : `Escalations pane waits: ${opened.reason}` }
   })
