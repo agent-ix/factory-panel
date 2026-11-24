@@ -9,7 +9,7 @@
       "name": "factory-panel",
       "source": "./",
       "description": "Live factory pane: machines, herdr, ix-relay and ix-board beside the chat.",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }

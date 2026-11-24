@@ -15,9 +15,24 @@ In the Escalations pane, Resolve on a row sends that row's recommendation in one
 
 ix-board reads share a rate-limit gate across sessions on a machine: it keeps each read's result and any Linear retry time in `~/.cache/factory-panel/linear-gate.json` (under `$HOME`), runs each read at most once every 15 minutes (60 seconds for a manual refresh), and calls ix-board again only after a Linear rate limit has passed.
 
+## Install
+
+From the Agent IX marketplace:
+
+```bash
+claude plugin marketplace add agent-ix/agent-plugins
+claude plugin install factory-panel@agent-ix
+```
+
+Or directly from this repository:
+
+```bash
+/plugin install factory-panel --marketplace agent-ix/factory-panel
+```
+
 ## Setup
 
-Point Claude Code at this folder, for example in `~/.claude/settings.json`:
+For development, point Claude Code at this folder, for example in `~/.claude/settings.json`:
 
 ```json
 { "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/dev/factory-panel" } }
