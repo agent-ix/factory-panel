@@ -8,8 +8,8 @@
     {
       "name": "factory-panel",
       "source": "./",
-      "description": "Live factory pane: machines, herdr, ix-relay and ix-board beside the chat.",
-      "version": "0.1.0"
+      "description": "Panes beside the chat for running an Agent IX factory: machines, named focuses, an escalations inbox, ix-relay announcements, and team health.",
+      "version": "0.2.0"
     }
   ]
 }
