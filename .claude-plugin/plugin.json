@@ -1,7 +1,7 @@
 {
   "name": "factory-panel",
   "version": "0.1.0",
-  "description": "Panes beside the chat for running an Agent IX factory: machines, named focuses, ix-relay escalations and announcements, and team health.",
+  "description": "Panes beside the chat for running an Agent IX factory: machines, named focuses, an escalations inbox, ix-relay announcements, and team health.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "prometheusUrl": {

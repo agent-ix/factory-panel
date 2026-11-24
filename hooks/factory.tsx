@@ -11,7 +11,7 @@ import type {
   RelayCheck,
   RelayView,
 } from '../types'
-import { CARD_BG, INK, ago, errorText, pausedText, promQuery } from './shared'
+import { CARD_BG, INK, ago, errorText, pausedText, promQuery, shortError } from './shared'
 import { ACCENT, tempColor, usd } from './ui/glyphs'
 import { widgets } from './ui/widgets'
 import { gatedBoard } from './linear'
@@ -429,7 +429,9 @@ export function registerFactory(on: On, options: Options): void {
       (max, m) => (m.tempC !== null && (max === null || m.tempC > max) ? m.tempC : max),
       null,
     )
-    const errors = [f.prometheusError, f.herdrError, f.relayError].filter((t): t is string => t !== null)
+    const errors = [f.prometheusError === null ? null : shortError('prometheus', f.prometheusError), f.herdrError, f.relayError].filter((t): t is string => t !== null)
+    // A shortened Prometheus error keeps its full text for the open detail.
+    const promFull = f.prometheusError !== null && shortError('prometheus', f.prometheusError) !== f.prometheusError ? f.prometheusError : null
     const stale = staleness(f, now)
     const isFresh = stale !== null && stale < options.refreshSeconds * 3000 && errors.length === 0
     const statusColor = (status: string) =>
@@ -657,6 +659,11 @@ export function registerFactory(on: On, options: Options): void {
             <Text dimColor size="caption">
               {detailSummary}
             </Text>
+            {promFull && (
+              <Text dimColor size="caption">
+                prometheus: {promFull}
+              </Text>
+            )}
             {detailError && (
               <Text color="warning" size="caption">
                 {detailError}
@@ -670,7 +677,7 @@ export function registerFactory(on: On, options: Options): void {
           <Text dimColor size="caption">
             {list.length > 0 && !f.nodeMetricsSeen ? 'CPU, memory and temperature appear once a node exporter is scraped.' : ''}
           </Text>
-          <Text color={isFresh ? 'subtle' : 'warning'} size="caption">
+          <Text color={isFresh ? 'subtle' : 'warning'} size="caption" wrap="truncate-end">
             {errors.length > 0 ? errors[0] : stale === null ? 'connecting…' : `updated ${ago(now - stale, now)}`}
           </Text>
         </Box>

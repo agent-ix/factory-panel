@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
+import { shortError } from '../hooks/shared'
 
 const PANE = {
   plugin: 'factory-panel',
@@ -254,4 +255,42 @@ test('the terminal gauge draws whole-cell blocks', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /^███░░░$/ }))?.text).toBe('███░░░')
   await ui.unmount()
+})
+
+test('a Prometheus timeout shows one short footer line, with the full text in the open detail', async ($, on) => {
+  engine(on)
+  const long = 'Prometheus query failed: no complete answer within 30000ms'
+  on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'error', error: long }) } }))
+  on('process.run', (_, e) => {
+    const [bin] = e.argv
+    if (bin === 'printenv') return run('/home/test\n')
+    if (bin === 'herdr') return run(herdrSnapshot)
+    if (bin === 'agent-msg') return run(doctor)
+    return run('{}', 4)
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const footer = (await ui.find({ type: 'Text', text: /^prometheus: timed out$/ }))?.text
+    expect(footer).toBe('prometheus: timed out')
+    // The raw error would not fit 40 columns; the footer does, and the text is clipped rather than wrapped.
+    expect(long.length).toBeGreaterThan(40)
+    expect(footer?.length).toBeLessThanOrEqual(40)
+    expect((await ui.find({ type: 'Text', text: /^prometheus: timed out$/ }))?.props.wrap).toBe('truncate-end')
+    expect(await ui.find({ type: 'Text', text: /30000ms/ })).toBeUndefined()
+    // Opening a chip shows the full error for diagnosis.
+    await ui.press({ key: 'herdr' })
+    expect((await ui.find({ type: 'Text', text: /30000ms/ }))?.text).toContain(long)
+    await ui.press({ key: 'herdr' })
+    await ui.unmount()
+  }
+})
+
+test('only a real timeout is shortened; other errors, and a bad_data error naming a timeout parameter, stay whole', () => {
+  expect(shortError('prometheus', 'no complete answer within 30000ms')).toBe('prometheus: timed out')
+  expect(shortError('prometheus', 'request timed out')).toBe('prometheus: timed out')
+  expect(shortError('prometheus', 'Prometheus 503')).toBe('Prometheus 503')
+  expect(shortError('prometheus', 'connection refused')).toBe('connection refused')
+  const badData = 'invalid parameter "timeout": cannot parse "x" to a valid duration'
+  expect(shortError('prometheus', badData)).toBe(badData)
 })
