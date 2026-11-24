@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Panes no longer open at session start. An unasked pane is seated inline above the prompt, over the chat, unless the terminal runs the fullscreen layout that docks it; session start cannot tell which. The panes now open once, when the first prompt-band draw reports the fullscreen layout. On the main screen the status line says to type /factory.
+
 ## 0.2.0
 
 - Fix the startup placement of the panes.

@@ -1,4 +1,4 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register, RenderViewport } from 'claude-code'
 
 import { PANE_SPEC as ESCALATIONS_PANE, registerEscalations, startEscalations } from './escalations'
 import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './factory'
@@ -12,6 +12,30 @@ const PANES = [FACTORY_PANE, FOCUS_PANE, ESCALATIONS_PANE, RELAY_PANE, TEAM_PANE
 const SETTLE_MS = 15_000
 // Ids this session has opened at least once; one the person closed afterwards is not reopened.
 const everOpened = new Set<string>()
+// An unasked pane is seated inline above the prompt, over the chat, unless the terminal runs
+// the fullscreen layout that docks it beside the transcript. session.start cannot tell which
+// layout is coming, so the panes are opened only once a render event reports it: docked
+// layouts open them, any other layout leaves them to /factory (an open the person asked for).
+let isInteractive = false
+let isLayoutDecided = false
+
+const HINT = 'factory-panel: panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
+
+/** Opens the panes once the layout is known to dock them; otherwise leaves a hint. */
+function decideLayout($: EngineInterface, viewport: RenderViewport | undefined): void {
+  if (!isInteractive || isLayoutDecided || viewport?.isFullscreen === undefined) return
+  isLayoutDecided = true
+  if (viewport.isFullscreen !== true) {
+    $.ui.status(HINT)
+    return
+  }
+  PANES.forEach(p => everOpened.add(p.id))
+  // The settle timer starts after the opens answer: it reads the panes the host now lists.
+  void guarded($, 'pane open', async () => {
+    await openPanes($, PANES)
+    $.clock.every(SETTLE_MS, () => void guarded($, 'pane settle', () => settlePanes($, PANES)))
+  })
+}
 
 export const register: Register = (on, rawOptions) => {
   const options = readOptions(rawOptions as Record<string, unknown>)
@@ -22,31 +46,35 @@ export const register: Register = (on, rawOptions) => {
   registerTeam(on, options)
 
   // One session-start hook for the whole mod: each pane registers its command and polls (a
-  // failing one is logged, the others carry on), then the panes are opened and the host's
-  // answer is read. A non-interactive run has no surface, so it opens and says nothing.
+  // failing one is logged, the others carry on). The panes are not opened here: see above.
   on('session.start', async ($, e, next) => {
     await guarded($, 'Factory start', () => startFactory($, options))
     await guarded($, 'Focus start', () => startFocus($, options))
     await guarded($, 'Escalations start', () => startEscalations($, options))
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
-    if (e.isInteractive) {
-      PANES.forEach(p => everOpened.add(p.id))
-      await openPanes($, PANES)
-      $.clock.every(SETTLE_MS, () => void guarded($, 'pane settle', () => settlePanes($, PANES)))
-    }
+    isInteractive = e.isInteractive
     return next(e)
   })
 
-  // A pane opened before any surface was attached waits undrawn; a surface attaching is the
-  // moment the host can place it. Opening an open pane only retitles it.
+  // The prompt band is drawn on every terminal, so its first render carries the layout. The
+  // hook adds nothing to the band.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    decideLayout($, e.viewport)
+    return next(e)
+  })
+
+  // A surface joining later (the desktop app, a phone) reports its own layout; a pane opened
+  // before it came waits undrawn and is placed now. Only a docking layout opens panes, and a
+  // pane the person closed stays closed.
   on('session.attach', async ($, e, next) => {
-    // Open only panes still listed as waiting and any never opened: a closed pane stays closed.
-    const waiting = await paneIdsToReopen($).catch(() => new Set<string>())
-    const reopen = PANES.filter(p => waiting.has(p.id) || !everOpened.has(p.id))
-    reopen.forEach(p => everOpened.add(p.id))
-    await openPanes($, PANES, reopen)
-    await settlePanes($, PANES)
+    if (isInteractive && e.viewport?.isFullscreen === true) {
+      const waiting = await paneIdsToReopen($).catch(() => new Set<string>())
+      const reopen = PANES.filter(p => waiting.has(p.id) || !everOpened.has(p.id))
+      reopen.forEach(p => everOpened.add(p.id))
+      await openPanes($, PANES, reopen)
+      await settlePanes($, PANES)
+    }
     return next(e)
   })
 }

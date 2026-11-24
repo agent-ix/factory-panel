@@ -192,6 +192,16 @@ function engine(
   })
 }
 
+const FULLSCREEN = { columns: 200, rows: 50, isFullscreen: true }
+const MAIN_SCREEN = { columns: 200, rows: 50, isFullscreen: false }
+
+/** Draws the prompt band, the first render that tells the mod which layout it is in. */
+async function drawBand($: Parameters<TestBody>[0], viewport?: typeof FULLSCREEN): Promise<void> {
+  const band = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 4, bodyColumns: 180, scroll: { offset: 0, bodyRows: 4 }, view: {} } as never, viewport })
+  await new Promise(resolve => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(() => resolve(), 150)) // the open the band's hook starts is not awaited
+  await band.unmount()
+}
+
 const pane = (requestId: string, title: string) =>
   ({
     plugin: 'factory-panel',
@@ -688,11 +698,13 @@ test('a pane the host leaves undrawn is reported with its reason, and opened aga
   })
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(opens).toEqual([]) // session.start does not know the layout, so it opens nothing
+  await drawBand($, FULLSCREEN)
   expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
   expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Relay, Team waiting \(below 144 columns \(now 100\)\)/)
 
   placed = true
-  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default' })
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
   expect(opens).toHaveLength(10)
   expect(statuses.at(-1)).toBeUndefined()
 
@@ -710,9 +722,42 @@ test('a throwing open is reported and never breaks startup', async ($, on) => {
     open: () => {
       throw new Error('no surface')
     },
+    // The host lists the panes that were asked for and never drawn, so the settle timer keeps them waiting.
+    panes: () => ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isPlaced: false })),
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await drawBand($, FULLSCREEN)
   expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Relay, Team waiting \(.+\)/)
+
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('on the main screen no pane is opened over the chat; the status line says how to open them', async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  const statuses: (string | undefined)[] = []
+  engine(on, ran, { teamMetrics: false, status: text => statuses.push(text), open: id => (opens.push(id), { isPlaced: true }) })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await drawBand($, MAIN_SCREEN)
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: MAIN_SCREEN })
+  expect(opens).toEqual([])
+  expect(statuses.at(-1)).toMatch(/Type \/factory to open/)
+
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('the panes open once, when the first band draw reports the fullscreen layout', async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  engine(on, ran, { teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await drawBand($) // layout not measured yet: nothing opens
+  expect(opens).toEqual([])
+  await drawBand($, FULLSCREEN)
+  await drawBand($, FULLSCREEN)
+  expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
 
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
   await ui.unmount()
@@ -743,8 +788,8 @@ test('a closed pane is not reopened on attach, and the status names only panes s
   const opens: string[] = []
   const statuses: (string | undefined)[] = []
   type Listed = { id: string; title: string; isPlaced: boolean }
-  let listed: Listed[] = []
   const entry = (id: string, isPlaced: boolean): Listed => ({ id, title: id, isPlaced })
+  let listed: Listed[] = ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => entry(id, false))
   engine(on, ran, {
     teamMetrics: false,
     status: text => statuses.push(text),
@@ -756,19 +801,20 @@ test('a closed pane is not reopened on attach, and the status names only panes s
   })
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await drawBand($, FULLSCREEN)
   expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
   expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Relay, Team waiting/)
 
   // Factory got placed, the person closed Relay (it is no longer listed), Focus and Team wait.
   listed = [entry('factory', true), entry('focus', false), entry('escalations', true), entry('team', false)]
-  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default' })
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
   expect(opens.slice(5)).toEqual(['focus', 'team'])
   expect(statuses.at(-1)).toMatch(/Focus, Team waiting/)
   expect(statuses.at(-1)).not.toMatch(/Factory|Relay/)
 
   // Focus is placed and Team was closed: nothing waits, nothing is reopened, the status clears.
   listed = [entry('factory', true), entry('focus', true), entry('escalations', true)]
-  await $.session.attach({ surface: 'terminal', clientId: 'terminal:second' })
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:second', viewport: FULLSCREEN })
   expect(opens).toHaveLength(7)
   expect(statuses.at(-1)).toBeUndefined()
 
