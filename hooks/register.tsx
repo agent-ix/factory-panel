@@ -19,7 +19,7 @@ const everOpened = new Set<string>()
 let isInteractive = false
 let isLayoutDecided = false
 
-const HINT = 'factory-panel: panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
+const HINT = 'panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
 
 /** Opens the panes once the layout is known to dock them; otherwise leaves a hint. */
 function decideLayout($: EngineInterface, viewport: RenderViewport | undefined): void {

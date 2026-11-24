@@ -204,7 +204,7 @@ function showWaiting($: EngineInterface, specs: readonly PaneSpec[]): void {
   const text =
     titles.length === 0
       ? undefined
-      : `factory-panel: ${titles.join(', ')} waiting (${waitReason}). Type /factory to open.`
+      : `${titles.join(', ')} waiting (${waitReason}). Type /factory to open.`
   if (text === waitingText) return
   waitingText = text
   $.ui.status(text)

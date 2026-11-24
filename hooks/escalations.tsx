@@ -564,7 +564,7 @@ export function registerEscalations(on: On, _options: Options): void {
   on('command.run', { command: 'escalations' }, async $ => {
     const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
     void pollEscalations($)
-    return { text: opened.isPlaced ? 'Escalations pane opened.' : `Escalations pane waits: ${opened.reason}` }
+    return { text: opened.isPlaced ? 'Escalations pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Escalations pane waits: ${opened.reason}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
