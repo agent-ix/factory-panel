@@ -33,6 +33,7 @@ async function ixConfig($: EngineInterface, key: string): Promise<string | undef
     if (ran.exitCode !== 0) return undefined
     // An unset key prints a notice; only a URL counts as a value, wherever the CLI puts it.
     const plain = ran.stdout.replace(/\u001b\[[0-9;]*m/g, '')
+    if (/\bis unset\b/i.test(plain)) return undefined
     return originOf(/https?:\/\/[^\s"']+/i.exec(plain)?.[0] ?? '')
   } catch {
     return undefined
@@ -45,7 +46,8 @@ async function relayEndpoint($: EngineInterface): Promise<string | undefined> {
     if (home === '') return undefined
     const toml = await $.fs.read(`${home}/.ix/relay/config.toml`)
     const url = otlpEndpointOf(typeof toml === 'string' ? toml : '')
-    return url === undefined ? undefined : originOf(url)
+    // Only Prometheus's own OTLP receiver says where Prometheus is; a collector's address would not.
+    return url !== undefined && /\/api\/v1\/otlp\/?$/.test(url) ? originOf(url) : undefined
   } catch {
     return undefined
   }

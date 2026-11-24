@@ -73,6 +73,12 @@ test('an unset ix key falls to the relay config, then to the factory default, ne
   expect(fromRelay.prometheusUrl).toBe('http://prometheus.lab.ix')
   expect(fromRelay.grafanaUrl).toBe('http://grafana.lab.ix')
 
+  // A collector's address is not Prometheus's: it is ignored.
+  relayConfig = '[watcher]\notlp_endpoint = "http://collector.lab.ix:4318/v1/metrics"\n'
+  const collector = base()
+  await resolveEndpoints($, collector)
+  expect(collector.prometheusUrl).toBe(FACTORY_PROMETHEUS)
+
   relayConfig = ''
   const none = base()
   await resolveEndpoints($, none)
