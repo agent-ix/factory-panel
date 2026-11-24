@@ -42,11 +42,26 @@ let localMachine = ''
 let detectedRole: Role | undefined
 let lastStatus: string | undefined
 
+/** What the last AbovePrompt render saw and did, so /band can say why nothing is drawn. */
+export const lastDraw: { at: number; isFullscreen: boolean | undefined; interactive: boolean; reason: string } = { at: 0, isFullscreen: undefined, interactive: false, reason: 'no draw yet' }
+
+const HELP = [
+  'The band is the one-line summary above the prompt. Each cell has a number: type it at an empty prompt to open that module, Esc to close.',
+  '  /band              what it shows now, and why',
+  '  /band off          hide it for this session',
+  '  /band on           show it again',
+  '  /band modules local,focus   show only these, in this order',
+  '  /band reset        back to the role defaults',
+  `Modules: ${MODULE_IDS.join(', ')}`,
+  'Fullscreen sessions dock the full panes instead of showing the band.',
+].join('\n')
+
 /** Reads the host name and, best effort, this session's role from its relay address. Never throws. */
 export async function startBand($: EngineInterface, options: Options): Promise<void> {
   await $.command.register({
     name: 'band',
-    description: 'The compact band above the prompt: /band on | off | modules a,b,c | reset',
+    description: 'The compact status band above the prompt (classic layout). /band help lists what it can do',
+    argumentHint: 'help | off | on | modules local,focus | reset',
   })
   try {
     const host = await $.process.run(['hostname', '-s'], { timeoutMs: 3000 })
@@ -168,7 +183,7 @@ export async function syncStatus($: EngineInterface, options: Options, isFullscr
 
 export function registerBand(on: On, options: Options): void {
   on('command.run', { command: 'band' }, async ($, e) => {
-    const [word = '', ...rest] = e.args.trim().split(/\s+/)
+    const [word = '', ...rest] = (e.args ?? '').trim().split(/\s+/)
     const list = rest.join(' ')
     if (word === 'off') await update($, bandOverride, o => ({ ...o, off: true }))
     else if (word === 'on') await update($, bandOverride, o => ({ ...o, off: false }))
@@ -177,11 +192,24 @@ export function registerBand(on: On, options: Options): void {
       const ids = parseModules(list)
       if (ids.length === 0) return { text: `No known module in "${list}". Known: ${MODULE_IDS.join(', ')}.` }
       await update($, bandOverride, () => ({ off: false, modules: ids.join(',') }))
-    } else if (word !== '' && word !== 'show') {
-      return { text: '/band on | off | modules a,b,c | reset' }
+    } else if (word === 'help' || word === '?') {
+      return { text: HELP }
+    } else if (word !== '' && word !== 'show' && word !== 'status') {
+      return { text: `"/band ${e.args.trim()}" is not a command.\n\n${HELP}` }
     }
     const plan = bandPlan(options, await read($, bandOverride))
-    const role = roleOf(options) ?? 'code-lead (role not known)'
-    return { text: plan.off ? 'Band is off.' : `Band shows (${role}): ${plan.ids.join(', ')}. Keys 1-${Math.min(9, plan.ids.length)} open a module.` }
+    const role = roleOf(options)
+    const layout = lastDraw.isFullscreen === undefined ? 'unknown' : lastDraw.isFullscreen ? 'fullscreen' : 'classic'
+    const lines = [
+      plan.off ? 'The band is off.' : `The band shows: ${plan.ids.join(', ')}`,
+      role === undefined ? 'Role: not detected, so the code-lead set is used (set "role" in the plugin settings to change it).' : `Role: ${role}`,
+      layout === 'fullscreen'
+        ? 'This session is fullscreen, so the panes are docked at the right and there is no band. /tui default switches to the classic layout, where the band shows.'
+        : plan.off
+          ? 'Type /band on to show it.'
+          : `To open a module, type its number (1 to ${Math.min(9, plan.ids.length)}) at an empty prompt. Esc closes it again.`,
+      '/band help lists the other commands.',
+    ]
+    return { text: lines.join('\n') }
   })
 }

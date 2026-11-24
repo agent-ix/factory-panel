@@ -19,8 +19,9 @@ export type Options = {
 }
 
 export const readOptions = (options: Record<string, unknown>): Options => ({
-  prometheusUrl: String(options.prometheusUrl ?? 'http://localhost:9090'),
-  grafanaUrl: String(options.grafanaUrl ?? 'http://localhost:3000'),
+  // Empty means "not set": session start fills it in from the shared ix config (hooks/endpoints.ts).
+  prometheusUrl: String(options.prometheusUrl ?? '').trim(),
+  grafanaUrl: String(options.grafanaUrl ?? '').trim(),
   teams: String(options.teams ?? '')
     .split(',')
     .map(t => t.trim())
