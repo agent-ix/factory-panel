@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import { makeGate } from '../hooks/escalations'
+import { bulkStep, makeGate } from '../hooks/escalations'
 import { ACCENT, DOING, TRACK } from '../hooks/ui/glyphs'
 
 // Fixtures are trimmed copies of what agent-msg, ix-board and Prometheus answered on
@@ -530,6 +530,17 @@ test('a one-press Resolve marks the row resolved at once, and it stays resolved 
   expect(await ui.find({ key: 'quick-e30' })).toBeUndefined()
   expect(sent()).toEqual(['e30'])
   await ui.unmount()
+})
+
+// The harness runs one event at a time and loads the plugin as its own module, so a send in flight cannot be held from a test: the decision is tested directly.
+test('a Resolve all press waits while a send is in flight and keeps the armed confirm', () => {
+  const key = 'resolve-all:e30,e32'
+  expect(bulkStep(false, '', key)).toBe('arm')
+  expect(bulkStep(false, 'resolve-all:e30', key)).toBe('arm')
+  expect(bulkStep(false, key, key)).toBe('send')
+  // Busy: wait, whatever the confirm is, so the armed confirm is neither spent nor changed.
+  expect(bulkStep(true, key, key)).toBe('wait')
+  expect(bulkStep(true, '', key)).toBe('wait')
 })
 
 test('a very long list draws at most 50 rows and says how many are not shown', async ($, on) => {

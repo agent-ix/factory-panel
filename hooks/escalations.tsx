@@ -56,7 +56,13 @@ export function makeGate() {
     busy: () => held.size > 0,
   }
 }
-const inFlight = makeGate()
+/** The sends running now; exported so a test can hold one. */
+export const inFlight = makeGate()
+/** Hidden-list writes run one after another, each storing the list as it is then, so two quick changes cannot land out of order. */
+let storeChain: Promise<unknown> = Promise.resolve()
+/** When each row was marked resolved locally, on the same counter polls take their start from: a poll that began earlier must not undo the mark. */
+let tick = 0
+const markedAt = new Map<string, number>()
 const HIDDEN_KEY = 'hiddenEscalations'
 /** What the Relay pane called hiding: bare ids, which hide a row whatever its status. */
 const LEGACY_KEY = 'clearedEscalations'
@@ -136,6 +142,7 @@ function viewOf(all: readonly Escalation[], hidden: readonly string[], filter: E
 
 async function pollEscalations($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
+  const started = ++tick
   try {
     const listed = parseEscalationList(await runText($, ['agent-msg', 'escalations'], 20_000))
     const known = new Map((await read($, escalations)).map(x => [x.id, x]))
@@ -143,7 +150,9 @@ async function pollEscalations($: EngineInterface): Promise<void> {
     const merged = await Promise.all(
       listed.map(async x => {
         const had = known.get(x.id)
-        if (had?.hasDetail && had.status === x.status) return { ...had, ...x, ...pick(had) }
+        // A row marked resolved here has its decision read from the relay once the relay lists it resolved.
+        const confirming = x.status === 'resolved' && markedAt.has(x.id)
+        if (had?.hasDetail && had.status === x.status && !confirming) return { ...had, ...x, ...pick(had) }
         try {
           const detail = parseEscalationDetail(await runText($, ['agent-msg', 'escalation', 'show', x.id], 20_000))
           return { ...x, ...detail }
@@ -154,7 +163,11 @@ async function pollEscalations($: EngineInterface): Promise<void> {
     )
     // Newest first: ids count up as escalations are filed.
     merged.sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)))
-    await update($, escalations, () => merged)
+    // A row marked resolved after this poll began keeps its local mark over this poll's older listing.
+    await update($, escalations, current =>
+      merged.map(x => ((markedAt.get(x.id) ?? 0) > started ? (current.find(c => c.id === x.id) ?? x) : x)),
+    )
+    for (const [id, at] of markedAt) if (at < started && merged.some(x => x.id === id && x.status === 'resolved')) markedAt.delete(id)
     await settleHidden($, merged)
     await update($, escalationMeta, m => ({ ...m, at: now, error: null }))
   } catch (error) {
@@ -332,7 +345,9 @@ async function changeHidden($: EngineInterface, change: (before: string[]) => st
   })
   if (after === before) return true
   try {
-    await $.store.set(HIDDEN_KEY, after)
+    const write = storeChain.then(async () => $.store.set(HIDDEN_KEY, await read($, escalationHidden)))
+    storeChain = write.catch(() => undefined)
+    await write
     return true
   } catch (error) {
     await update($, escalationNotice, () => `Could not save the hidden list: ${errorText(error)}`)
@@ -388,6 +403,7 @@ async function setDraft($: EngineInterface, text: string): Promise<void> {
 
 /** After a send succeeds, the row shows resolved at once, so its quick button does not come back before the next poll. */
 async function markResolved($: EngineInterface, id: string, decision: string): Promise<void> {
+  markedAt.set(id, ++tick)
   await update($, escalations, all => all.map(x => (x.id === id ? { ...x, status: 'resolved' as const, decision } : x)))
 }
 
@@ -437,6 +453,10 @@ async function resolveRecommended($: EngineInterface, id: string): Promise<void>
   if (ran) void pollEscalations($)
 }
 
+/** What a Resolve all press does: wait while a send runs (the confirm is kept), send when the confirm is this exact set's, else arm it. */
+export const bulkStep = (busy: boolean, confirm: string, key: string): 'wait' | 'arm' | 'send' =>
+  busy ? 'wait' : confirm === key ? 'send' : 'arm'
+
 /** The rows Resolve all would send: every open row of the open view that has a recommendation, and how many it leaves out. */
 function bulkSet(all: readonly Escalation[], hidden: readonly string[], filter: EscalationFilter) {
   const open = filter === 'open' ? viewOf(all, hidden, 'open') : []
@@ -453,18 +473,23 @@ function bulkSet(all: readonly Escalation[], hidden: readonly string[], filter: 
  * while it runs does nothing.
  */
 async function resolveAll($: EngineInterface): Promise<void> {
-  if (inFlight.busy()) {
-    // The armed confirm is left as it is.
-    await update($, escalationNotice, () => 'Wait for the current send to finish.')
-    return
-  }
   const [all, hidden, filter] = await Promise.all([read($, escalations), read($, escalationHidden), read($, escalationFilter)])
   const { open, rows, skipped, key } = bulkSet(all, hidden, filter)
   if (rows.length === 0) {
     await notice($, open.length === 0 ? 'Nothing is open.' : `Nothing to resolve: none of the ${open.length} open has a recommendation.`)
     return
   }
-  if (!(await armed($, key))) return
+  const step = bulkStep(inFlight.busy(), await read($, escalationConfirm), key)
+  if (step === 'wait') {
+    // The armed confirm is left as it is.
+    await update($, escalationNotice, () => 'Wait for the current send to finish.')
+    return
+  }
+  if (step === 'arm') {
+    await update($, escalationConfirm, () => key)
+    return
+  }
+  await update($, escalationConfirm, () => '')
   const ran = await exclusive($, 'all', async () => {
     const failed: string[] = []
     let gone = 0
