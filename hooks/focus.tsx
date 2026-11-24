@@ -202,8 +202,9 @@ export function registerFocus(on: On, _options: Options): void {
       const nameCells = Math.min(38, Math.max(16, ...rows.map(p => p.name.length)))
       const barCells = Math.max(6, Math.min(18, width - nameCells - 14))
       // Terminal row width = name + bar + 10-column count + 2 gaps, inside the card's padding of 1 each side.
-      const termBarCells = Math.max(6, Math.min(16, Math.floor(width / 4)))
-      const termNameCells = Math.max(8, Math.min(30, width - 2 - termBarCells - 12))
+      const room = width - 3 - 12 // the card padding, one spare column, the row's two gaps and its 10-column count
+      const termNameCells = Math.max(8, Math.min(30, room - 8, Math.max(10, ...rows.map(p => p.name.length))))
+      const termBarCells = Math.max(8, room - termNameCells)
 
       return (
         <Box key={f.address} flexDirection="column" padding={1} gap={1} backgroundColor={CARD_BG}>
@@ -231,7 +232,7 @@ export function registerFocus(on: On, _options: Options): void {
             <Box flexDirection="column">
               {Svg
                 ? bar(done, inProgress, f.ready, total, Math.max(10, Math.min(48, width - 6)))
-                : segmentBar(`all-${f.address}`, done, inProgress, f.ready, total, Math.max(10, Math.min(48, width - 6)))}
+                : segmentBar(`all-${f.address}`, done, inProgress, f.ready, total, termBarCells)}
               <Box flexDirection="row" gap={2}>
                 {Svg ? (
                   <Box flexDirection="row" gap={2}>

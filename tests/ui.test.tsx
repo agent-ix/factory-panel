@@ -3,6 +3,38 @@ import { expect, test } from 'claude-code/testing'
 import { ACCENT, DOING, READY, TRACK, bar, cellBar, dots, loadColor, spark, stackBar, tempColor, usd } from '../hooks/ui/glyphs'
 import { widgets } from '../hooks/ui/widgets'
 
+// Colour maths for the palette test: WCAG contrast and HSL of a #rrggbb colour.
+const channels = (hex: string): [number, number, number] => {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+const luminance = (hex: string): number => {
+  const [r, g, b] = channels(hex).map(c => {
+    const v = c / 255
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+  }) as [number, number, number]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** The WCAG contrast ratio of two `#rrggbb` colours: (lighter + 0.05) / (darker + 0.05), 1 to 21. */
+const contrastRatio = (a: string, b: string): number => {
+  const [x, y] = [luminance(a), luminance(b)]
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+}
+
+/** A `#rrggbb` colour as hue in degrees (0 to 360), saturation and lightness (0 to 1). */
+const hslOf = (hex: string): { h: number; s: number; l: number } => {
+  const [r, g, b] = channels(hex).map(c => c / 255) as [number, number, number]
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  const l = (max + min) / 2
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1))
+  const raw = d === 0 ? 0 : max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return { h: (raw * 60 + 360) % 360, s, l }
+}
+
 test('glyph helpers draw bars, sparklines, colors and money', async () => {
   expect(bar(0.5, 6)).toBe('███░░░')
   expect(bar(null, 4)).toBe('░░░░')
@@ -77,53 +109,51 @@ test('the whole-cell bar rounds to whole cells', async () => {
 })
 
 
-const runs = (...a: Parameters<typeof stackBar>) => stackBar(...a).map(r => [r.fg, r.bg, r.text])
+const runs = (...a: Parameters<typeof stackBar>) => stackBar(...a).map(r => [r.fg, r.text])
 
-test('a stacked bar draws whole █ cells per section and eighth blocks with two colours at each boundary', async () => {
-  // Categories: 0 done, 1 in progress, 2 ready, 3 the remainder (track). A run is [fg, bg, text].
-  expect(runs(16, 0, 0, 128, 16)).toEqual([[0, null, '██'], [3, null, '█'.repeat(14)]])
-  expect(runs(0, 0, 0, 128, 4)).toEqual([[3, null, '████']])
-  expect(runs(128, 0, 0, 128, 4)).toEqual([[0, null, '████']])
-  // 3/8 of a cell done, then in progress: ▍ with the done colour left and the in-progress colour right.
-  expect(runs(3, 5, 0, 16, 2)).toEqual([[0, 1, '▍'], [3, null, '█']])
-  // in progress runs on in whole cells, ends in a partial cell whose background is the track.
-  expect(runs(16, 20, 0, 128, 16)).toEqual([[0, null, '██'], [1, null, '██'], [1, 3, '▌'], [3, null, '█'.repeat(11)]])
-  // ready follows in progress; each boundary cell shows its two neighbours.
-  expect(runs(16, 20, 8, 128, 16)).toEqual([[0, null, '██'], [1, null, '██'], [1, 2, '▌'], [2, 3, '▌'], [3, null, '█'.repeat(10)]])
-  // three sections in one cell: the left one is the foreground, the background is the track when the cell holds any.
-  expect(runs(1, 1, 1, 16, 2)).toEqual([[0, 3, '▏'], [3, null, '█']])
-  // 999 of 1000 never fills the bar; with one in progress the cell holds done, in progress and the track.
-  expect(runs(999, 0, 0, 1000, 16)).toEqual([[0, null, '█'.repeat(15)], [0, 3, '▉']])
-  expect(runs(999, 1, 0, 1000, 16)).toEqual([[0, null, '█'.repeat(15)], [0, 3, '▊']])
-  // a cell of 6 done, 1 ready and 1 track shows the track as its background, never the ready colour.
-  expect(runs(990, 0, 9, 1000, 16)).toEqual([[0, null, '█'.repeat(15)], [0, 3, '▊']])
+test('a stacked bar is whole █ cells shared out by largest remainder, one colour per run', async () => {
+  // Categories: 0 done, 1 in progress, 2 ready, 3 the remainder (track). A run is [category, text].
+  expect(runs(16, 0, 0, 128, 16)).toEqual([[0, '██'], [3, '█'.repeat(14)]])
+  expect(runs(0, 0, 0, 128, 4)).toEqual([[3, '████']])
+  expect(runs(128, 0, 0, 128, 4)).toEqual([[0, '████']])
+  // 2.5 cells of in progress round to 3 by largest remainder (the tie goes to the earlier section).
+  expect(runs(16, 20, 0, 128, 16)).toEqual([[0, '██'], [1, '███'], [3, '█'.repeat(11)]])
+  expect(runs(16, 20, 8, 128, 16)).toEqual([[0, '██'], [1, '███'], [2, '█'], [3, '█'.repeat(10)]])
+  // 999 of 1000 never fills the bar: done takes at most cells - 1.
+  expect(runs(999, 0, 0, 1000, 16)).toEqual([[0, '█'.repeat(15)], [3, '█']])
+  // with one in progress the section takes a cell from done; nothing is left for the track.
+  expect(runs(999, 1, 0, 1000, 16)).toEqual([[0, '█'.repeat(15)], [1, '█']])
+  expect(runs(990, 0, 9, 1000, 16)).toEqual([[0, '█'.repeat(14)], [2, '█'], [3, '█']])
   // zero total and NaN give an all-track bar.
-  expect(runs(3, 2, 1, 0, 4)).toEqual([[3, null, '████']])
-  expect(runs(NaN, NaN, NaN, NaN, 4)).toEqual([[3, null, '████']])
-  // a non-zero section with a tiny share still gets one eighth, taken from the largest.
-  expect(runs(0, 1, 0, 1000, 10)).toEqual([[1, 3, '▏'], [3, null, '█'.repeat(9)]])
+  expect(runs(3, 2, 1, 0, 4)).toEqual([[3, '████']])
+  expect(runs(NaN, NaN, NaN, NaN, 4)).toEqual([[3, '████']])
+  // a tiny non-zero section still gets one whole cell, taken from the largest.
+  expect(runs(0, 1, 0, 1000, 10)).toEqual([[1, '█'], [3, '█'.repeat(9)]])
+  // with no room (three sections in two cells) the later small sections get no cell.
+  expect(runs(1, 1, 1, 16, 2)).toEqual([[0, '█'], [3, '█']])
+  // no run carries a background colour or a partial block.
+  expect(stackBar(55, 10, 5, 100, 12).every(r => /^█+$/.test(r.text) && !('bg' in r))).toBe(true)
 })
 
-test('stacked bar sections land on the rounded eighths for every done, in-progress and ready', async () => {
+test('stacked bar cells add up to the width, with every present section visible, for every mix', async () => {
   const bad: number[][] = []
-  const cellsOf = (n: number) => Math.ceil(n / 8)
   for (let d = 0; d <= 80; d++) {
     for (let i = 0; d + i <= 80; i++) {
       for (let r = 0; d + i + r <= 80; r++) {
-        const sum = d + i + r
         const out = stackBar(d, i, r, 80, 10)
-        const cells = out.flatMap(run => [...run.text].map(() => run))
-        const count = (fg: number) => cells.filter(c => c.fg === fg).length
-        // Work remaining never reads full, which moves the last unit; check the exact case apart from it.
-        const capped = d < 80 && sum === 80
+        const n = [0, 0, 0, 0]
+        out.forEach(run => (n[run.fg]! += run.text.length))
+        const merged = out.every((run, k) => k === 0 || out[k - 1]!.fg !== run.fg)
+        const rest = 80 - d - i - r
         const ok =
-          cells.length === 10 &&
-          (capped
-            ? true // the cap takes a unit back; a cell holding three sections shows only two colours, so only the cell count is checked
-            : count(0) === cellsOf(d) &&
-              count(1) === cellsOf(d + i) - cellsOf(d) &&
-              count(2) === cellsOf(sum) - cellsOf(d + i) &&
-              count(3) === 10 - cellsOf(sum))
+          n.reduce((a, b) => a + b, 0) === 10 &&
+          merged &&
+          out.every(run => /^█+$/.test(run.text)) &&
+          (d === 0 || n[0]! >= 1) &&
+          (i === 0 || n[1]! >= 1) &&
+          (r === 0 || n[2]! >= 1) &&
+          (rest === 0 || n[3]! >= 1) &&
+          (d === 80 || n[0]! <= 9)
         if (!ok) bad.push([d, i, r])
       }
     }
@@ -131,6 +161,19 @@ test('stacked bar sections land on the rounded eighths for every done, in-progre
   expect(bad.slice(0, 5)).toEqual([])
 })
 
-test('the bar colour tokens are distinct', async () => {
+test('the bar colours read on a dark terminal and the track sits below them', async () => {
+  const bg = '#1e1e1e'
+  const sections = [ACCENT, DOING, READY]
+  for (const c of sections) expect(contrastRatio(c, bg)).toBeGreaterThanOrEqual(3)
+  expect(contrastRatio(TRACK, bg)).toBeGreaterThanOrEqual(1.1)
+  for (const c of sections) expect(contrastRatio(TRACK, c)).toBeGreaterThanOrEqual(2.9)
+  // Adjacent pairs in bar order, at the owner's palette: the achieved ratios are done/in progress 1.84,
+  // in progress/ready 1.57, ready/track 3.56, done/ready 1.17 and done/track 3.04; the floors are those less a margin.
+  expect(contrastRatio(ACCENT, DOING)).toBeGreaterThanOrEqual(1.7)
+  expect(contrastRatio(DOING, READY)).toBeGreaterThanOrEqual(1.45)
+  expect(contrastRatio(READY, TRACK)).toBeGreaterThanOrEqual(3.3)
+  expect(contrastRatio(ACCENT, READY)).toBeGreaterThanOrEqual(1.1)
+  expect(contrastRatio(ACCENT, TRACK)).toBeGreaterThanOrEqual(2.9)
   expect(new Set([ACCENT, DOING, READY, TRACK]).size).toBe(4)
+  expect(hslOf(ACCENT).h).toBeGreaterThan(200)
 })

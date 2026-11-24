@@ -64,11 +64,11 @@ export function widgets({ Box, Text, Button }: Els) {
     </Box>
   )
 
-  /** A stacked bar in one row: done (accent), in progress (teal), ready (violet), then the dim track. */
+  /** A stacked bar in one row: done (accent), in progress (amber), ready (blue-grey), then the dim track. */
   const segmentBar = (key: string, done: number, inProgress: number, ready: number, total: number, cells: number) => (
     <Box key={key} flexDirection="row">
       {stackBar(done, inProgress, ready, total, cells).map((run, i) => (
-        <Text key={i} color={BAR_COLORS[run.fg]} backgroundColor={run.bg === null ? undefined : BAR_COLORS[run.bg]}>
+        <Text key={i} color={BAR_COLORS[run.fg]}>
           {run.text}
         </Text>
       ))}

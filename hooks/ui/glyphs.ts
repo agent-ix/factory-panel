@@ -1,14 +1,14 @@
 // Text-glyph drawing that works on every surface: the terminal has no Svg, and block
 // characters render the same in a terminal pane, the desktop app and a test.
 
-/** The saturated light blue accent: done work, bars, big numbers and heading accents. Any string a Text or Box takes. */
-export const ACCENT = '#4db8ff'
-/** A vivid teal-green for in-progress work: apart from the accent, and not a state colour. */
-export const DOING = '#00d4a0'
-/** A vivid violet for ready work: cool like the other two, and apart from both on a dark background. */
-export const READY = '#b06bff'
-/** The track: the remainder of a bar, a dim grey-blue that still reads as a rail on a dark background. */
-export const TRACK = '#3f4b5e'
+/** The blue accent: done work, bars, big numbers and heading accents. Any string a Text or Box takes. */
+export const ACCENT = '#3b82c4'
+/** A muted amber for in-progress work, apart from the accent and not a state colour. */
+export const DOING = '#e0a34a'
+/** A blue-grey for ready work. */
+export const READY = '#7e8aa3'
+/** The track: the remainder of a bar, a dark blue-grey below every section that still reads as a rail. */
+export const TRACK = '#2d3543'
 
 const BLOCKS = '▁▂▃▄▅▆▇█'
 const EIGHTHS = '▏▎▍▌▋▊▉'
@@ -83,76 +83,58 @@ export const usd = (n: number): string => {
 /** The category of a section of a bar: done, in progress, ready, or the remainder (the track). */
 export type BarCategory = 0 | 1 | 2 | 3
 
-/** A run of consecutive cells drawn alike: `fg` is the section on the left, `bg` the section on the right of a boundary cell. */
-export type BarRun = { fg: BarCategory; bg: BarCategory | null; text: string }
+/** A run of consecutive whole cells in one section's colour. */
+export type BarRun = { fg: BarCategory; text: string }
 
 /**
- * A stacked progress bar of `cells` cells, each eight units (eighths of a cell), the whole bar
- * standing for `total` items. Sections stack from the left: done, in progress, ready, then the
- * remainder. Whole cells are `█` in the section's colour. A cell where a section ends is a
- * left-aligned eighth block (`▏▎▍▌▋▊▉`) whose foreground is the section on the left and whose
- * background is the section on the right, so one cell shows both colours with 1/8 precision.
- * When a cell holds three sections the left one is the foreground and the background is the track
- * if the cell holds any, else the later section covering more of the rest (the first on a tie), so the cell then
- * shows the two sections' colours only. Boundaries sit at round(cumulative * units / total) so
- * the units add up; a non-zero section gets at least one unit (taken from the largest section);
- * counts are clamped so they never pass total; and while work remains (done under total) the
- * bar is never completely full. NaN and a zero total give an all-remainder bar. Runs of equal
- * `fg` and `bg` are merged, for the caller to colour.
+ * A stacked progress bar of `cells` whole cells, one cell standing for total / cells items. The
+ * cells are shared out among done, in progress, ready and the remainder by the largest-remainder
+ * method (ties go to the earlier section), so the counts add up to `cells` exactly. A non-zero
+ * section gets at least one cell when there is room (taken from the largest section). While work
+ * remains (done under total) done takes at most `cells - 1` cells, and the remainder keeps a cell
+ * when any item is neither done, in progress nor ready, so the bar never reads full. Every cell
+ * is `█` in its section's colour: no fractions of a cell and no background colour. Adjacent cells
+ * of one section are merged into a run. NaN and a zero total give an all-remainder bar.
  */
-export const stackBar = (
-  done: number,
-  inProgress: number,
-  ready: number,
-  total: number,
-  cells: number,
-): BarRun[] => {
+export const stackBar = (done: number, inProgress: number, ready: number, total: number, cells: number): BarRun[] => {
+  if (cells <= 0) return []
   const ok = Number.isFinite(total) && total > 0
   const fin = (n: number) => (Number.isFinite(n) ? Math.max(0, n) : 0)
   const d = ok ? Math.min(fin(done), total) : 0
   const i = ok ? Math.min(fin(inProgress), total - d) : 0
   const r = ok ? Math.min(fin(ready), total - d - i) : 0
-  const U = cells * 8
-  const edge = (cumulative: number) => (ok ? Math.round((cumulative * U) / total) : 0)
-  const u = [edge(d), edge(d + i) - edge(d), edge(d + i + r) - edge(d + i)]
-  const counts = [d, i, r]
-  const rest = () => U - u[0]! - u[1]! - u[2]!
-  const take = () => {
-    const v = [u[0]!, u[1]!, u[2]!, rest()]
-    const from = v.indexOf(Math.max(...v))
-    return v[from]! > 1 ? from : -1
-  }
-  for (let k = 0; k < 3; k++) {
-    if (counts[k]! > 0 && u[k] === 0) {
-      const from = take()
-      if (from >= 0 && from < 3) u[from]!--
-      if (from >= 0) u[k] = 1
+  const items = [d, i, r, ok ? total - d - i - r : 0]
+  const n = [0, 0, 0, ok ? 0 : cells]
+  if (ok) {
+    const quota = items.map(c => (c * cells) / total)
+    quota.forEach((q, k) => (n[k] = Math.floor(q)))
+    let left = cells - n.reduce((a, b) => a + b, 0)
+    const frac = quota.map(q => q - Math.floor(q))
+    const order = [0, 1, 2, 3].sort((a, b) => frac[b]! - frac[a]! || a - b)
+    for (let k = 0; left > 0; k = (k + 1) % 4, left--) n[order[k]!]!++
+    const take = (): number => {
+      const biggest = n.indexOf(Math.max(...n))
+      return n[biggest]! > 1 ? biggest : -1
+    }
+    for (let k = 0; k < 4; k++) {
+      if (items[k]! > 0 && n[k] === 0) {
+        const from = take()
+        if (from >= 0) {
+          n[from]!--
+          n[k] = 1
+        }
+      }
+    }
+    if (d < total && n[0]! > cells - 1) {
+      n[0] = cells - 1
+      const next = [1, 2, 3].find(k => items[k]! > 0) ?? 3
+      n[next]!++
     }
   }
-  if (ok && d < total && rest() <= 0) {
-    const from = take()
-    if (from >= 0 && from < 3) u[from]!--
-  }
-  const edges = [u[0]!, u[0]! + u[1]!, u[0]! + u[1]! + u[2]!]
-  const category = (unit: number): BarCategory => (unit < edges[0]! ? 0 : unit < edges[1]! ? 1 : unit < edges[2]! ? 2 : 3)
   const runs: BarRun[] = []
-  for (let c = 0; c < cells; c++) {
-    const per = [0, 0, 0, 0]
-    for (let s = c * 8; s < c * 8 + 8; s++) per[category(s)]!++
-    const fg = category(c * 8)
-    let bg: BarCategory | null = null
-    let glyph = '█'
-    if (per[fg] !== 8) {
-      const left = per[fg]!
-      const after = [0, 1, 2, 3].filter(k => k > fg && per[k]! > 0)
-      // Any track unit in the cell makes the track the background, so a bar with work left never looks full.
-      bg = (per[3]! > 0 ? 3 : after.reduce((best, k) => (per[k]! > per[best]! ? k : best), after[0]!)) as BarCategory
-      glyph = EIGHTHS[left - 1] ?? '█'
-    }
-    const last = runs[runs.length - 1]
-    if (last && last.fg === fg && last.bg === bg) last.text += glyph
-    else runs.push({ fg, bg, text: glyph })
-  }
+  n.forEach((count, k) => {
+    if (count > 0) runs.push({ fg: k as BarCategory, text: '█'.repeat(count) })
+  })
   return runs
 }
 
