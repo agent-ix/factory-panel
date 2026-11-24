@@ -98,7 +98,7 @@ export type FocusView = {
 
 export type FocusMeta = { at: number | null; busy: boolean; error: string | null }
 
-// ---------------------------------------------------------------- Relay pane
+// ---------------------------------------------------------------- Escalations and Relay panes
 
 export type EscalationStatus = 'waiting' | 'investigating' | 'resolved'
 
@@ -116,6 +116,9 @@ export type Escalation = {
   decision: string
   hasDetail: boolean
 }
+
+/** The Escalations pane's views: still open (waiting or investigating), resolved, or hidden by the person. */
+export type EscalationFilter = 'open' | 'resolved' | 'hidden'
 
 export type Announcement = { at: string; from: string; to: string; text: string }
 
@@ -155,11 +158,14 @@ declare module 'claude-code' {
       announcements: Shaped<Announcement[]>
       relayMeta: Shaped<RelayMeta>
       relayLeads: string[]
-      relayFilter: EscalationStatus | 'cleared'
-      relayCleared: string[]
-      relayAddress: Record<string, string>
-      relaySelected: string
-      relayDraft: string
+      escalationMeta: Shaped<RelayMeta>
+      escalationFilter: EscalationFilter
+      escalationHidden: string[]
+      escalationAddress: Record<string, string>
+      escalationSelected: string
+      escalationDraft: string
+      escalationConfirm: string
+      escalationNotice: string
       relayAnnounce: string
       relayTarget: string
       relayConfirm: string

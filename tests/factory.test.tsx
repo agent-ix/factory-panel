@@ -255,3 +255,30 @@ test('the terminal gauge draws whole-cell blocks', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /^███░░░$/ }))?.text).toBe('███░░░')
   await ui.unmount()
 })
+
+test('a Prometheus timeout shows one short footer line, with the full text in the open detail', async ($, on) => {
+  engine(on)
+  const long = 'no complete answer within 30000ms'
+  on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'error', error: long }) } }))
+  on('process.run', (_, e) => {
+    const [bin] = e.argv
+    if (bin === 'printenv') return run('/home/test\n')
+    if (bin === 'herdr') return run(herdrSnapshot)
+    if (bin === 'agent-msg') return run(doctor)
+    return run('{}', 4)
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const footer = (await ui.find({ type: 'Text', text: /^prometheus: timed out$/ }))?.text
+    expect(footer).toBe('prometheus: timed out')
+    // 40 columns or fewer, and the long text is not in the footer.
+    expect(footer?.length).toBeLessThanOrEqual(40)
+    expect(await ui.find({ type: 'Text', text: /30000ms/ })).toBeUndefined()
+    // Opening a chip shows the full error for diagnosis.
+    await ui.press({ key: 'herdr' })
+    expect((await ui.find({ type: 'Text', text: /30000ms/ }))?.text).toContain(long)
+    await ui.press({ key: 'herdr' })
+    await ui.unmount()
+  }
+})

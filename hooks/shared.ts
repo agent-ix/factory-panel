@@ -23,6 +23,10 @@ export const readOptions = (options: Record<string, unknown>): Options => ({
 export const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+/** A timeout reads as one short line (`prometheus: timed out`) that fits a 40-column pane; any other text is unchanged. The full text stays in the pane's detail. */
+export const shortError = (source: string, text: string): string =>
+  /timed? ?out|no complete answer|within \d+ ?ms/i.test(text) ? `${source}: timed out` : text
+
 export const ago = (at: number | null, now: number): string => {
   if (at === null) return 'never'
   const s = Math.max(0, Math.round((now - at) / 1000))

@@ -1,5 +1,6 @@
 import type { Register } from 'claude-code'
 
+import { PANE_SPEC as ESCALATIONS_PANE, registerEscalations, startEscalations } from './escalations'
 import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './factory'
 import { PANE_SPEC as FOCUS_PANE, registerFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
@@ -7,7 +8,7 @@ import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
 
 // Each pane lives in its own file; open panes show as tabs beside the chat.
-const PANES = [FACTORY_PANE, FOCUS_PANE, RELAY_PANE, TEAM_PANE]
+const PANES = [FACTORY_PANE, FOCUS_PANE, ESCALATIONS_PANE, RELAY_PANE, TEAM_PANE]
 const SETTLE_MS = 15_000
 // Ids this session has opened at least once; one the person closed afterwards is not reopened.
 const everOpened = new Set<string>()
@@ -16,6 +17,7 @@ export const register: Register = (on, rawOptions) => {
   const options = readOptions(rawOptions as Record<string, unknown>)
   registerFactory(on, options)
   registerFocus(on, options)
+  registerEscalations(on, options)
   registerRelay(on, options)
   registerTeam(on, options)
 
@@ -25,6 +27,7 @@ export const register: Register = (on, rawOptions) => {
   on('session.start', async ($, e, next) => {
     await guarded($, 'Factory start', () => startFactory($, options))
     await guarded($, 'Focus start', () => startFocus($, options))
+    await guarded($, 'Escalations start', () => startEscalations($, options))
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
     if (e.isInteractive) {
