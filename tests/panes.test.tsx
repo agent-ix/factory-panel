@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
+import { makeGate } from '../hooks/escalations'
 import { ACCENT, DOING, TRACK } from '../hooks/ui/glyphs'
 
 // Fixtures are trimmed copies of what agent-msg, ix-board and Prometheus answered on
@@ -125,7 +126,7 @@ const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', 
 function engine(
   on: Parameters<TestBody>[1],
   ran: string[][],
-  options: { teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; gate?: Promise<void>; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
+  options: { teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
 ): void {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   const opened = new Map<string, boolean>()
@@ -157,6 +158,7 @@ function engine(
   const store = options.store ?? new Map<string, unknown>()
   on('store.get', (_, e) => ({ value: store.get(e.key) }))
   on('store.set', (_, e) => {
+    if (options.failStoreSet) throw new Error('disk full')
     store.set(e.key, e.value)
     return { value: undefined }
   })
@@ -165,7 +167,7 @@ function engine(
     const isTeam = e.url.endsWith('/query_range') && body.includes('ix_team_verified_path_closed_24h')
     return { value: { status: 200, ok: true, headers: {}, text: options.teamMetrics && isTeam ? TEAM_RANGE : EMPTY } }
   })
-  on('process.run', async (_, e) => {
+  on('process.run', (_, e) => {
     const argv = [...e.argv]
     ran.push(argv)
     const line = argv.join(' ')
@@ -183,7 +185,6 @@ function engine(
     if (line.startsWith('agent-msg log')) return options.failLog ? fail('relay unreachable') : ok(LOG)
     if (line === 'herdr --machine hub agent list') return ok(HERDR_AGENTS)
     if (line === 'agent-msg find --json w1F:p13') return ok(FIND_PANE)
-    if (line.startsWith('agent-msg resolve')) await options.gate
     if (line.startsWith('agent-msg resolve'))
       return argv[2] === options.failResolve ? fail('relay down') : ok(`resolved ${argv[2]}; told the lead; posted to ENG-101`)
     if (line.startsWith('agent-msg send')) return ok('')
@@ -489,37 +490,74 @@ test('Relay’s old clearedEscalations list migrates once, and a restored row st
   await again.unmount()
 })
 
-test('a press during Resolve all does not start a second run', async ($, on) => {
+test('the send gate refuses a second send for a held id, and everything while Resolve all is held', () => {
+  const gate = makeGate()
+  // A send for e30 is held: pressing e30 again is refused, another id is not.
+  expect(gate.enter('e30')).toBe(true)
+  expect(gate.enter('e30')).toBe(false)
+  expect(gate.enter('e31')).toBe(true)
+  // Resolve all cannot start while any send runs.
+  expect(gate.enter('all')).toBe(false)
+  gate.leave('e30')
+  gate.leave('e31')
+  expect(gate.busy()).toBe(false)
+  // Held, Resolve all refuses itself and every row.
+  expect(gate.enter('all')).toBe(true)
+  expect(gate.enter('all')).toBe(false)
+  expect(gate.enter('e30')).toBe(false)
+  expect(gate.keys()).toEqual(['all'])
+  gate.leave('all')
+  expect(gate.enter('e30')).toBe(true)
+})
+
+test('a one-press Resolve marks the row resolved at once, and it stays resolved after the poll', async ($, on) => {
   const ran: string[][] = []
-  let release: () => void = () => {}
-  const gate = new Promise<void>(r => (release = r))
-  engine(on, ran, { teamMetrics: false, gate })
+  const sent = () => ran.filter(a => a[1] === 'resolve').map(a => a[2])
+  // The relay lists e30 as resolved once the resolve has gone through.
+  engine(on, ran, {
+    teamMetrics: false,
+    escalations: () => (sent().includes('e30') ? ESCALATIONS.replace('e30  waiting', 'e30  resolved') : ESCALATIONS),
+  })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
-  const sent = () => ran.filter(a => a[1] === 'resolve').map(a => a[2])
 
-  await ui.press({ key: 'resolve-all' })
-  // The second press sends and is held at the gate; presses made meanwhile must not start another run.
-  const sending = ui.press({ key: 'resolve-all' })
-  const more = [ui.press({ key: 'resolve-all' }), ui.press({ key: 'resolve-all' })]
-  release()
-  await Promise.all([sending, ...more])
+  await ui.press({ key: 'quick-e30' })
+  expect(sent()).toEqual(['e30'])
+  // Resolved at once: no quick button to press again, one fewer open.
+  expect(await ui.find({ key: 'quick-e30' })).toBeUndefined()
+  expect((await ui.find({ key: 'filter-open' }))?.text).toBe('open 2')
   await ui.press({ key: 'refresh' })
-  expect(sent()).toEqual(['e32', 'e30'])
+  expect(await ui.find({ key: 'quick-e30' })).toBeUndefined()
+  expect(sent()).toEqual(['e30'])
   await ui.unmount()
 })
 
-test('two quick presses on one row send one resolve', async ($, on) => {
+test('a very long list draws at most 50 rows and says how many are not shown', async ($, on) => {
   const ran: string[][] = []
-  let release: () => void = () => {}
-  const gate = new Promise<void>(r => (release = r))
-  engine(on, ran, { teamMetrics: false, gate })
+  const rows = Array.from({ length: 55 }, (_, i) => `e${100 + i}  waiting  T-${i}  session/cc33/dd44  11-20 16:29`).join('\n')
+  engine(on, ran, { teamMetrics: false, escalations: () => rows })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface })
+    expect((await ui.find({ key: 'filter-open' }))?.text).toBe('open 55')
+    expect(await ui.find({ key: 'sel-e154' })).toBeDefined()
+    expect(await ui.find({ key: 'sel-e105' })).toBeDefined()
+    expect(await ui.find({ key: 'sel-e104' })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: /more not shown/ }))?.text).toBe('+5 more not shown; Hide all and Resolve all include them')
+    expect((await ui.find({ key: 'hide-all' }))?.text).toBe('Hide all 55')
+    await ui.unmount()
+  }
+})
+
+test('a failed save of the hidden list keeps its notice instead of Hid eN', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false, failStoreSet: true })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'desktop' })
-  const presses = [ui.press({ key: 'quick-e30' }), ui.press({ key: 'quick-e30' }), ui.press({ key: 'quick-e30' })]
-  release()
-  await Promise.all(presses)
-  expect(ran.filter(a => a[1] === 'resolve').map(a => a[2])).toEqual(['e30'])
+  await ui.press({ key: 'hide-e30' })
+  expect((await ui.find({ type: 'Text', text: /^Could not save the hidden list/ }))?.text).toMatch(/Could not save the hidden list/)
+  expect(await ui.find({ type: 'Text', text: 'Hid e30.' })).toBeUndefined()
   await ui.unmount()
 })
 

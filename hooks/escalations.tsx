@@ -15,6 +15,8 @@ const PANE = 'escalations'
 const TITLE = 'Escalations'
 export const PANE_SPEC = { id: PANE, title: TITLE }
 const POLL_MS = 60 * 1000
+/** Rows drawn at once; bulk actions still cover the rest. */
+const MAX_ROWS = 50
 
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], {
   shape: 'escalations-1',
@@ -36,8 +38,25 @@ const escalationDraft = atom({ plugin: 'factory-panel', key: 'escalationDraft' }
 const escalationConfirm = atom({ plugin: 'factory-panel', key: 'escalationConfirm' } as const, '')
 const escalationNotice = atom({ plugin: 'factory-panel', key: 'escalationNotice' } as const, '')
 
-/** The same set, read and written synchronously so a second press cannot slip in between a check and a mark. */
-const inFlight = new Set<string>()
+/**
+ * Which sends are running: an id, or 'all' while Resolve all runs. `enter` checks and marks in one
+ * synchronous step, so a second press cannot slip in between. One id blocks only itself; 'all'
+ * blocks everything and cannot start while anything runs.
+ */
+export function makeGate() {
+  const held = new Set<string>()
+  return {
+    enter(key: string): boolean {
+      if (held.has(key) || held.has('all') || (key === 'all' && held.size > 0)) return false
+      held.add(key)
+      return true
+    },
+    leave: (key: string) => void held.delete(key),
+    keys: () => [...held],
+    busy: () => held.size > 0,
+  }
+}
+const inFlight = makeGate()
 const HIDDEN_KEY = 'hiddenEscalations'
 /** What the Relay pane called hiding: bare ids, which hide a row whatever its status. */
 const LEGACY_KEY = 'clearedEscalations'
@@ -150,18 +169,19 @@ async function pollEscalations($: EngineInterface): Promise<void> {
  */
 async function settleHidden($: EngineInterface, listed: readonly Escalation[]): Promise<void> {
   if (listed.length === 0) return
-  const before = await read($, escalationHidden)
   const byId = new Map(listed.map(x => [x.id, x]))
-  const after = [
-    ...new Set(
-      before.flatMap(h => {
-        const x = byId.get(idOf(h))
-        return x ? (hideKey(x) === h || h === x.id ? [hideKey(x)] : []) : []
-      }),
-    ),
-  ]
-  if (after.length === before.length && after.every((h, i) => h === before[i])) return
-  await saveHidden($, after)
+  // A list that is cut short only drops the hides of the rows it lost; those rows reappear.
+  await changeHidden($, before => {
+    const after = [
+      ...new Set(
+        before.flatMap(h => {
+          const x = byId.get(idOf(h))
+          return x ? (hideKey(x) === h || h === x.id ? [hideKey(x)] : []) : []
+        }),
+      ),
+    ]
+    return after.length === before.length && after.every((h, i) => h === before[i]) ? before : after
+  })
 }
 
 const pick = (x: Escalation): Partial<Escalation> => ({
@@ -195,14 +215,13 @@ async function armed($: EngineInterface, action: string): Promise<boolean> {
 
 /** Runs one send unless one for `key` (or Resolve all) is already running. Returns whether it ran. */
 async function exclusive($: EngineInterface, key: string, run: () => Promise<void>): Promise<boolean> {
-  if (inFlight.has(key) || inFlight.has('all') || (key === 'all' && inFlight.size > 0)) return false
-  inFlight.add(key)
-  await update($, escalationBusy, () => [...inFlight])
+  if (!inFlight.enter(key)) return false
+  await update($, escalationBusy, () => inFlight.keys())
   try {
     await run()
   } finally {
-    inFlight.delete(key)
-    await update($, escalationBusy, () => [...inFlight])
+    inFlight.leave(key)
+    await update($, escalationBusy, () => inFlight.keys())
   }
   return true
 }
@@ -298,40 +317,58 @@ async function loadHidden($: EngineInterface): Promise<void> {
   }
 }
 
-async function saveHidden($: EngineInterface, after: string[]): Promise<void> {
-  await update($, escalationHidden, () => after)
+/**
+ * Changes the hidden list in one step from the list as it is when the change lands (no await
+ * between read and write, so a hide that lands meanwhile is not overwritten), then stores it.
+ * Returns false, with a notice saying so, when the store refused the write.
+ */
+async function changeHidden($: EngineInterface, change: (before: string[]) => string[]): Promise<boolean> {
+  let after: string[] = []
+  let before: string[] = []
+  await update($, escalationHidden, b => {
+    before = b
+    after = change(b)
+    return after
+  })
+  if (after === before) return true
   try {
     await $.store.set(HIDDEN_KEY, after)
+    return true
   } catch (error) {
     await update($, escalationNotice, () => `Could not save the hidden list: ${errorText(error)}`)
+    return false
   }
 }
 
 async function hideOne($: EngineInterface, id: string): Promise<void> {
   const x = (await read($, escalations)).find(e => e.id === id)
   if (!x) return
-  const before = await read($, escalationHidden)
-  await saveHidden($, [...before.filter(h => idOf(h) !== x.id), hideKey(x)])
+  const ok = await changeHidden($, b => [...b.filter(h => idOf(h) !== x.id), hideKey(x)])
   await update($, escalationSelected, () => '')
-  await notice($, `Hid ${id}.`)
+  if (ok) await notice($, `Hid ${id}.`)
 }
 
 async function restoreOne($: EngineInterface, id: string): Promise<void> {
-  const before = await read($, escalationHidden)
-  await saveHidden($, before.filter(h => idOf(h) !== id))
+  const ok = await changeHidden($, b => b.filter(h => idOf(h) !== id))
   await update($, escalationSelected, () => '')
-  await notice($, `Restored ${id}.`)
+  if (ok) await notice($, `Restored ${id}.`)
 }
 
 /** Hides every row of the current view. Local only: nothing is sent to the relay. */
 async function hideAll($: EngineInterface): Promise<void> {
-  const [all, hidden, filter] = await Promise.all([read($, escalations), read($, escalationHidden), read($, escalationFilter)])
-  const rows = viewOf(all, hidden, filter)
-  if (rows.length === 0 || filter === 'hidden') return
-  const ids = new Set(rows.map(x => x.id))
-  await saveHidden($, [...hidden.filter(h => !ids.has(idOf(h))), ...rows.map(hideKey)])
+  const [all, filter] = await Promise.all([read($, escalations), read($, escalationFilter)])
+  if (filter === 'hidden') return
+  let count = 0
+  const ok = await changeHidden($, b => {
+    const rows = viewOf(all, b, filter)
+    count = rows.length
+    if (rows.length === 0) return b
+    const ids = new Set(rows.map(x => x.id))
+    return [...b.filter(h => !ids.has(idOf(h))), ...rows.map(hideKey)]
+  })
+  if (count === 0) return
   await update($, escalationSelected, () => '')
-  await notice($, `Hid ${rows.length}. Nothing was sent.`)
+  if (ok) await notice($, `Hid ${count}. Nothing was sent.`)
 }
 
 async function setFilter($: EngineInterface, filter: EscalationFilter): Promise<void> {
@@ -349,6 +386,11 @@ async function setDraft($: EngineInterface, text: string): Promise<void> {
   await update($, escalationDraft, () => text)
 }
 
+/** After a send succeeds, the row shows resolved at once, so its quick button does not come back before the next poll. */
+async function markResolved($: EngineInterface, id: string, decision: string): Promise<void> {
+  await update($, escalations, all => all.map(x => (x.id === id ? { ...x, status: 'resolved' as const, decision } : x)))
+}
+
 /** `agent-msg resolve <id> <decision>`: the relay's one way to close an escalation. */
 const resolveCommand = ($: EngineInterface, id: string, decision: string) =>
   runText($, ['agent-msg', 'resolve', id, decision], 60_000)
@@ -363,6 +405,7 @@ async function resolveEscalation($: EngineInterface, id: string): Promise<void> 
   await exclusive($, id, async () => {
     try {
       const out = await resolveCommand($, id, decision)
+      await markResolved($, id, decision)
       await update($, escalationDraft, () => '')
       await update($, escalationSelected, () => '')
       await notice($, out.trim().split('\n').pop() || `Resolved ${id}.`)
@@ -384,6 +427,7 @@ async function resolveRecommended($: EngineInterface, id: string): Promise<void>
   const ran = await exclusive($, id, async () => {
     try {
       const out = await resolveCommand($, id, recommendation)
+      await markResolved($, id, recommendation)
       await update($, escalationSelected, () => '')
       await notice($, out.trim().split('\n').pop() || `Resolved ${id}.`)
     } catch (error) {
@@ -409,7 +453,11 @@ function bulkSet(all: readonly Escalation[], hidden: readonly string[], filter: 
  * while it runs does nothing.
  */
 async function resolveAll($: EngineInterface): Promise<void> {
-  if (inFlight.size > 0) return
+  if (inFlight.busy()) {
+    // The armed confirm is left as it is.
+    await update($, escalationNotice, () => 'Wait for the current send to finish.')
+    return
+  }
   const [all, hidden, filter] = await Promise.all([read($, escalations), read($, escalationHidden), read($, escalationFilter)])
   const { open, rows, skipped, key } = bulkSet(all, hidden, filter)
   if (rows.length === 0) {
@@ -417,7 +465,7 @@ async function resolveAll($: EngineInterface): Promise<void> {
     return
   }
   if (!(await armed($, key))) return
-  await exclusive($, 'all', async () => {
+  const ran = await exclusive($, 'all', async () => {
     const failed: string[] = []
     let gone = 0
     for (const x of rows) {
@@ -429,6 +477,7 @@ async function resolveAll($: EngineInterface): Promise<void> {
       }
       try {
         await resolveCommand($, x.id, x.recommendation)
+        await markResolved($, x.id, x.recommendation)
       } catch (error) {
         failed.push(`${x.id} failed: ${errorText(error)}`)
       }
@@ -442,6 +491,12 @@ async function resolveAll($: EngineInterface): Promise<void> {
     await update($, escalationSelected, () => '')
     await notice($, [head, ...failed].join('\n'))
   })
+  if (!ran) {
+    // Another send started first: nothing went out, so the confirm is kept.
+    await update($, escalationConfirm, () => key)
+    await update($, escalationNotice, () => 'Wait for the current send to finish.')
+    return
+  }
   void pollEscalations($)
 }
 
@@ -733,7 +788,12 @@ export function registerEscalations(on: On, _options: Options): void {
 
         <Box flexDirection="column" gap={isTerminal ? 0 : 1}>
           {shown.length === 0 && <Text dimColor>No {filter} escalations.</Text>}
-          {shown.map(row)}
+          {shown.slice(0, MAX_ROWS).map(row)}
+          {shown.length > MAX_ROWS && (
+            <Text dimColor size="caption">
+              +{shown.length - MAX_ROWS} more not shown; Hide all and Resolve all include them
+            </Text>
+          )}
         </Box>
 
         <Box flexDirection="row" justifyContent="space-between">
