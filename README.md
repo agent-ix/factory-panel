@@ -1,7 +1,6 @@
 # factory-panel
 
-Panes beside the Claude Code chat for running the Agent IX factory. Each pane is a tab and
-refreshes in place.
+factory-panel is a Claude Code plugin that adds panes beside the chat for running the Agent IX factory. Each pane is a tab and refreshes in place.
 
 | Pane | Command | Shows | Source |
 | --- | --- | --- | --- |
@@ -17,17 +16,15 @@ ix-board reads share a rate-limit gate across sessions on a machine: it keeps ea
 
 ## Install
 
-From the Agent IX marketplace:
+```bash
+claude plugin install factory-panel --marketplace agent-ix/factory-panel
+```
+
+Once the plugin is in the agent-ix marketplace, you can install it from there instead:
 
 ```bash
 claude plugin marketplace add agent-ix/agent-plugins
 claude plugin install factory-panel@agent-ix
-```
-
-Or directly from this repository:
-
-```bash
-/plugin install factory-panel --marketplace agent-ix/factory-panel
 ```
 
 ## Setup
