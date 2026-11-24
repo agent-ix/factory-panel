@@ -122,9 +122,9 @@ export async function startRelay($: EngineInterface, _options: Options): Promise
 
 export function registerRelay(on: On, _options: Options): void {
   on('command.run', { command: 'relay' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
     void pollRelay($)
-    return { text: opened.isPlaced ? 'Relay pane opened.' : `Relay pane waits: ${opened.reason}` }
+    return { text: opened.isPlaced ? 'Relay pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Relay pane waits: ${opened.reason}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

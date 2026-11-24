@@ -398,9 +398,9 @@ export async function startFactory($: EngineInterface, options: Options): Promis
 
 export function registerFactory(on: On, options: Options): void {
   on('command.run', { command: 'factory' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
     void refreshAll($, options)
-    return { text: opened.isPlaced ? 'Factory panel opened.' : `Factory panel waits: ${opened.reason}` }
+    return { text: opened.isPlaced ? 'Factory panel opened. Esc closes it; ctrl+x tab gives it the keys.' : `Factory panel waits: ${opened.reason}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

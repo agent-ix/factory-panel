@@ -101,9 +101,9 @@ export async function startTeam($: EngineInterface, options: Options): Promise<v
 
 export function registerTeam(on: On, options: Options): void {
   on('command.run', { command: 'team' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
     void pollTeam($, options)
-    return { text: opened.isPlaced ? 'Team pane opened.' : `Team pane waits: ${opened.reason}` }
+    return { text: opened.isPlaced ? 'Team pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Team pane waits: ${opened.reason}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
