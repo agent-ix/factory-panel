@@ -25,7 +25,7 @@ const HINT = 'panes open beside the chat in the fullscreen layout. Type /factory
 
 /** Opens the panes once the layout is known to dock them; otherwise leaves a hint. */
 function decideLayout($: EngineInterface, viewport: RenderViewport | undefined, inlineView: string): void {
-  if (!isInteractive || isLayoutDecided || viewport?.isFullscreen === undefined) return
+  if (isLayoutDecided || viewport?.isFullscreen === undefined) return
   isLayoutDecided = true
   if (viewport.isFullscreen !== true) {
     if (inlineView === 'off') $.ui.status(HINT)
@@ -59,6 +59,8 @@ export const register: Register = (on, rawOptions) => {
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
     await guarded($, 'Band start', () => startBand($, options))
+    // The first draw happens before this hook finishes; draw again now the state and role are in.
+    $.ui.invalidate('ui.render')
     return next(e)
   })
 
@@ -71,8 +73,7 @@ export const register: Register = (on, rawOptions) => {
     lastDraw.at = Date.now()
     lastDraw.isFullscreen = e.viewport?.isFullscreen
     lastDraw.interactive = isInteractive
-    if (!isInteractive) lastDraw.reason = 'session not interactive'
-    else if (e.viewport?.isFullscreen === true) lastDraw.reason = 'panes dock in fullscreen, no band'
+    if (e.viewport?.isFullscreen === true) lastDraw.reason = 'panes dock in fullscreen, no band'
     else if (options.inlineView !== 'band' && options.inlineView !== 'status') lastDraw.reason = 'inlineView is off'
     else {
       await syncStatus($, options, false)
