@@ -11,13 +11,17 @@ import type {
   RelayCheck,
   RelayView,
 } from '../types'
-import { CARD_BG, INK, ago, errorText, promQuery } from './shared'
+import { CARD_BG, INK, ago, errorText, pausedText, promQuery } from './shared'
+import { ACCENT, tempColor, usd } from './ui/glyphs'
+import { widgets } from './ui/widgets'
+import { gatedBoard } from './linear'
 import type { Options, Sample } from './shared'
 
 type Detail = 'none' | 'herdr' | 'relay' | 'board'
 
 const PANE = 'factory'
 const TITLE = 'Factory'
+export const PANE_SPEC = { id: PANE, title: TITLE }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
 const DOWN_AFTER_SECS = 120
@@ -252,11 +256,28 @@ type BoardOutput = {
   missing_teams?: string[]
 }
 
+type BoardRead = { agents: BoardAgent[]; notes: string[] }
+
 async function pollBoard($: EngineInterface, options: Options): Promise<void> {
   if (options.teams.length === 0) return
-  const now = await $.clock.now()
   await update($, freshness, f => ({ ...f, boardBusy: true }))
   try {
+    const read = await gatedBoard($, `agents:${options.teams.join(',')}`, () => readBoard($, options))
+    const now = await $.clock.now()
+    const notes = read.data?.notes ?? []
+    const error =
+      read.backoffUntil !== null
+        ? pausedText(read.backoffUntil, now)
+        : (read.error ?? (notes.length > 0 ? notes.join(' · ').slice(0, 200) : null))
+    await update($, board, b => ({ teams: options.teams, agents: read.data?.agents ?? b.agents, error }))
+    await update($, freshness, f => ({ ...f, boardAt: read.at }))
+  } finally {
+    await update($, freshness, f => ({ ...f, boardBusy: false }))
+  }
+}
+
+async function readBoard($: EngineInterface, options: Options): Promise<BoardRead> {
+  {
     const ran = await $.process.run(['ix-board', '--json', 'agents', ...options.teams], {
       timeoutMs: 180_000,
     })
@@ -286,15 +307,8 @@ async function pollBoard($: EngineInterface, options: Options): Promise<void> {
       ...(parsed.missing_teams ?? []).map(t => `no workspace named ${t}`),
       ...(parsed.errors ?? []),
     ]
-    await update($, board, () => ({
-      teams: options.teams,
-      agents,
-      error: notes.length > 0 ? notes.join(' · ').slice(0, 200) : null,
-    }))
-  } catch (error) {
-    await update($, board, b => ({ ...b, teams: options.teams, error: errorText(error) }))
+    return { agents, notes }
   }
-  await update($, freshness, f => ({ ...f, boardAt: now, boardBusy: false }))
 }
 
 
@@ -367,18 +381,18 @@ async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {
   await update($, detail, d => (d === which ? 'none' : which))
 }
 
-/** Registers the command, opens the pane and starts polling; called once at session start. */
+/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startFactory($: EngineInterface, options: Options): Promise<void> {
   await $.command.register({
     name: 'factory',
     description: 'Open the factory panel (machines, herdr, ix-relay, ix-board)',
   })
-  void $.ui.open({ id: PANE, title: TITLE })
 
   void refreshAll($, options)
   void pollBoard($, options)
   $.clock.every(options.refreshSeconds * 1000, () => refreshAll($, options))
-  $.clock.every(5 * 60 * 1000, () => pollBoard($, options))
+  // The gate holds each ix-board read to once per BOARD_INTERVAL_MS across sessions; this only asks.
+  $.clock.every(60 * 1000, () => pollBoard($, options))
 
 }
 
@@ -393,7 +407,8 @@ export function registerFactory(on: On, options: Options): void {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
     // The terminal has no Svg: there a gauge is its number alone.
-    const Svg = 'Svg' in els ? els.Svg : null
+    // The test host's terminal table also lists Svg, so the surface name decides first.
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const [list, hv, r, b, f, open] = await Promise.all([
       read($, machines),
       read($, herdr),
@@ -502,35 +517,53 @@ export function registerFactory(on: On, options: Options): void {
       </Box>
     )
 
-    const tile = (
-      key: Detail,
-      label: string,
-      hotkey: string,
-      status: { text: string; color: string },
-      summary: string,
-      error: string | null,
-    ) => (
-      <Box
-        key={key}
-        flexDirection="column"
-        flexGrow={1}
-        minWidth={22}
-        padding={1}
-        backgroundColor={open === key ? 'rgba(128,128,128,0.16)' : CARD_BG}
-      >
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-          <Button key={key} plain label={label} hotkey={hotkey} onPress={() => void toggleDetail($, key)} />
-          <Text color={status.color} weight="semibold" size="caption">
-            {status.text}
+    // The terminal has no Svg, so a machine is three tight rows of text and block glyphs.
+    const { statTile, gaugeLine, statusChip, chipRow } = widgets(els)
+    const compactCard = (m: Machine) => (
+      <Box key={m.name} flexDirection="column" paddingX={1}>
+        <Box flexDirection="row" justifyContent="space-between">
+          <Box flexDirection="row" gap={1}>
+            <Text color={isUp(m) ? 'success' : 'error'} weight="semibold">
+              {isUp(m) ? '●' : '○'} {m.name}
+            </Text>
+            {!isUp(m) && (
+              <Text color="error" size="caption">
+                {m.lastSeenSecs === null ? 'never seen' : `silent ${Math.round(m.lastSeenSecs / 60)}m`}
+              </Text>
+            )}
+          </Box>
+          {m.spend24hUsd !== null && m.spend24hUsd >= 0.01 && (
+            <Text dimColor size="caption" tabular>
+              {usd(m.spend24hUsd)} / 24h
+            </Text>
+          )}
+        </Box>
+        <Box flexDirection="row" gap={2}>
+          {gaugeLine(`${m.name}-cpu`, 'CPU', m.cpuPct, m.cpuPct === null ? '–' : `${Math.round(m.cpuPct)}%`)}
+          {gaugeLine(`${m.name}-mem`, 'Mem', m.memPct, m.memPct === null ? '–' : `${Math.round(m.memPct)}%`)}
+          <Text color={tempColor(m.tempC)} weight="semibold" tabular>
+            {m.tempC === null ? '–' : `${Math.round(m.tempC)}°`}
           </Text>
         </Box>
         <Text dimColor size="caption">
-          {summary}
+          {m.panesWorking} working · {m.panesIdle} idle · {m.panesDone} done · {m.leads} leads
         </Text>
-        {error && (
-          <Text color="warning" size="caption">
-            {error}
-          </Text>
+      </Box>
+    )
+
+    const totalWorking = list.reduce((s, m) => s + m.panesWorking, 0)
+    const totalIdle = list.reduce((s, m) => s + m.panesIdle, 0)
+    const totalSpend = list.reduce((s, m) => s + (m.spend24hUsd ?? 0), 0)
+    const summaryTiles = (
+      <Box flexDirection="row" gap={1}>
+        {statTile('t-working', 'working', String(totalWorking), `${totalIdle} idle · ${list.length} machines`, 'claude')}
+        {statTile('t-spend', 'spend 24h', usd(totalSpend), 'all machines')}
+        {statTile(
+          't-relay',
+          'relay waiting',
+          String(r.inboxWaiting),
+          `${r.deadLetters} dead letters`,
+          r.deadLetters > 0 ? 'warning' : undefined,
         )}
       </Box>
     )
@@ -569,11 +602,26 @@ export function registerFactory(on: On, options: Options): void {
               )
             : []
 
+    const boardError = b.error !== null
+    const [boardMark, boardColor]: [string, 'success' | 'warning' | 'inactive'] = boardError
+      ? ['▲', 'warning']
+      : !f.boardBusy && b.agents.length > 0
+        ? ['●', 'success']
+        : ['◌', 'inactive']
+    const detailSummary =
+      open === 'herdr'
+        ? `${herdrWorking} working · ${herdrIdle} idle · ${herdrDone} done`
+        : open === 'relay'
+          ? `${r.watchers.filter(w => w.status === 'ok').length}/${r.watchers.length} watchers · ` +
+            `${r.inboxWaiting} waiting · ${r.deadLetters} dead letters`
+          : `${b.teams.join(' · ') || 'no teams configured'} · ${b.agents.length > 0 ? `${boardWorking}/${b.agents.length} working` : f.boardBusy ? 'collecting…' : 'no data'}`
+    const detailError = open === 'herdr' ? f.herdrError : open === 'relay' ? f.relayError : open === 'board' ? b.error : null
+
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Box flexDirection="row" gap={1} alignItems="center">
-            <Text weight="semibold" size="heading">
+            <Text weight="semibold" size="heading" color={Svg ? undefined : ACCENT}>
               Factory
             </Text>
             <Text color={allUp ? 'success' : list.length > 0 ? 'error' : 'inactive'} size="caption">
@@ -586,44 +634,34 @@ export function registerFactory(on: On, options: Options): void {
           </Box>
         </Box>
 
-        <Box flexDirection="row" flexWrap="wrap" gap={1}>
-          {list.map(card)}
-        </Box>
+        {!Svg && list.length > 0 && summaryTiles}
 
-        <Box flexDirection="row" flexWrap="wrap" gap={1}>
-          {tile(
-            'herdr',
-            'herdr',
-            'h',
-            hv.running ? { text: 'running', color: 'success' } : { text: 'down', color: 'error' },
-            `${herdrWorking} working · ${herdrIdle} idle · ${herdrDone} done`,
-            f.herdrError,
-          )}
-          {tile(
-            'relay',
-            'ix-relay',
-            'x',
-            r.ok ? { text: 'ok', color: 'success' } : { text: 'warn', color: 'warning' },
-            `${r.watchers.filter(w => w.status === 'ok').length}/${r.watchers.length} watchers · ` +
-              `${r.inboxWaiting} waiting · ${r.deadLetters} dead letters`,
-            f.relayError,
-          )}
-          {tile(
-            'board',
-            'ix-board',
-            'b',
-            f.boardBusy
-              ? { text: 'collecting…', color: 'subtle' }
-              : b.agents.length > 0
-                ? { text: `${boardWorking}/${b.agents.length} working`, color: boardWorking > 0 ? 'claude' : 'subtle' }
-                : { text: 'no data', color: 'inactive' },
-            b.teams.join(' · ') || 'no teams configured',
-            b.error,
-          )}
-        </Box>
+        {Svg ? (
+          <Box flexDirection="row" flexWrap="wrap" gap={1}>
+            {list.map(card)}
+          </Box>
+        ) : (
+          <Box flexDirection="column" gap={1}>
+            {list.map(compactCard)}
+          </Box>
+        )}
 
-        {detailRows.length > 0 && (
+        {chipRow([
+          statusChip('herdr', 'herdr', 'h', ...chipMark(f.herdrError, f.herdrAt, hv.running, '○', 'error'), open === 'herdr', () => void toggleDetail($, 'herdr')),
+          statusChip('relay', 'ix-relay', 'x', ...chipMark(f.relayError, f.relayAt, r.ok, '▲', 'warning'), open === 'relay', () => void toggleDetail($, 'relay')),
+          statusChip('board', 'ix-board', 'b', boardMark, boardColor, open === 'board', () => void toggleDetail($, 'board')),
+        ])}
+
+        {open !== 'none' && (
           <Box flexDirection="column" paddingX={1}>
+            <Text dimColor size="caption">
+              {detailSummary}
+            </Text>
+            {detailError && (
+              <Text color="warning" size="caption">
+                {detailError}
+              </Text>
+            )}
             {detailRows}
           </Box>
         )}
@@ -639,4 +677,13 @@ export function registerFactory(on: On, options: Options): void {
       </Box>
     )
   })
+}
+
+type ChipState = ['●' | '▲' | '○' | '◌', 'success' | 'warning' | 'error' | 'inactive']
+
+/** A chip's mark: a failed read is ▲ first, a service not yet read is ◌, else up is ● and down is `downMark`. */
+function chipMark(error: string | null, readAt: number | null, isUp: boolean, downMark: '○' | '▲', downColor: 'error' | 'warning'): ChipState {
+  if (error !== null) return ['▲', 'warning']
+  if (readAt === null) return ['◌', 'inactive']
+  return isUp ? ['●', 'success'] : [downMark, downColor]
 }

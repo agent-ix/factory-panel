@@ -3,6 +3,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import type { TeamMeta, TeamMetric, TeamView } from '../types'
 import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
+import { ACCENT, dots } from './ui/glyphs'
 import type { Options } from './shared'
 
 // The Team pane: coder velocity and quality per team, from the same ix_team_* series as
@@ -10,6 +11,7 @@ import type { Options } from './shared'
 
 const PANE = 'team'
 const TITLE = 'Team'
+export const PANE_SPEC = { id: PANE, title: TITLE }
 const POLL_MS = 60 * 1000
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
@@ -90,10 +92,9 @@ const trendInk = (m: TeamMetric): string => {
   return rising === (m.better === 'up') ? INK.calm : INK.warning
 }
 
-/** Registers the command, opens the pane and starts polling; called once at session start. */
+/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startTeam($: EngineInterface, options: Options): Promise<void> {
   await $.command.register({ name: 'team', description: 'Open the Team pane: coder velocity and quality' })
-  void $.ui.open({ id: PANE, title: TITLE })
   void pollTeam($, options)
   $.clock.every(POLL_MS, () => pollTeam($, options))
 }
@@ -108,7 +109,7 @@ export function registerTeam(on: On, options: Options): void {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
-    const Svg = 'Svg' in els ? els.Svg : null
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const [list, meta] = await Promise.all([read($, teams), read($, teamMeta)])
     const now = await $.clock.now()
     const dashboard = `${options.grafanaUrl.replace(/\/$/, '')}/d/ix-team-flow-effort`
@@ -132,6 +133,7 @@ export function registerTeam(on: On, options: Options): void {
           <Text weight="semibold" size="title" tabular>
             {format(m)}
           </Text>
+          {!Svg && m.history.length > 0 && <Text color={ACCENT}>{dots(m.history.slice(-24), 1)[0]}</Text>}
           {Svg && (
             <Svg
               source={sparkline(m.history, trendInk(m))}

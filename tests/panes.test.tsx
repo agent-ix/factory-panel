@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
+import { ACCENT, DOING, TRACK } from '../hooks/ui/glyphs'
 
 // Fixtures are trimmed copies of what agent-msg, ix-board and Prometheus answered on
 // 2026-11-21, so the parsers are tested against the real formats.
@@ -10,7 +11,7 @@ hub:ENG:code  hub  codex  seen 11-21 09:40  pane w1F:pR  -  Herdr w1F:w1F:tG
 `
 
 const WORK = JSON.stringify({
-  binding: { machine: 'hub', pane: 'w1F:p13', kind: 'claude', address: 'hub:ENG:arch' },
+  binding: { machine: 'hub', pane: 'w1F:p13', kind: 'claude', model: 'claude-opus-5-5', address: 'hub:ENG:arch' },
   scope: { initiatives: ['00000000-0000-4000-8000-000000000001'], projects: [], tickets: [], reported_at_ms: 1795216041262 },
   focus: { summary: 'Payments v2: finish the ledger and export work', tickets: [], reported_at_ms: 1795214759001 },
   agents: [],
@@ -28,12 +29,12 @@ const FOCUS_STATUS = JSON.stringify({
 })
 
 const ESCALATIONS = `e28  resolved  OPS-7  session/cc33/dd44  11-18 07:13
-e30  waiting  ENG-101  session/aa11/bb22  11-20 16:29
+e30  waiting  ENG-101  session/687562/736573732d31  11-20 16:29
 `
 
 const SHOW_E30 = `id:             e30
 ticket:         ENG-101
-lead:           session/aa11/bb22
+lead:           session/687562/736573732d31
 machine:        hub
 cwd:            -
 kind:           claude
@@ -65,6 +66,11 @@ decision:
   Allowed the temporary exception.
 `
 
+const HERDR_AGENTS = JSON.stringify({
+  result: { agents: [{ agent: 'claude', pane_id: 'w1F:p13', agent_session: { value: 'sess-1' } }] },
+})
+const FIND_PANE = JSON.stringify({ address: 'hub:ENG:arch', machine: 'hub', pane_id: 'w1F:p13' }) + '\nsend to: hub:ENG:arch\n'
+
 const LOG = `11-21 09:41 node-c:OPS:code -> node-b:ENG:code: a direct message, not an announcement
 11-21 09:45 operator -> all: Freeze merges on ENG until the release is cut
 `
@@ -87,12 +93,44 @@ const TEAM_RANGE = JSON.stringify({
 const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', result: [] } })
 
 /** Stands in for the engine and the host: every command and fetch the mod makes is answered here. */
-function engine(on: Parameters<TestBody>[1], ran: string[][], options: { teamMetrics: boolean }): void {
+function engine(
+  on: Parameters<TestBody>[1],
+  ran: string[][],
+  options: { teamMetrics: boolean; rateLimited?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
+): void {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const opened = new Map<string, boolean>()
+  on('ui.open', (_, e) => {
+    const result = options.open?.(e.id) ?? { isPlaced: true }
+    opened.set(e.id, result.isPlaced)
+    return { value: result }
+  })
+  on('ui.panes', () => ({ value: options.panes?.() ?? [...opened].map(([id, isPlaced]) => ({ id, title: id, isPlaced })) }))
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.status', (_, e) => {
+    options.status?.(e.text)
+    return { value: undefined }
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('clock.now', () => ({ value: Date.UTC(2026, 10, 21, 10, 0) }))
   on('clock.every', () => ({ value: undefined }))
+  const files = new Map<string, string>()
+  on('fs.read', (_, e) => {
+    const text = files.get(e.path)
+    if (text === undefined) throw Object.assign(new Error(`ENOENT: ${e.path}`), { code: 'ENOENT' })
+    return { value: text }
+  })
+  on('fs.write', (_, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  const store = new Map<string, unknown>()
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
   on('http.fetch', (_, e) => {
     const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
     const isTeam = e.url.endsWith('/query_range') && body.includes('ix_team_verified_path_closed_24h')
@@ -102,14 +140,18 @@ function engine(on: Parameters<TestBody>[1], ran: string[][], options: { teamMet
     const argv = [...e.argv]
     ran.push(argv)
     const line = argv.join(' ')
+    if (line === 'printenv HOME') return ok('/home/test\n')
     if (line === 'agent-msg who') return ok(WHO)
     if (line === 'agent-msg work --lead hub:ENG:arch show') return ok(WORK)
     if (line.startsWith('agent-msg work --lead')) return fail('agent-msg: work target is unavailable')
-    if (line.startsWith('ix-board --json focus status --initiative 00000000')) return ok(FOCUS_STATUS)
+    if (line.startsWith('ix-board --json focus status --initiative 00000000'))
+      return options.rateLimited ? fail('Linear rate limited; retry in 3600.005s') : ok(FOCUS_STATUS)
     if (line === 'agent-msg escalations') return ok(ESCALATIONS)
     if (line === 'agent-msg escalation show e30') return ok(SHOW_E30)
     if (line === 'agent-msg escalation show e28') return ok(SHOW_E28)
     if (line.startsWith('agent-msg log')) return ok(LOG)
+    if (line === 'herdr --machine hub agent list') return ok(HERDR_AGENTS)
+    if (line === 'agent-msg find --json w1F:p13') return ok(FIND_PANE)
     if (line.startsWith('agent-msg resolve')) return ok('resolved e30; told the lead; posted to ENG-101')
     if (line.startsWith('agent-msg send')) return ok('')
     return fail(`not stubbed: ${line}`)
@@ -143,13 +185,41 @@ test('the Focus pane draws a coordinator’s focus, its progress and its open pr
     expect((await ui.find({ type: 'Text', text: /Payments v2/ }))?.text).toMatch(/ledger and export/)
     // 117 of 124 leaves done across the three projects.
     expect((await ui.find({ type: 'Text', text: /^94%$/ }))?.text).toBe('94%')
-    expect((await ui.find({ type: 'Text', text: /117\/124 done/ }))?.text).toBe('117/124 done')
-    expect((await ui.find({ type: 'Text', text: /6 in progress/ }))?.text).toBe('6 in progress')
+    // The terminal caption is one line; desktop keeps separate pieces.
+    expect((await ui.find({ type: 'Text', text: /117.{1,3}124 done/ }))?.text).toBe(surface === 'terminal' ? '117/124 done · 6 in progress · 0 ready' : '117 / 124 done')
+    expect((await ui.find({ type: 'Text', text: /6 in progress/ }))?.text).toMatch(/6 in progress/)
+    expect((await ui.find({ type: 'Text', text: 'Opus 5.5' }))?.text).toBe('Opus 5.5')
     // Open projects show, most work left first; the finished one hides behind a toggle.
     const names = (await ui.findAll({ type: 'Text', text: /^Payments [a-z ]+$/ })).map(t => t.text)
     expect(names).toEqual(['Payments ledger', 'Payments export'])
     expect((await ui.find({ key: 'done-hub:ENG:arch' }))).toBeDefined()
-
+    if (surface === 'terminal') {
+      // One row per open project: a bar and one done/total count each, no percentage text.
+      expect((await ui.findAll({ type: 'Text', text: /^\d+\/\d+$/ })).map(t => t.text)).toEqual(['34/39', '65/67'])
+      expect((await ui.findAll({ type: 'Text', text: /^\d+%$/ })).map(t => t.text)).toEqual(['94%'])
+      // Each bar is runs of [foreground, background, text]: whole █ cells per section, and an eighth block at each boundary
+      // whose foreground is the section on the left and background the section on the right.
+      const runsOf = async (key: string) =>
+        ((await ui.find({ key }))?.children as { props: { color?: string; backgroundColor?: string }; children: string[] }[]).map(c => [
+          c.props.color,
+          c.props.backgroundColor,
+          c.children[0],
+        ])
+      const rowBar = (name: string) => runsOf(`p-hub:ENG:arch-${name}-bar`)
+      // Ledger is 34 done + 4 in progress of 39 on 16 cells (128 units): 14 done cells, one whole in-progress cell,
+      // then 5 in-progress eighths over the track.
+      expect(await rowBar('Payments ledger')).toEqual([[ACCENT, undefined, '█'.repeat(14)], [DOING, undefined, '█'], [DOING, TRACK, '▋']])
+      // Export is 65 of 67 done: one unit is cut so the bar never reads full; the last cell shows done over the track.
+      expect(await rowBar('Payments export')).toEqual([[ACCENT, undefined, '█'.repeat(15)], [ACCENT, TRACK, '▍']])
+      // The overall bar is 117 done + 6 in progress of 124 on 48 cells.
+      expect(await runsOf('all-hub:ENG:arch')).toEqual([
+        [ACCENT, undefined, '█'.repeat(45)],
+        [ACCENT, DOING, '▎'],
+        [DOING, undefined, '█'],
+        [DOING, TRACK, '▋'],
+      ])
+      expect(await ui.find({ type: 'Progress' })).toBeUndefined()
+    }
     await ui.press({ key: 'done-hub:ENG:arch' })
     expect((await ui.find({ type: 'Text', text: 'Payments spec batch' }))?.text).toBe('Payments spec batch')
     await ui.press({ key: 'done-hub:ENG:arch' })
@@ -237,5 +307,229 @@ test('the Team pane says so when Prometheus has no team metrics', async ($, on) 
   const ui = await $.ui.mount({ ...pane('team', 'Team'), surface: 'desktop' })
 
   expect((await ui.find({ type: 'Text', text: 'No team metrics yet.' }))?.text).toBe('No team metrics yet.')
+  await ui.unmount()
+})
+
+test('the Relay pane replies to an escalation’s lead without resolving it', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('relay', 'Relay'), surface: 'desktop' })
+
+  await ui.press({ key: 'sel-e30' })
+  await ui.input({ key: 'decision-e30', text: 'Hold until the release is cut', kind: 'change' })
+  await ui.press({ key: 'reply-e30' })
+  expect((await ui.find({ key: 'reply-e30' }))?.text).toBe('Confirm reply')
+  expect((await ui.find({ type: 'Text', text: /Sends to hub:ENG:arch/ }))?.text).toMatch(/stays open/)
+  await ui.press({ key: 'reply-e30' })
+
+  expect(ran.find(a => a[1] === 'send')).toEqual([
+    'agent-msg',
+    'send',
+    'hub:ENG:arch',
+    'Operator, on escalation e30 (ENG-101): Hold until the release is cut',
+  ])
+  expect(ran.some(a => a[1] === 'resolve')).toBe(false)
+  expect((await ui.find({ type: 'Text', text: /Replied to hub:ENG:arch/ }))?.text).toMatch(/e30 stays open/)
+  await ui.unmount()
+})
+
+test('the Relay pane clears an escalation from view and restores it', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('relay', 'Relay'), surface: 'desktop' })
+
+  await ui.press({ key: 'sel-e30' })
+  await ui.press({ key: 'clear-e30' })
+  expect(await ui.find({ key: 'sel-e30' })).toBeUndefined()
+  expect((await ui.find({ key: 'filter-waiting' }))?.text).toBe('waiting 0')
+  expect((await ui.find({ key: 'filter-cleared' }))?.text).toBe('cleared 1')
+  // Clearing is the pane's own: nothing was sent to the relay.
+  expect(ran.some(a => a[1] === 'resolve' || a[1] === 'send')).toBe(false)
+
+  await ui.press({ key: 'filter-cleared' })
+  await ui.press({ key: 'sel-e30' })
+  expect((await ui.find({ key: 'clear-e30' }))?.text).toBe('Restore')
+  await ui.press({ key: 'clear-e30' })
+  await ui.press({ key: 'filter-waiting' })
+  expect((await ui.find({ key: 'sel-e30' }))?.text).toBe('ENG-101')
+  await ui.unmount()
+})
+
+test('the Focus pane reads ix-board once per interval and shares the result', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'desktop' })
+  const boardReads = () => ran.filter(a => a[0] === 'ix-board').length
+  expect(boardReads()).toBe(1)
+
+  // A refresh within the interval answers from the shared result: progress still draws.
+  await ui.press({ key: 'refresh' })
+  expect(boardReads()).toBe(1)
+  expect((await ui.find({ type: 'Text', text: /^94%$/ }))?.text).toBe('94%')
+  await ui.unmount()
+})
+
+test('a rate-limited read pauses every later ix-board call until Linear’s retry time', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: false, rateLimited: true })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'desktop' })
+  const boardReads = () => ran.filter(a => a[0] === 'ix-board').length
+  expect(boardReads()).toBe(1)
+  expect((await ui.find({ type: 'Text', text: /Linear rate limit/ }))?.text).toBe('Linear rate limit · paused 1h')
+
+  await ui.press({ key: 'refresh' })
+  expect(boardReads()).toBe(1)
+  await ui.unmount()
+})
+
+test('a pane the host leaves undrawn is reported with its reason, and opened again when a surface attaches', async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  const statuses: (string | undefined)[] = []
+  let placed = false
+  engine(on, ran, {
+    teamMetrics: false,
+    status: text => statuses.push(text),
+    open: id => {
+      opens.push(id)
+      return placed ? { isPlaced: true } : { isPlaced: false, reason: 'below 144 columns (now 100)' }
+    },
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(opens).toEqual(['factory', 'focus', 'relay', 'team'])
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Relay, Team waiting \(below 144 columns \(now 100\)\)/)
+
+  placed = true
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default' })
+  expect(opens).toHaveLength(8)
+  expect(statuses.at(-1)).toBeUndefined()
+
+  // Let the polls started at session start settle before the file ends.
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('a throwing open is reported and never breaks startup', async ($, on) => {
+  const ran: string[][] = []
+  const statuses: (string | undefined)[] = []
+  engine(on, ran, {
+    teamMetrics: false,
+    status: text => statuses.push(text),
+    open: () => {
+      throw new Error('no surface')
+    },
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Relay, Team waiting \(.+\)/)
+
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('a non-interactive run opens no panes and shows no status', async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  const statuses: (string | undefined)[] = []
+  engine(on, ran, {
+    teamMetrics: false,
+    status: text => statuses.push(text),
+    open: id => {
+      opens.push(id)
+      return { isPlaced: false, reason: 'no-surface' }
+    },
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: false })
+  expect(opens).toEqual([])
+  expect(statuses).toEqual([])
+
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('a closed pane is not reopened on attach, and the status names only panes still waiting', async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  const statuses: (string | undefined)[] = []
+  type Listed = { id: string; title: string; isPlaced: boolean }
+  let listed: Listed[] = []
+  const entry = (id: string, isPlaced: boolean): Listed => ({ id, title: id, isPlaced })
+  engine(on, ran, {
+    teamMetrics: false,
+    status: text => statuses.push(text),
+    open: id => {
+      opens.push(id)
+      return { isPlaced: false, reason: 'below 144 columns (now 100)' }
+    },
+    panes: () => listed,
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(opens).toEqual(['factory', 'focus', 'relay', 'team'])
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Relay, Team waiting/)
+
+  // Factory got placed, the person closed Relay (it is no longer listed), Focus and Team wait.
+  listed = [entry('factory', true), entry('focus', false), entry('team', false)]
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default' })
+  expect(opens.slice(4)).toEqual(['focus', 'team'])
+  expect(statuses.at(-1)).toMatch(/Focus, Team waiting/)
+  expect(statuses.at(-1)).not.toMatch(/Factory|Relay/)
+
+  // Focus is placed and Team was closed: nothing waits, nothing is reopened, the status clears.
+  listed = [entry('factory', true), entry('focus', true)]
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:second' })
+  expect(opens).toHaveLength(6)
+  expect(statuses.at(-1)).toBeUndefined()
+
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('the Team pane draws each tile’s six-hour series as braille dots on the terminal, and Svg on desktop', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, ran, { teamMetrics: true })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const term = await $.ui.mount({ ...pane('team', 'Team'), surface: 'terminal' })
+  expect((await term.find({ type: 'Text', text: /^[⠀-⣿]+$/ }))?.text).toMatch(/^[⠀-⣿]+$/)
+  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  await term.unmount()
+})
+
+test('a failing gate file or home lookup never leaves the board busy and keeps the fetched agents', { options: { teams: 'ENG' } }, async ($, on) => {
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.now', () => ({ value: Date.UTC(2026, 10, 21, 10, 0) }))
+  on('clock.every', () => ({ value: undefined }))
+  on('fs.read', () => {
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  })
+  on('fs.write', () => {
+    throw new Error('read-only file system')
+  })
+  on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: EMPTY } }))
+  on('process.run', (_, e) => {
+    const line = e.argv.join(' ')
+    if (line === 'printenv HOME') return { value: { exitCode: 0, stdout: '/home/test\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (line.startsWith('ix-board --json agents')) {
+      const out = JSON.stringify({ agents: [{ agent: 'claude', herdr_status: 'working', machine: 'local', pane_id: 'w1:p1', team: 'ENG', title: 'plan' }] })
+      return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    return { value: { exitCode: 1, stdout: '', stderr: 'not stubbed', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('factory', 'Factory'), surface: 'terminal' })
+  // The fetched agent is shown although the gate file cannot be saved, and the chip is not stuck on ◌.
+  await ui.press({ key: 'board' })
+  expect((await ui.find({ type: 'Text', text: /1\/1 working/ }))?.text).toMatch(/1\/1 working/)
+  const marks = (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(t => t.text)
+  expect(marks.slice(0, 3)[2]).toBe('●')
   await ui.unmount()
 })

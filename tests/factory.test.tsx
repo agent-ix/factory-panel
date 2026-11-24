@@ -96,6 +96,16 @@ const engine = (on: Parameters<TestBody>[1]) => {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('clock.now', () => ({ value: 1795237300000 }))
   on('clock.every', () => ({ value: undefined }))
+  const files = new Map<string, string>()
+  on('fs.read', (_, e) => {
+    const text = files.get(e.path)
+    if (text === undefined) throw Object.assign(new Error(`ENOENT: ${e.path}`), { code: 'ENOENT' })
+    return { value: text }
+  })
+  on('fs.write', (_, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
 }
 
 const run = (stdout: string, exitCode = 0) => ({
@@ -110,6 +120,7 @@ test('the pane draws machines, herdr, relay and board from seeded answers', { op
   })
   on('process.run', (_, e) => {
     const [bin] = e.argv
+    if (bin === 'printenv') return run('/home/test\n')
     if (bin === 'herdr') return run(herdrSnapshot)
     if (bin === 'agent-msg') return run(doctor)
     if (bin === 'ix-board') {
@@ -144,14 +155,33 @@ test('the pane draws machines, herdr, relay and board from seeded answers', { op
     expect((await ui.find({ type: 'Text', text: /○ node-b/ }))?.text).toMatch(/node-b/)
     // node_exporter answered for node-a: its temperature shows, mapped from the instance.
     expect((await ui.find({ type: 'Text', text: /71°/ }))?.text).toBe('71°')
-    // herdr: the tile sums the agents by status.
+    // the chips show state only: no counts and no error text until one is pressed.
+    for (const hidden of [/1 working · 0 idle · 1 done/, /2 waiting · 4 dead letters/, /1\/1 working/, /did not finish/]) {
+      expect(await ui.find({ type: 'Text', text: hidden })).toBeUndefined()
+    }
+    for (const chip of ['herdr', 'ix-relay', 'ix-board']) {
+      expect(Boolean(await ui.find({ type: 'Button', text: chip }))).toBe(true)
+    }
+
+    // herdr: its detail opens with the agents summed by status.
+    await ui.press({ key: 'herdr' })
     expect((await ui.find({ type: 'Text', text: /1 working · 0 idle · 1 done/ }))?.text).toMatch(/1 working/)
     // relay: dead letters and waiting counts are summed from the doctor's messages.
+    await ui.press({ key: 'relay' })
     expect((await ui.find({ type: 'Text', text: /2 waiting · 4 dead letters/ }))?.text).toMatch(/dead/)
-    // board: collapsed by default, shows the working count in its status.
-    expect((await ui.find({ type: 'Text', text: /1\/1 working/ }))?.text).toBe('1/1 working')
-    // the partial-collection note from exit 4 is shown, not treated as a failure.
+    expect(await ui.find({ type: 'Text', text: /1 working · 0 idle · 1 done/ })).toBeUndefined()
+    // board: the working count, and the partial-collection note from exit 4 (not a failure).
+    await ui.press({ key: 'board' })
+    expect((await ui.find({ type: 'Text', text: /1\/1 working/ }))?.text).toMatch(/1\/1 working/)
     expect((await ui.find({ type: 'Text', text: /did not finish/ }))?.text).toMatch(/node-a/)
+
+    // the terminal has no Svg: it draws the summary tiles and bar glyphs instead of rings.
+    const tile = await ui.find({ type: 'Text', text: /spend 24h/ })
+    expect(Boolean(tile)).toBe(surface === 'terminal')
+
+    // close the open detail so the next surface starts collapsed.
+    await ui.press({ key: 'board' })
+    expect(await ui.find({ type: 'Text', text: /1\/1 working/ })).toBeUndefined()
 
     await ui.unmount()
   }
@@ -171,5 +201,57 @@ test('the widget seat draws one glance line', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /1\/2 up/ }))?.text).toBe('1/2 up')
   expect((await ui.find({ type: 'Text', text: /1 working/ }))?.text).toMatch(/1 working/)
   expect((await ui.find({ type: 'Text', text: /71°/ }))?.text).toMatch(/71°/)
+  await ui.unmount()
+})
+
+const marks = async (ui: { findAll: (q: { type: string; text: RegExp }) => Promise<{ text?: string }[]> }) =>
+  (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(n => n.text)
+
+test('the herdr and relay chips show ◌ before the first read', async ($, on) => {
+  engine(on)
+  // No session.start: nothing has been read yet.
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect((await marks(ui)).slice(0, 2)).toEqual(['◌', '◌'])
+    await ui.unmount()
+  }
+})
+
+test('a failed herdr read and a relay that is not ok show ▲, with the error in the detail', async ($, on) => {
+  engine(on)
+  on('http.fetch', (_, e) => {
+    const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
+    return { value: { status: 200, ok: true, headers: {}, text: prometheusAnswer(body) } }
+  })
+  on('process.run', (_, e) => {
+    const [bin] = e.argv
+    if (bin === 'printenv') return run('/home/test\n')
+    if (bin === 'herdr') return run('', 1)
+    if (bin === 'agent-msg') return run(doctor.replace('"ok":true', '"ok":false'))
+    return run('{}', 4)
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect((await marks(ui)).slice(0, 2)).toEqual(['▲', '▲'])
+    const shown = (await ui.findAll({ type: 'Text', text: /herdr exited 1/ })).length
+    await ui.press({ key: 'herdr' })
+    expect((await ui.findAll({ type: 'Text', text: /herdr exited 1/ })).length).toBe(shown + 1)
+    await ui.press({ key: 'herdr' })
+    await ui.unmount()
+  }
+})
+
+// Factory gauges are whole-cell blocks: node-a's CPU is 43%, which rounds to 3 of 6 cells.
+test('the terminal gauge draws whole-cell blocks', async ($, on) => {
+  engine(on)
+  on('http.fetch', (_, e) => {
+    const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
+    return { value: { status: 200, ok: true, headers: {}, text: prometheusAnswer(body) } }
+  })
+  on('process.run', (_, e) => (e.argv[0] === 'herdr' ? run(herdrSnapshot) : run(doctor)))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /^███░░░$/ }))?.text).toBe('███░░░')
   await ui.unmount()
 })
