@@ -50,13 +50,13 @@ export const register: Register = (on, rawOptions) => {
   // One session-start hook for the whole mod: each pane registers its command and polls (a
   // failing one is logged, the others carry on). The panes are not opened here: see above.
   on('session.start', async ($, e, next) => {
+    isInteractive = e.isInteractive
     await guarded($, 'Factory start', () => startFactory($, options))
     await guarded($, 'Focus start', () => startFocus($, options))
     await guarded($, 'Escalations start', () => startEscalations($, options))
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
     await guarded($, 'Band start', () => startBand($, options))
-    isInteractive = e.isInteractive
     return next(e)
   })
 

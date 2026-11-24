@@ -29,6 +29,10 @@ export type Snapshot = {
   /** Which focus the bar follows: an address or part of a summary; '' for the first. */
   focusName: string
   prometheusError: string | null
+  /** When the relay check last answered (null: never) and what it last said when it failed. */
+  relayAt: number | null
+  relayError: string | null
+  boardError: string | null
 }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
@@ -72,6 +76,9 @@ const health = (s: Snapshot): Cell | null => {
 const local = (s: Snapshot): Cell | null => {
   const m = s.machines.find(x => x.name.toLowerCase() === s.localMachine)
   if (m === undefined) return { id: 'local', pane: 'factory', parts: [{ text: 'local —', tone: 'inactive' }] }
+  // Numbers from a watcher that has gone quiet are old: say so instead of drawing them as current.
+  if (m.lastSeenSecs === null || m.lastSeenSecs > DOWN_AFTER_SECS)
+    return { id: 'local', pane: 'factory', parts: [{ text: `${m.name} ▲ no data`, tone: 'error' }], alert: `${m.name} is not reporting` }
   const parts: Part[] = [
     { text: 'CPU ', dim: true },
     { text: pct(m.cpuPct), tone: loadColor(m.cpuPct) },
@@ -123,6 +130,7 @@ const lanes = (s: Snapshot): Cell | null => {
     id: 'lanes',
     pane: 'factory',
     parts: [{ text: `${count('working')} working`, tone: 'claude' }, { text: ` · ${count('idle')} idle`, tone: count('idle') > 0 ? 'warning' : undefined }],
+    alert: s.boardError === null ? undefined : `ix-board: ${s.boardError}`,
   }
 }
 
@@ -134,6 +142,8 @@ const attention = (s: Snapshot): Cell | null => {
 
 const relay = (s: Snapshot): Cell | null => {
   const r = s.relay
+  if (s.relayAt === null && s.relayError === null) return null // not asked yet
+  if (s.relayError !== null) return { id: 'relay', pane: 'relay', parts: [{ text: 'relay ▲', tone: 'warning' }], alert: `relay: ${s.relayError}` }
   if (!r.ok) return { id: 'relay', pane: 'relay', parts: [{ text: 'relay ▲', tone: 'warning' }], alert: `relay: ${r.redis || 'not ok'}` }
   const waiting = r.inboxWaiting + r.deadLetters
   if (waiting === 0) return null

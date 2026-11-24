@@ -40,6 +40,7 @@ const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden'
 // Facts learned at session start: the machine this session runs on and the role its relay address names.
 let localMachine = ''
 let detectedRole: Role | undefined
+let lastStatus: string | undefined
 
 /** Reads the host name and, best effort, this session's role from its relay address. Never throws. */
 export async function startBand($: EngineInterface, options: Options): Promise<void> {
@@ -82,7 +83,7 @@ const EMPTY_RELAY = { ok: true, redis: '', watchers: [], warnings: 0, deadLetter
 
 async function snapshot($: EngineInterface, options: Options): Promise<Snapshot> {
   const [fresh, rel, brd, mach, foc, esc, hid] = await Promise.all([
-    read($, freshness) as Promise<{ prometheusError?: string | null }>,
+    read($, freshness) as Promise<Partial<Freshness>>,
     read($, relay) as Promise<Partial<Snapshot['relay']>>,
     read($, board) as Promise<Partial<Snapshot['board']>>,
     read($, machines),
@@ -101,6 +102,9 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     teams: options.teams,
     focusName: options.bandFocus,
     prometheusError: fresh?.prometheusError ?? null,
+    relayAt: fresh?.relayAt ?? null,
+    relayError: fresh?.relayError ?? null,
+    boardError: brd?.error ?? null,
   }
 }
 
@@ -156,6 +160,9 @@ export async function renderBand($: EngineInterface, e: RenderInput, options: Op
 export async function syncStatus($: EngineInterface, options: Options, isFullscreen: boolean | undefined): Promise<void> {
   if (options.inlineView !== 'status' || isFullscreen !== false) return
   const text = cellText(await cellsFor($, options))
+  // Write only a change: the status line is shared with the waiting notice and the layout hint.
+  if (text === lastStatus) return
+  lastStatus = text
   $.ui.status(text === '' ? undefined : text)
 }
 
@@ -163,13 +170,13 @@ export function registerBand(on: On, options: Options): void {
   on('command.run', { command: 'band' }, async ($, e) => {
     const [word = '', ...rest] = e.args.trim().split(/\s+/)
     const list = rest.join(' ')
-    if (word === 'off') update($, bandOverride, o => ({ ...o, off: true }))
-    else if (word === 'on') update($, bandOverride, o => ({ ...o, off: false }))
-    else if (word === 'reset') update($, bandOverride, () => ({ off: false, modules: '' }))
+    if (word === 'off') await update($, bandOverride, o => ({ ...o, off: true }))
+    else if (word === 'on') await update($, bandOverride, o => ({ ...o, off: false }))
+    else if (word === 'reset') await update($, bandOverride, () => ({ off: false, modules: '' }))
     else if (word === 'modules') {
       const ids = parseModules(list)
       if (ids.length === 0) return { text: `No known module in "${list}". Known: ${MODULE_IDS.join(', ')}.` }
-      update($, bandOverride, o => ({ off: false, modules: ids.join(',') }))
+      await update($, bandOverride, () => ({ off: false, modules: ids.join(',') }))
     } else if (word !== '' && word !== 'show') {
       return { text: '/band on | off | modules a,b,c | reset' }
     }

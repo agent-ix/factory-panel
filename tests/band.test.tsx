@@ -47,6 +47,9 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   teams: ['QSL'],
   focusName: '',
   prometheusError: null,
+  relayAt: 1,
+  relayError: null,
+  boardError: null,
   ...over,
 })
 
@@ -123,4 +126,14 @@ test('the role is read from a relay address when it names one', () => {
   expect(roleFromAddress('hub:ENG:plan')).toBe('planner')
   expect(roleFromAddress('hub:ENG:arch')).toBe('coordinator')
   expect(roleFromAddress('agent-msg: this session has no verified Herdr placement')).toBeUndefined()
+})
+
+test('local does not draw old numbers as current, and relay is quiet until it has been asked', () => {
+  const stale = snapshot({ machines: [machine('draco', { lastSeenSecs: 900 })] })
+  expect(text(buildCells(['local'], stale), 'local')).toBe('draco ▲ no data')
+  expect(buildCells(['local'], stale)[0]?.alert).toBe('draco is not reporting')
+  expect(buildCells(['relay'], snapshot({ relayAt: null }))).toEqual([])
+  const failed = snapshot({ relayError: 'redis down' })
+  expect(buildCells(['relay'], failed)[0]?.alert).toBe('relay: redis down')
+  expect(buildCells(['lanes'], snapshot({ boardError: 'timed out' }))[0]?.alert).toBe('ix-board: timed out')
 })
