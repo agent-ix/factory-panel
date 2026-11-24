@@ -11,6 +11,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/NFR-002"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-009"
+    type: traces_to
 ---
 # US-001: Glance at the factory without typing
 

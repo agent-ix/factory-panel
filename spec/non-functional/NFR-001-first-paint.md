@@ -11,14 +11,13 @@ relationships:
 
 ## Statement
 
-The mod SHALL have the ambient view on screen at the first redraw after session start, in both layouts, with no key pressed.
+The mod SHALL have the ambient view on screen in the first screen capture taken five seconds after launch, in both layouts, with no key sent.
 
 ## Measurement and Evaluation
 
 | Metric | Target | Threshold | Method |
 |--------|--------|-----------|--------|
-| Time from session start to the ambient view on screen | First redraw | Within 5 seconds | Real-session capture in each layout |
-| Key presses or commands needed before the view appears | 0 | 0 | Real-session capture |
+| Ambient view present in a capture taken 5 seconds after launch with no key sent | Present | Present | Real-session capture in each layout |
 
 ## Verification
 

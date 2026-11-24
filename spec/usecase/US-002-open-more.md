@@ -9,6 +9,10 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/NFR-003"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-008"
+    type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-009"
+    type: traces_to
 ---
 # US-002: Open more with one command
 

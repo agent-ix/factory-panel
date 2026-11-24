@@ -2,7 +2,7 @@
 id: NFR-002
 title: No stalls at session start
 type: NFR
-quality_attribute: usability
+quality_attribute: reliability
 relationships:
   - target: "ix://agent-ix/factory-panel/FR-001"
     type: constrains
@@ -13,7 +13,7 @@ relationships:
 
 ## Statement
 
-The mod SHALL NOT show a dialog, ask a question or take the keyboard at session start, because sessions are also started by automation.
+The mod SHALL NOT show a dialog, ask a question or take the keyboard at session start, because automation also starts sessions.
 
 ## Measurement and Evaluation
 
@@ -23,7 +23,7 @@ The mod SHALL NOT show a dialog, ask a question or take the keyboard at session 
 
 ## Verification
 
-A test starts a session with no stored role and asserts that no question is asked and no pane is opened focused; the layout check confirms the prompt has the keyboard after start.
+A test starts a session with no stored role and asserts that no question is asked and no pane is opened with the keyboard; the layout check confirms the prompt has the keyboard after start.
 
 ## Dependencies
 

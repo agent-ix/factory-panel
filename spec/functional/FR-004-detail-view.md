@@ -19,22 +19,21 @@ In the classic layout the mod SHALL open the detail as a popup above the prompt 
 ## Behavior
 
 - The mod SHALL open the popup with the keyboard and with close-on-Esc.
-- The mod SHALL leave the band visible while the popup is open.
-- The mod SHALL NOT use the arrow keys to switch views.
-- While the popup is open, a digit pressed at the prompt SHALL open the view of the band cell that carries it, replacing the open one.
-- The popup SHALL show the keys on screen: the band digits to switch, `r` to refresh, Esc to close.
-- In the fullscreen layout, `/factory` SHALL focus the docked panel on the role's tab.
+- The mod SHALL leave the band visible while the popup is open, so the digits of [FR-009](./FR-009-band-cells.md) switch views.
+- The popup SHALL show the keys on screen: the band digits to switch, `r` to refresh and Esc to close.
+- In the fullscreen layout `/factory` SHALL focus the docked panel on the role's tab.
+- The mod SHALL NOT bind an arrow key to any action.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-004-AC-1 | Given the classic layout, `/factory` opens the popup with the keyboard and close-on-Esc set. | Test |
-| FR-004-AC-2 | Given the classic layout and an open popup, pressing the digit on another band cell opens that cell's view and the popup shows it. | Test |
-| FR-004-AC-3 | Given the classic layout, the popup shows the keys to switch, refresh and close on screen. | Test |
-| FR-004-AC-4 | Given a real classic session, Esc closes the popup and the prompt has the keyboard again. | Demonstration |
-| FR-004-AC-5 | Given a real fullscreen session, `/factory focus` focuses the docked Focus tab. | Demonstration |
-| FR-004-AC-6 | Given the source of the views, no handler switches views on an arrow key. | Inspection |
+| FR-004-AC-1 | In the classic layout `/factory` opens the popup with the keyboard and close-on-Esc set. | Test |
+| FR-004-AC-2 | With the popup open, pressing the digit of another band cell shows that cell's view in the popup. | Test |
+| FR-004-AC-3 | The popup shows the keys to switch, refresh and close on screen. | Test |
+| FR-004-AC-4 | No hotkey in the band or in any view is an arrow key. | Test |
+| FR-004-AC-5 | In a real classic session Esc closes the popup and the prompt has the keyboard again. | Demonstration |
+| FR-004-AC-6 | In a real fullscreen session `/factory focus` focuses the docked Focus tab. | Demonstration |
 
 ## Dependencies
 

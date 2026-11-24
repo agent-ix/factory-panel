@@ -89,6 +89,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-006 | Honest states | [FR-006](functional/FR-006-honest-states.md) |
 | FR-007 | Metrics endpoint discovery | [FR-007](functional/FR-007-endpoint-discovery.md) |
 | FR-008 | Help and documentation | [FR-008](functional/FR-008-help-and-docs.md) |
+| FR-009 | Band cells and digits | [FR-009](functional/FR-009-band-cells.md) |
 
 ### 4.3 Non-Functional Requirements
 

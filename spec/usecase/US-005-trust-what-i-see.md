@@ -5,6 +5,8 @@ type: US
 relationships:
   - target: "ix://agent-ix/factory-panel/FR-006"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-007"
+    type: traces_to
 ---
 # US-005: Trust what I see
 

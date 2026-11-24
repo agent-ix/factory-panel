@@ -26,10 +26,10 @@ The mod SHALL answer four questions in its help text and its README, in the word
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-008-AC-1 | Given `/factory help`, the text answers see, open more, switch and role, each with the key or command to use. | Test |
-| FR-008-AC-2 | Given the classic layout the help names the band digits; given the fullscreen layout it names the docked panel and tabs. | Test |
-| FR-008-AC-3 | Given the README, it has the six sections in that order. | Inspection |
-| FR-008-AC-4 | Given the README, every `/command` and every setting it names is registered by the plugin. | Test |
+| FR-008-AC-1 | `/factory help` answers see, open more, switch and role, each with the key or command to use. | Test |
+| FR-008-AC-2 | In the classic layout the help names the band digits, and in the fullscreen layout it names the docked panel and its tabs. | Test |
+| FR-008-AC-3 | The README has the six sections in that order. | Inspection |
+| FR-008-AC-4 | Every `/command` and every setting the README names is registered by the plugin. | Test |
 | FR-008-AC-5 | Given only the README and `/factory help`, a first-time user completes US-002, US-003 and US-004 in a real session. | Demonstration |
 
 ## Dependencies
