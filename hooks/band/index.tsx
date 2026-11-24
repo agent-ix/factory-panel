@@ -42,6 +42,9 @@ let localMachine = ''
 let detectedRole: Role | undefined
 let lastStatus: string | undefined
 
+/** What the last AbovePrompt render saw and did, so /band can say why nothing is drawn. */
+export const lastDraw: { at: number; isFullscreen: boolean | undefined; interactive: boolean; reason: string } = { at: 0, isFullscreen: undefined, interactive: false, reason: 'no draw yet' }
+
 /** Reads the host name and, best effort, this session's role from its relay address. Never throws. */
 export async function startBand($: EngineInterface, options: Options): Promise<void> {
   await $.command.register({
@@ -168,7 +171,7 @@ export async function syncStatus($: EngineInterface, options: Options, isFullscr
 
 export function registerBand(on: On, options: Options): void {
   on('command.run', { command: 'band' }, async ($, e) => {
-    const [word = '', ...rest] = e.args.trim().split(/\s+/)
+    const [word = '', ...rest] = (e.args ?? '').trim().split(/\s+/)
     const list = rest.join(' ')
     if (word === 'off') await update($, bandOverride, o => ({ ...o, off: true }))
     else if (word === 'on') await update($, bandOverride, o => ({ ...o, off: false }))
@@ -177,11 +180,13 @@ export function registerBand(on: On, options: Options): void {
       const ids = parseModules(list)
       if (ids.length === 0) return { text: `No known module in "${list}". Known: ${MODULE_IDS.join(', ')}.` }
       await update($, bandOverride, () => ({ off: false, modules: ids.join(',') }))
-    } else if (word !== '' && word !== 'show') {
-      return { text: '/band on | off | modules a,b,c | reset' }
+    } else if (word !== '' && word !== 'show' && word !== 'status') {
+      return { text: `Unknown: /band ${e.args}. Use /band on | off | modules a,b,c | reset | status` }
     }
     const plan = bandPlan(options, await read($, bandOverride))
     const role = roleOf(options) ?? 'code-lead (role not known)'
-    return { text: plan.off ? 'Band is off.' : `Band shows (${role}): ${plan.ids.join(', ')}. Keys 1-${Math.min(9, plan.ids.length)} open a module.` }
+    const layout = lastDraw.isFullscreen === undefined ? 'unknown' : lastDraw.isFullscreen ? 'fullscreen' : 'classic'
+    const seen = lastDraw.at === 0 ? 'the prompt band has not been drawn yet' : `last draw: layout ${layout}, ${lastDraw.reason}`
+    return { text: plan.off ? `Band is off (${seen}).` : `Band shows (${role}): ${plan.ids.join(', ')}. Keys 1-${Math.min(9, plan.ids.length)} open a module. ${seen}.` }
   })
 }

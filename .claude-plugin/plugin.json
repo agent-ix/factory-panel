@@ -20,14 +20,14 @@
   "userConfig": {
     "prometheusUrl": {
       "type": "string",
-      "description": "Prometheus the panes query (no token needed)",
-      "default": "http://localhost:9090",
+      "description": "Prometheus the panes query. Leave empty to use the shared ix config (observability.prometheusUrl), else this host's relay endpoint, else http://prometheus.luna.ix",
+      "default": "",
       "title": "Prometheus URL"
     },
     "grafanaUrl": {
       "type": "string",
-      "description": "Grafana, for the panes' dashboard links",
-      "default": "http://localhost:3000",
+      "description": "Grafana, for the panes' dashboard links. Leave empty to use ix config observability.grafanaUrl, else derived from Prometheus's address",
+      "default": "",
       "title": "Grafana URL"
     },
     "teams": {

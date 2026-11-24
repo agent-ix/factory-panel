@@ -5,7 +5,8 @@ import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './fact
 import { PANE_SPEC as FOCUS_PANE, registerFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
-import { registerBand, renderBand, startBand, syncStatus } from './band'
+import { resolveEndpoints } from './endpoints'
+import { lastDraw, registerBand, renderBand, startBand, syncStatus } from './band'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
 
 // Each pane lives in its own file; open panes show as tabs beside the chat.
@@ -51,6 +52,7 @@ export const register: Register = (on, rawOptions) => {
   // failing one is logged, the others carry on). The panes are not opened here: see above.
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
+    await guarded($, 'Endpoint discovery', () => resolveEndpoints($, options))
     await guarded($, 'Factory start', () => startFactory($, options))
     await guarded($, 'Focus start', () => startFocus($, options))
     await guarded($, 'Escalations start', () => startEscalations($, options))
@@ -65,12 +67,20 @@ export const register: Register = (on, rawOptions) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     decideLayout($, e.viewport, options.inlineView)
     // A classic layout has no dock, so the band is the compact view; fullscreen keeps its panes.
-    if (isInteractive && e.viewport?.isFullscreen === false) {
+    // A layout the host has not reported counts as classic: a band is harmless, a blank is not.
+    lastDraw.at = Date.now()
+    lastDraw.isFullscreen = e.viewport?.isFullscreen
+    lastDraw.interactive = isInteractive
+    if (!isInteractive) lastDraw.reason = 'session not interactive'
+    else if (e.viewport?.isFullscreen === true) lastDraw.reason = 'panes dock in fullscreen, no band'
+    else if (options.inlineView !== 'band' && options.inlineView !== 'status') lastDraw.reason = 'inlineView is off'
+    else {
       await syncStatus($, options, false)
       if (options.inlineView === 'band') {
         const band = await renderBand($, e, options)
+        lastDraw.reason = band === null ? 'band has no modules with data' : 'band drawn'
         if (band !== null) return band
-      }
+      } else lastDraw.reason = 'status-line mode'
     }
     return next(e)
   })
