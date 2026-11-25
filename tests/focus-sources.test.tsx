@@ -219,19 +219,43 @@ async function showScenario($: Parameters<TestBody>[0], on: Parameters<typeof wo
   return shownText($)
 }
 
-test('/factory show prints each project with remaining, ready and blocked, and a dash where the answer lacks the key', async ($, on) => {
+test('/factory show prints each project with remaining and ready, a dash where the answer lacks the key, and no blocked count for a project asked with others', async ($, on) => {
   trace("FR-023-AC-2", "FR-023-AC-3")
   const text = await showScenario($, on)
-  expect(text).toMatch(/^ {4}P1: 10\/25 · remaining 15 · ready 3 · blocked 3$/m)
+  expect(text).toMatch(/^ {4}P1: 10\/25 · remaining 15 · ready 3 · blocked -$/m)
   expect(text).toMatch(/^ {4}P3: 1\/4 · remaining 3 · ready - · blocked -$/m)
   expect(text).toMatch(/^ {4}P2: failed, no counts$/m)
+})
+
+test('/factory show prints the blocked count of a project asked alone', async ($, on) => {
+  trace("FR-023-AC-2")
+  const w = world(on, true)
+  lead(w, { projects: ['P1'] })
+  board(w, { combined: () => out(statusJson([{ name: 'P1', done: 10, total: 25, ready: 3, layers: { open: 3, completed: 1 } }])) })
+  await started($, w)
+  const text = await shownText($)
+  expect(text).toMatch(/^ {4}P1: 10\/25 · remaining 15 · ready 3 · blocked 3$/m)
+  expect(text).not.toMatch(/does not say which project/)
+})
+
+test('/factory show gives the open blockers of several projects once for the focus and says why no project has its own', async ($, on) => {
+  trace("FR-023-AC-9")
+  const w = world(on, true)
+  lead(w, { projects: ['P1', 'P2'] })
+  // The two answers name their blockers alike: two of the five entries are the same tickets.
+  board(w, { combined: args => out(statusJson([{ name: args[1]!, done: 1, total: 9, ready: 1, layers: { open: args[1] === 'P1' ? 3 : 2, completed: 0 } }])) })
+  await started($, w)
+  const text = await shownText($)
+  expect(text).toMatch(/^ {2}total: 2\/18 done .* ready 2 · blocked 3 · 2 of 2 projects$/m)
+  expect(text).toMatch(/^ {2}blocked is counted once over the focus: a combined ix-board answer does not say which project a blocker belongs to$/m)
+  expect(text).toMatch(/^ {4}P1: 1\/9 · remaining 8 · ready 1 · blocked -$/m)
 })
 
 test('/factory show prints the X of Y projects, partial and not expanded wording of the initiatives and the header', async ($, on) => {
   trace("FR-022-AC-1", "FR-022-AC-11")
   const text = await showScenario($, on)
   expect(text).toMatch(/^ {2}total: .*3 of 4 projects.*partial.*1 initiative not expanded$/m)
-  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · 11\/29 done · remaining 18 · ready 3 · blocked 3 · partial$/m)
+  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · 11\/29 done · remaining 18 · ready 3 · blocked - · partial$/m)
   expect(text).toMatch(/^ {2}initiative initiative 674ffba8: projects unknown$/m)
 })
 

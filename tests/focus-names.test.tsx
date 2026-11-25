@@ -360,12 +360,12 @@ test('when the members of the named definition change between refreshes the seco
   choose(w, 'Beta')
   let members = ['p1']
   named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))), { [BETA]: () => out(showJson('Beta', 'QSL', { projects: members })) })
-  board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
+  board(w, { combined: args => pageOf(args[1]!, 5, 10) })
   await started($, w)
   expect(statusCalls(w)).toEqual(['--project p1'])
   members = ['p1', 'p2']
   await w.clock!.advance(2 * MIN + 1000)
-  expect(statusCalls(w).slice(-2)).toEqual(['--project p1', '--project p2'])
+  expect(statusCalls(w).slice(-1)).toEqual(['--project p1 --project p2'])
 })
 
 test('two active definitions with the same name of one team are both shown and the pane says how many matched', async ($, on) => {
