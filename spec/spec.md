@@ -32,6 +32,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - The files under `~/.ix/factory-panel/` that hold an agent's declaration and a user's choices.
 - How the mod finds the factory's metrics endpoints.
 - The commands, help text and documentation a person uses to learn all of the above.
+- The Focus card of 0.7.0: progress per project, initiatives with their projects nested beneath, honest roll-up totals, and source errors folded into one footer warning icon.
 
 ### 2.2 Out of Scope
 
@@ -89,6 +90,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | US-010 | Choose what to display | [US-010](usecase/US-010-choose-display.md) |
 | US-011 | Keep my focus progress when one source fails | [US-011](usecase/US-011-focus-survives-bad-data.md) |
 | US-012 | Know why this focus is shown and name it | [US-012](usecase/US-012-know-why-and-name-a-focus.md) |
+| US-013 | See initiatives with their projects and trust the numbers | [US-013](usecase/US-013-see-initiatives-with-their-projects.md) |
 
 ### 4.2 Functional Requirements
 
@@ -114,6 +116,11 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-018 | Source errors visible and not fatal | [FR-018](functional/FR-018-errors-visible-not-fatal.md) |
 | FR-019 | Focus mode banner | [FR-019](functional/FR-019-focus-mode-banner.md) |
 | FR-020 | Named focus resolution | [FR-020](functional/FR-020-named-focus-resolution.md) |
+| FR-021 | Per-project progress calls | [FR-021](functional/FR-021-per-project-progress.md) |
+| FR-022 | Initiative roll-up and honest totals | [FR-022](functional/FR-022-initiative-rollup-and-honest-totals.md) |
+| FR-023 | Nested initiative display | [FR-023](functional/FR-023-nested-initiative-display.md) |
+| FR-024 | Warnings as a footer icon | [FR-024](functional/FR-024-warning-icon-in-footer.md) |
+| FR-025 | Last good progress per project | [FR-025](functional/FR-025-per-project-last-good.md) |
 
 ### 4.3 Non-Functional Requirements
 

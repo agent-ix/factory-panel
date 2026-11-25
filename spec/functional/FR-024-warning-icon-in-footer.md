@@ -18,13 +18,15 @@ The mod SHALL fold every source and selector error of the Focus card into one ex
 
 ## Behavior
 
-- The mod SHALL draw one warning line, such as `⚠ 1 project failed`, in the card footer on the same line as the freshness text.
-- The warning line SHALL state the count of problems, covering failed projects, failed selectors and source errors.
-- The mod SHALL draw no warning line where there are no problems.
+- The mod SHALL draw one warning line, such as `⚠ 1 project failed`, in the same footer row element as the freshness text, such as `updated 0s ago` or `synced 5m`.
+- The warning count SHALL be the number of distinct projects whose call failed plus the number of source errors.
+- An initiative whose projects cannot be enumerated SHALL count once.
+- A project whose call failed and that is drawn from an old record SHALL count.
+- The mod SHALL draw no warning line where the count is zero.
 - The mod SHALL draw the warning line in the warning tone.
 - The mod SHALL draw no error text in the card body.
-- The mod SHALL expand the warning line, when the user activates it by Button or hotkey, into the full messages just above the footer.
-- An expanded message SHALL name the ticket, milestone, project and their ids and names where the error text supplies them.
+- The mod SHALL expand the warning line into the full messages just above the footer when the user presses `e` or activates the line by Button.
+- An expanded message SHALL name the ticket, milestone and project with their ids and names where the error text supplies them.
 - The mod SHALL collapse the messages on the next activation.
 - The mod SHALL keep the same error text in `/factory show` as [FR-018](./FR-018-errors-visible-not-fatal.md) requires.
 
@@ -32,12 +34,12 @@ The mod SHALL fold every source and selector error of the Focus card into one ex
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-024-AC-1 | Given one project failed, the footer shows `⚠ 1 project failed` on the same line as the freshness text, in the warning tone. | Test |
-| FR-024-AC-2 | Given a failed project and a failed roadmap source, the line counts 2 problems and the card body holds no error text. | Test |
-| FR-024-AC-3 | Given no problem, no warning line is drawn. | Test |
-| FR-024-AC-4 | Given activation by Button or hotkey, the full messages appear above the footer with ticket, milestone and project ids and names, and a second activation hides them. | Test |
-| FR-024-AC-5 | Given an error text that carries no milestone, the expanded message shows only the parts it has and does not fail. | Test |
-| FR-024-AC-6 | Given the same errors, `/factory show` lists each source with its full error text. | Test |
+| FR-024-AC-1 | With one project failed, the footer shows `⚠ 1 project failed` in the warning tone, in the same footer row element as the freshness text. | Test |
+| FR-024-AC-2 | With a failed project and a source error the line counts 2, with an initiative that cannot be enumerated and one failed project it counts 2, and a failed project drawn from an old record counts. | Test |
+| FR-024-AC-3 | With no problem no warning line is drawn, and with problems the card body holds no error text. | Test |
+| FR-024-AC-4 | Pressing `e` or activating the line shows the full messages above the footer with ticket, milestone and project ids and names, and a second activation hides them. | Test |
+| FR-024-AC-5 | An error text with no milestone expands to the parts it has and does not fail. | Test |
+| FR-024-AC-6 | With the same errors, `/factory show` lists each source with its full error text. | Test |
 
 ## Dependencies
 

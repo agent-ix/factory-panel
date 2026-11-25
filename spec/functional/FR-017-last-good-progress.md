@@ -7,6 +7,8 @@ relationships:
     type: implements
   - target: "ix://agent-ix/factory-panel/FR-015"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-025"
+    type: traces_to
 ---
 # FR-017: Last good progress
 
@@ -17,13 +19,8 @@ The mod SHALL keep the last successful progress of each selector and show it, ma
 ## Behavior
 
 - The mod SHALL record the progress and the time of each successful selector call.
-- The mod SHALL also record, after each successful combined call, one focus-level record: the aggregate, under the key `focus:<address or definition id>:<selector keys>` of the focus shown, where the selector keys are those of its selectors, sorted and joined by `+`.
-- Where that key would be longer than 120 characters, the mod SHALL replace the selector keys by a short stable hash of them.
-- The mod SHALL use a focus-level record as a stand-in only where its key matches the selectors now shown.
-- The mod SHALL set `seen_ms` of a focus-level record to the current time only in a refresh that shows it with matching selectors.
-- Where every selector of a refresh fails, no record of any selector exists, and a focus-level record exists, the mod SHALL show the focus-level record marked old with its age, together with the errors.
 - The mod SHALL keep the records in one file, `~/.ix/factory-panel/progress.json`, in accordance with [FR-015](./FR-015-own-files.md).
-- The file SHALL be a JSON object whose key is `kind:ref` for an initiative, project or ticket and `milestone:ref:project` for a milestone.
+- The file SHALL be a JSON object whose key is `kind:ref` for a ticket, `project:<project id>` for a project, as [FR-025](./FR-025-per-project-last-good.md) states, and `milestone:ref:project` for a milestone, with the reserved key `initiatives` holding initiative membership.
 - Each entry SHALL hold `at_ms`, `seen_ms`, `done`, `total`, `inProgress` and `ready`.
 - The mod SHALL set `seen_ms` to the current time on every refresh in which the selector is shown.
 - The mod SHALL write the file by writing a temporary file and renaming it.
@@ -55,14 +52,16 @@ The mod SHALL keep the last successful progress of each selector and show it, ma
 | FR-017-AC-9 | Given another process wrote record E between this mod's read and write, the file holds both E and this mod's record, and an interrupted write leaves the previous file intact. | Test |
 | FR-017-AC-10 | Given a record whose `seen_ms` is 24 hours 1 minute old, the next write removes it, a record at 23 hours stays, and a record whose `at_ms` is old but whose `seen_ms` is current stays. | Test |
 | FR-017-AC-11 | The age of last success in `/factory show` for ix-board comes from `progress.json`, and for `agent-msg work` and Prometheus from memory, so a new session shows no age for them until they answer. | Test |
-| FR-017-AC-12 | After a successful combined call over several selectors, `progress.json` holds `focus:<address>:<selector keys>` with the aggregate `done`, `total`, `inProgress` and `ready`. | Test |
-| FR-017-AC-13 | Given a focus-level record from 5 minutes ago and no per-selector record, and a combined call that fails with every single call failing, the pane shows the aggregate marked old with age 5 minutes and the errors, not an empty card. | Test |
-| FR-017-AC-14 | Given a focus-level record for the selectors A and B and a focus whose scope is now A and C, with every call failing, the pane shows no stand-in, and the old record's `seen_ms` is not changed. | Test |
-
 
 ## Superseded in 0.7.0
 
-[FR-025](./FR-025-per-project-last-good.md) keys records by project and drops the focus-level record: the `focus:` key, its stand-in rule and acceptance criteria FR-017-AC-12, AC-13 and AC-14 no longer apply, and an initiative is a roll-up of project records. Every other rule of this requirement remains.
+[FR-025](./FR-025-per-project-last-good.md) keys project records by project id and drops the focus-level record. The focus-level bullets and the criteria listed below were removed from this requirement. Every other rule of this requirement remains.
+
+| Removed | Replaced by |
+|---------|-------------|
+| FR-017-AC-12 (focus-level record written) | dropped; an initiative is a roll-up and has no record of its own, see FR-025-AC-6 |
+| FR-017-AC-13 (focus-level stand-in when all calls fail) | FR-025-AC-2 and FR-025-AC-8 |
+| FR-017-AC-14 (focus-level key mismatch) | dropped with the focus-level record |
 
 ## Dependencies
 

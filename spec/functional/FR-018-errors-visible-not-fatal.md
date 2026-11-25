@@ -9,6 +9,10 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/NFR-004"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-024"
+    type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-021"
+    type: traces_to
 ---
 # FR-018: Source errors visible and not fatal
 
@@ -32,7 +36,7 @@ The mod SHALL show the error of each failing source in one place so that no fail
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-018-AC-1 | Given ix-board fails and `agent-msg work` and Prometheus answer, the Focus card shows the ix-board error on its error line and the summary and metrics are drawn. | Test |
+| FR-018-AC-1 | Given ix-board fails and `agent-msg work` and Prometheus answer, the Focus card shows the ix-board error in the footer warning of FR-024 and the summary and metrics are drawn. | Test |
 | FR-018-AC-2 | Given `agent-msg work` fails and ix-board answers, the progress is drawn and the work error is shown. | Test |
 | FR-018-AC-3 | Given Prometheus does not answer, the Focus pane and lanes are drawn and the Factory view says the metrics are unavailable with the reason. | Test |
 | FR-018-AC-4 | Given ix-board fails for one selector and Prometheus fails, `/factory show` lists both with their error text and the age of each last success where one exists. | Test |
