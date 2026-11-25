@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
 import { MODULE_IDS, buildCells, machineTone } from '../hooks/band/modules'
+import { boardOf } from '../hooks/work'
 import type { Snapshot } from '../hooks/band/modules'
-import type { Machine, TeamView } from '../types'
+import type { Machine, TeamView, WorkBoard, WorkLead } from '../types'
 import { trace } from './trace'
 
 const machine = (name: string, extra: Partial<Machine> = {}): Machine => ({
@@ -18,6 +19,24 @@ const machine = (name: string, extra: Partial<Machine> = {}): Machine => ({
   spend24hUsd: 12,
   ...extra,
 })
+
+const NOW = Date.UTC(2026, 10, 24, 12, 0)
+const HOUR = 3_600_000
+
+/** A lead whose agents report these tickets. */
+const workLead = (address: string, ...tickets: string[]): WorkLead => ({ address, status: 'running', reportedAt: NOW, agents: tickets.map((ticket, i) => ({ name: `a${i}`, ticket, role: 'coder', status: 'running', reportedAt: NOW })) })
+const openPr = (number: number, status = 'open') => ({ url: `https://github.com/agent-ix/x/pull/${number}`, repo: 'agent-ix/x', number, status, draft: status === 'draft' })
+const merge = (ago: number, number: number) => ({ at: NOW - ago * HOUR, kind: 'merged' as const, identifier: `QSL-${number}`, title: 't', project: 'p', repo: 'agent-ix/x', number })
+/** Two tickets with two open PRs between them (one shared, one draft), one merged PR, and merges 1, 23 and 25 hours old. */
+const board = (): WorkBoard => ({
+  issues: [
+    { identifier: 'QSL-1', title: 'one', state: 'Coding', prs: [openPr(1), openPr(2, 'draft'), openPr(3, 'merged')] },
+    { identifier: 'QSL-2', title: 'two', state: 'Coding', prs: [openPr(1)] },
+    { identifier: 'QSL-9', title: 'nobody reports it', state: 'Coding', prs: [openPr(9)] },
+  ],
+  activity: [merge(1, 5), merge(23, 6), merge(25, 7)],
+})
+const workState = (over: Partial<Snapshot['work']> = {}): Snapshot['work'] => ({ leads: [workLead('hub:QSL:code', 'QSL-1', 'QSL-2')], at: NOW, relayError: null, listed: 1, unread: 0, boards: [board()], ...over })
 
 const row = (name: string, done: number, total: number, inProgress: number) => ({ key: `project:${name}`, ref: name, id: name, name, failed: false, done, total, inProgress, ready: 0, blocked: 0, at: null, old: false, stages: null })
 const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
@@ -54,6 +73,8 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   relayAt: 1,
   relayError: null,
   boardError: null,
+  now: NOW,
+  work: workState(),
   ...over,
 })
 
@@ -169,5 +190,68 @@ test('every module opens the view the module-to-view map names', () => {
     attention: 'escalations',
     relay: 'relay',
     team: 'team',
+    work: 'work',
   })
+})
+
+const workText = (over: Partial<Snapshot['work']>) => text(buildCells(['work'], snapshot({ work: workState(over) })), 'work')
+
+test('the work cell counts the leads’ tickets, their open and draft PRs once each, and the merges of 24 hours', () => {
+  trace("FR-009-AC-9")
+  expect(workText({})).toBe('2 tickets · 2 PRs open · 2 merged 24h')
+  // A ticket two leads report is one ticket.
+  expect(workText({ leads: [workLead('hub:QSL:code', 'QSL-1', 'QSL-2'), workLead('hub:QSL:arch', 'QSL-2')] })).toBe('2 tickets · 2 PRs open · 2 merged 24h')
+  expect(workText({ leads: [workLead('hub:QSL:code', 'QSL-2')], boards: [{ ...board(), activity: [merge(2, 5)] }] })).toBe('1 ticket · 1 PR open · 1 merged 24h')
+  // One PR that closed two tickets is one merge.
+  expect(workText({ boards: [{ ...board(), activity: [merge(1, 5), { ...merge(1, 5), identifier: 'QSL-50' }, { ...merge(2, 6), repo: null, number: null }] }] })).toBe('2 tickets · 2 PRs open · 2 merged 24h')
+  // No ticket reported is a real zero.
+  expect(workText({ leads: [], boards: [{ issues: [], activity: [] }] })).toBe('0 tickets · 0 PRs open · 0 merged 24h')
+})
+
+test('the work cell reads a dash for what ix-board has not said and marks a PR count that is a lower bound', () => {
+  trace("FR-009-AC-10")
+  // No focus status read yet.
+  expect(workText({ boards: [] })).toBe('2 tickets · — PRs open · — merged 24h')
+  expect(workText({ leads: [], boards: [] })).toBe('0 tickets · — PRs open · — merged 24h')
+  // An ix-board older than 0.9.0 says neither PRs nor activity.
+  expect(workText({ boards: [{ issues: [{ identifier: 'QSL-1', title: 't', state: 'Coding', prs: null }], activity: null }] })).toBe('2 tickets · — PRs open · — merged 24h')
+  // A ticket the focus status does not name: its PRs are unknown, so the count is at least this.
+  expect(workText({ leads: [workLead('hub:QSL:code', 'QSL-1', 'ENG-4')] })).toBe('2 tickets · ≥2 PRs open · 2 merged 24h')
+  expect(workText({ leads: [workLead('hub:QSL:code', 'ENG-4')] })).toBe('1 ticket · — PRs open · 2 merged 24h')
+})
+
+test('where ix-board cut its activity inside the last day the merges are a lower bound', () => {
+  trace("FR-009-AC-14")
+  const answer = (count: number, spacingMinutes: number) =>
+    boardOf({ projects: [], activity: Array.from({ length: count }, (_, i) => ({ at: new Date(NOW - (i + 1) * spacingMinutes * 60_000).toISOString(), kind: 'merged', identifier: `QSL-${i}`, title: 't', project: 'p', pr: { url: 'u', repo: 'r', number: i } })) })
+  // 200 entries is ix-board's cap: the oldest of these is under 7 hours old, so older merges of the day are missing.
+  expect(workText({ leads: [], boards: [answer(200, 2)] })).toBe('0 tickets · 0 PRs open · ≥200 merged 24h')
+  // Cut, but further back than a day: the day is whole.
+  expect(workText({ leads: [], boards: [answer(200, 10)] })).toBe('0 tickets · 0 PRs open · 144 merged 24h')
+  // Under the cap nothing was left out.
+  expect(workText({ leads: [], boards: [answer(199, 2)] })).toBe('0 tickets · 0 PRs open · 199 merged 24h')
+  // One cut answer among several leaves the sum short.
+  expect(workText({ leads: [], boards: [answer(3, 60), answer(200, 2)] })).toMatch(/≥\d+ merged 24h$/)
+})
+
+test('with a lead’s report unread the tickets and PRs are lower bounds and the band says how many leads are missing', () => {
+  trace("FR-009-AC-13")
+  expect(workText({ listed: 3, unread: 2 })).toBe('≥2 tickets · ≥2 PRs open · 2 merged 24h')
+  expect(buildCells(['work'], snapshot({ work: workState({ listed: 3, unread: 2 }) }))[0]?.alert).toBe('agent-msg work: 2 of 3 leads not read')
+  expect(workText({ leads: [], listed: 3, unread: 1, boards: [] })).toBe('≥0 tickets · — PRs open · — merged 24h')
+})
+
+test('the work cell is left out until the relay has answered or failed, and says why where it failed', () => {
+  trace("FR-009-AC-11", "FR-009-AC-12")
+  expect(buildCells(['work'], snapshot({ work: workState({ at: null, leads: [] }) }))).toEqual([])
+  // The leads held from an earlier read are not drawn as of now.
+  const failed = snapshot({ work: workState({ relayError: 'redis down' }) })
+  expect(text(buildCells(['work'], failed), 'work')).toBe('— tickets · — PRs open · 2 merged 24h')
+  expect(buildCells(['work'], failed)[0]?.alert).toBe('agent-msg work: redis down')
+  const never = snapshot({ work: workState({ at: null, leads: [], boards: [], relayError: 'redis down' }) })
+  expect(text(buildCells(['work'], never), 'work')).toBe('— tickets · — PRs open · — merged 24h')
+  // ix-board's trouble is the focus's warning.
+  const focuses = snapshot().focuses.map(f => ({ ...f, warnings: [{ kind: 'source' as const, name: 'ix-board', text: 'ix-board: rate limited', id: null }] }))
+  expect(buildCells(['work'], snapshot({ focuses, work: workState({ boards: [] }) }))[0]?.alert).toBe('ix-board: rate limited')
+  expect(buildCells(['work'], snapshot())[0]?.alert).toBeUndefined()
 })

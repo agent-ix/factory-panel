@@ -13,7 +13,7 @@ import { getSelection, refreshSelection } from './selection'
 import { guarded } from './shared'
 import type { Options } from './shared'
 import { pollRetro, pollTeam } from './team'
-import { pollWork } from './workview'
+import { pollEvents, pollWork } from './workview'
 import { VIEW_SPECS } from './views'
 import type { ViewId } from './views'
 
@@ -37,7 +37,7 @@ export const HEARTBEAT_MS = 15 * 1000
 const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   factory: ['selection', 'prometheus', 'herdr', 'relay', 'board'],
   focus: ['selection', 'focus'],
-  work: ['selection', 'focus', 'work'],
+  work: ['selection', 'focus', 'work', 'events'],
   escalations: ['escalations'],
   relay: ['announcements'],
   team: ['team', 'retro'],
@@ -55,6 +55,7 @@ const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
   attention: ['escalations'],
   relay: ['relay'],
   team: ['team'],
+  work: ['focus', 'work'],
 }
 
 /** The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams. */
@@ -75,7 +76,7 @@ async function readScope($: EngineInterface): Promise<boolean> {
   await refreshSelection($, true)
   const now = `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
   // The first refresh only records the scope: the first reads already wait for it.
-  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board')
+  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work')
   lastScope = now
   $.ui.invalidate('ui.render')
   return true
@@ -107,6 +108,8 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollTeam($, options)
     case 'work':
       return pollWork($)
+    case 'events':
+      return pollEvents($)
     case 'retro':
       return pollRetro($)
     // The identity lookup is part of the selection's refresh.

@@ -2,11 +2,11 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { boardOf, composeWork, lastOfEvents, mergeBoards } from '../hooks/work'
+import { FEED_CAP, boardOf, composeWork, eventRole, foldFeed, lastOfEvents, mergeBoards, recentOf } from '../hooks/work'
 import { runFactory } from '../hooks/router'
 import { ticketLine } from '../hooks/workview'
 import { VIEW_IDS } from '../hooks/views'
-import { fake$, options, out, report, startSession, world } from './world'
+import { CLASSIC, FP, drawBand, fake$, options, out, report, startSession, world } from './world'
 import type { World } from './world'
 import { ix } from './board-kit'
 
@@ -95,7 +95,7 @@ const ticketRow = (d: Drawn, id: string) => d.lines.find(l => l.trim().startsWit
 // ---------------------------------------------------------------- FR-028 leads and tickets
 
 test('a lead is listed with its status mark and age, and its tickets with state, title, badges and last action', async ($, on) => {
-  trace('FR-028-AC-1')
+  trace("FR-028-AC-1")
   await setup($, on, rich(), events([LEAD, 'QSL-1240', 'coder', 'running', 4], [LEAD, 'QSL-1240', 'reviewer', 'running', 2]))
   const d = await draw($)
   expect(d.lines).toContain(LEAD)
@@ -111,7 +111,7 @@ test('a lead is listed with its status mark and age, and its tickets with state,
 })
 
 test('the badges are pr for an open or draft PR only, review with the count of reviewers, spec and gate', async ($, on) => {
-  trace('FR-028-AC-2')
+  trace("FR-028-AC-2")
   await setup($, on, rich(), events())
   const d = await draw($)
   expect(ticketRow(d, 'QSL-1240')).toMatch(/\[pr\]\[review×2\]/)
@@ -129,7 +129,7 @@ test('the badges are pr for an open or draft PR only, review with the count of r
 })
 
 test('a ticket in progress that no lead reports is not listed under a lead', async ($, on) => {
-  trace('FR-028-AC-3')
+  trace("FR-028-AC-3")
   await setup($, on, rich())
   const d = await draw($)
   expect(d.text).not.toMatch(/QSL-1300/)
@@ -137,7 +137,7 @@ test('a ticket in progress that no lead reports is not listed under a lead', asy
 })
 
 test('a lead collapses to its ticket count and expands again, and ticket rows fit 60 columns', async ($, on) => {
-  trace('FR-028-AC-4')
+  trace("FR-028-AC-4")
   await setup($, on, rich())
   const d = await draw($)
   for (const l of d.lines.filter(l => /^ {3}QSL-/.test(l))) expect(l.length).toBeLessThanOrEqual(60)
@@ -154,7 +154,7 @@ test('a lead collapses to its ticket count and expands again, and ticket rows fi
 // ---------------------------------------------------------------- FR-028 Recent
 
 test('Recent lists merges newest first with repository, PR, ticket and title, and a toggles every kind', async ($, on) => {
-  trace('FR-028-AC-5')
+  trace("FR-028-AC-5")
   await setup($, on, rich())
   const d = await draw($)
   const merged = d.lines.filter(l => /filament-mltl#/.test(l))
@@ -171,7 +171,7 @@ test('Recent lists merges newest first with repository, PR, ticket and title, an
 })
 
 test('an ix-board without activity and PRs shows the tickets without a PR badge and says what Recent needs', async ($, on) => {
-  trace('FR-028-AC-6')
+  trace("FR-028-AC-6")
   await setup($, on, old())
   const d = await draw($)
   expect(d.text).toMatch(/needs ix-board ≥0\.9\.0/)
@@ -181,7 +181,7 @@ test('an ix-board without activity and PRs shows the tickets without a PR badge 
 })
 
 test('the stale result wrapper is read as the object inside, and the Work tab makes no ix-board call of its own', async ($, on) => {
-  trace('FR-028-AC-7')
+  trace("FR-028-AC-7")
   const wrapped = JSON.stringify({ result: JSON.parse(rich()) })
   const w = await setup($, on, wrapped)
   const d = await draw($)
@@ -192,7 +192,7 @@ test('the stale result wrapper is read as the object inside, and the Work tab ma
 })
 
 test('where the events cannot be read the tickets show with the age of the latest report and the footer warns once', async ($, on) => {
-  trace('FR-028-AC-8')
+  trace("FR-028-AC-8")
   await setup($, on, rich(), () => out('', 1, 'redis down'))
   const d = await draw($)
   expect(ticketRow(d, 'QSL-1240')).toMatch(/reviewer (running )?5m$/)
@@ -203,7 +203,7 @@ test('where the events cannot be read the tickets show with the age of the lates
 })
 
 test('the widget says how many leads, tickets and merges of the last 24 hours', async ($, on) => {
-  trace('FR-028-AC-9')
+  trace("FR-028-AC-9")
   await setup($, on, rich())
   const d = await draw($, 'terminal', 'widget')
   expect(d.text).toBe('2 leads · 6 tickets · 2 merged 24h')
@@ -211,7 +211,7 @@ test('the widget says how many leads, tickets and merges of the last 24 hours', 
 })
 
 test('Work follows Focus in the dock and /factory work opens it', async ($, on) => {
-  trace('FR-028-AC-10')
+  trace("FR-028-AC-10")
   const w = world(on)
   await runFactory(fake$(w) as never, options(), 'work', true)
   expect(w.opens.at(-1)).toEqual({ id: 'work', focus: true, closeOnEscape: true, rows: undefined })
@@ -239,7 +239,7 @@ const eventCalls = (w: World) => w.ran.filter(l => l.startsWith('agent-msg work 
 const afterOf = (argv: string[]) => argv[argv.indexOf('--after') + 1]!
 
 test('the events are read page after page by their cursor, and the last action is the newest of all pages', async ($, on) => {
-  trace('FR-028-AC-12')
+  trace("FR-028-AC-12")
   const pages: Record<string, string> = {
     '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 30]], 'c1', true),
     c1: page([[LEAD, 'QSL-1240', 'reviewer', 'running', 2]], 'c2', false),
@@ -252,7 +252,7 @@ test('the events are read page after page by their cursor, and the last action i
 })
 
 test('the next read asks only for what came after the last cursor and keeps the earlier last actions', async ($, on) => {
-  trace('FR-028-AC-12')
+  trace("FR-028-AC-12")
   const pages: Record<string, string> = {
     '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 3], [LEAD, 'QSL-1251', 'spec-author', 'running', 3]], 'c1', false),
     c1: page([[LEAD, 'QSL-1240', 'reviewer', 'waiting', 0]], 'c2', false),
@@ -268,7 +268,7 @@ test('the next read asks only for what came after the last cursor and keeps the 
 })
 
 test('five full pages with more behind are a warning, and the next read carries on from where this one stopped', async ($, on) => {
-  trace('FR-028-AC-12')
+  trace("FR-028-AC-12")
   const w = await setup($, on, rich(), argv => out(page([[LEAD, 'QSL-1240', 'coder', 'running', 1]], `c${Number(afterOf(argv).replace('c', '').replace('0-0', '0')) + 1}`, true)))
   expect(eventCalls(w).map(l => l.split(' --after ')[1])).toEqual(['0-0', 'c1', 'c2', 'c3', 'c4'])
   const d = await draw($)
@@ -279,5 +279,172 @@ test('five full pages with more behind are a warning, and the next read carries 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(2 * MIN)
   expect(eventCalls(w).slice(5, 6).map(l => l.split(' --after ')[1])).toEqual(['c5'])
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- FR-028 review, spec and gate events
+
+const recent = (d: Drawn) => d.lines.filter(l => /^\d+[smhd] /.test(l) && l.length > 4)
+const roleEvents = () =>
+  events(
+    [LEAD, 'QSL-1251', 'spec-author', 'running', 40],
+    [LEAD, 'QSL-1251', 'spec-author', 'done', 18],
+    [LEAD, 'QSL-1240', 'coder', 'running', 15],
+    [LEAD, 'QSL-1240', 'reviewer', 'running', 4],
+    [IDLE, 'QSL-2', 'gate', 'running', 2],
+    ['hub:ENG:code', 'ENG-7', 'reviewer', 'done', 1],
+  )
+
+test('merges stay the default, and a lists review, spec and gate starts and finishes with ticket, lead and age among the other events', async ($, on) => {
+  trace("FR-028-AC-13", "FR-028-AC-5")
+  await setup($, on, rich(), roleEvents())
+  const d = await draw($)
+  expect(recent(d)).toEqual(['6m  filament-mltl#412  QSL-1238 timed clock', '22m filament-mltl#400  QSL-1111 earlier merge'])
+  await d.press('kinds')
+  expect(recent(d)).toEqual([
+    `2m  gate start    QSL-2  ${IDLE}`,
+    '3m  filament-mltl#415  QSL-1251 residual defects',
+    `4m  review start  QSL-1240  ${LEAD}`,
+    '6m  filament-mltl#412  QSL-1238 timed clock',
+    `18m spec done     QSL-1251  ${LEAD}`,
+    '20m QSL-1199 old thing',
+    '22m filament-mltl#400  QSL-1111 earlier merge',
+    `40m spec start    QSL-1251  ${LEAD}`,
+  ])
+  await d.press('kinds')
+  expect(d.text).not.toMatch(/review start|spec done|gate start/)
+  await d.unmount()
+})
+
+test('the role events of a lead outside the selected teams are not listed', { options: { teams: 'QSL' } }, async ($, on) => {
+  trace("FR-028-AC-15")
+  await setup($, on, rich(), roleEvents())
+  const d = await draw($)
+  await d.press('kinds')
+  expect(d.text).toMatch(/gate start/)
+  expect(d.text).not.toMatch(/ENG-7/)
+  await d.unmount()
+  const feed = foldFeed(JSON.parse(roleEvents()).events, { events: [], phase: {} })
+  expect(recentOf(null, feed.events, true, null).map(r => r.event!.ticket)).toContain('ENG-7')
+  expect(recentOf(null, feed.events, true, ['eng']).map(r => r.event!.ticket)).toEqual(['ENG-7'])
+  expect(recentOf(null, feed.events, false, null)).toEqual([])
+})
+
+test('only a change to running or done of a review, spec or gate role is an event', () => {
+  trace("FR-028-AC-14")
+  const fold = (...rows: [string, string, string, string, number][]) => foldFeed(JSON.parse(events(...rows)).events.map((e: { change: { agent: { agent_id: string } } }) => ((e.change.agent.agent_id = 'one'), e)), { events: [], phase: {} })
+  const steps = (...statuses: string[]) => fold(...statuses.map((s, i): [string, string, string, string, number] => [LEAD, 'QSL-1', 'reviewer', s, 50 - i])).events.map(e => e.step)
+  expect(steps('running', 'running', 'waiting', 'running', 'done', 'done')).toEqual(['start', 'done'])
+  // A first report of waiting is not a start; the running that follows is.
+  expect(steps('waiting', 'running')).toEqual(['start'])
+  // Work again after done, failed or canceled is a new start; neither failed nor canceled is listed.
+  expect(steps('running', 'done', 'running', 'failed', 'running', 'canceled', 'running')).toEqual(['start', 'done', 'start', 'start', 'start'])
+  // A done with no start in the stream is still a finish.
+  expect(steps('done')).toEqual(['done'])
+  expect(['coder', 'researcher', 'gate', 'spec-steward', 'spec author', 'code-reviewer', 'spec-reviewer'].map(eventRole)).toEqual([null, null, 'gate', 'spec', 'spec', 'review', 'review'])
+  expect(fold([LEAD, 'QSL-1', 'coder', 'running', 5], [LEAD, 'QSL-1', 'researcher', 'done', 4]).events).toEqual([])
+})
+
+test('a removed agent that reports again starts again, and the feed keeps its newest events', () => {
+  trace("FR-028-AC-14")
+  const report = (at: number, status: string, ticket = 'QSL-1') => ({ id: `${at}-0`, at_ms: at, binding: { address: LEAD }, change: { kind: 'agent', agent: { agent_id: 'r1', name: 'r', ticket, role: 'reviewer', status } } })
+  const removed = { id: '2-0', at_ms: 2, binding: { address: LEAD }, change: { kind: 'remove', agent_id: 'r1' } }
+  const first = foldFeed([report(1, 'running')], { events: [], phase: {} })
+  // The next page carries on from what is held.
+  expect(foldFeed([report(2, 'running')], first).events).toHaveLength(1)
+  expect(foldFeed([removed, report(3, 'running')], first).events.map(e => [e.at, e.step])).toEqual([[1, 'start'], [3, 'start']])
+  const many = foldFeed(Array.from({ length: FEED_CAP + 5 }, (_, i) => report(i + 1, 'running', `QSL-${i}`)), { events: [], phase: {} })
+  expect(many.events).toHaveLength(FEED_CAP)
+  expect(many.events.at(-1)!.at).toBe(FEED_CAP + 5)
+})
+
+test('a review reported while the tab is on screen is listed within a minute', async ($, on) => {
+  trace("FR-028-AC-16")
+  let reported = false
+  const w = await setup($, on, rich(), argv => {
+    const after = afterOf(argv)
+    return out(reported && after !== 'c9' ? page([[LEAD, 'QSL-9001', 'reviewer', 'running', -1]], 'c9', false) : page([], after, false))
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await ui.press({ key: 'kinds' })
+  // Past the first read of the mount, then the review is reported just after a read.
+  await w.clock!.advance(5000)
+  const reads = eventCalls(w).length
+  while (eventCalls(w).length === reads) await w.clock!.advance(1000)
+  reported = true
+  // Half a minute and one redraw: the rest of the minute is left for the view check and the read of a real session.
+  await w.clock!.advance(46_000)
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').some(l => /review start +QSL-9001/.test(l))).toBe(true)
+  await ui.unmount()
+})
+
+test('without ix-board’s activity a still lists the role events and says what is missing', async ($, on) => {
+  trace("FR-028-AC-17")
+  await setup($, on, old(), roleEvents())
+  const d = await draw($)
+  expect(d.text).toMatch(/needs ix-board ≥0\.9\.0/)
+  expect(d.text).not.toMatch(/review start/)
+  await d.press('kinds')
+  expect(d.text).toMatch(/review start +QSL-1240/)
+  expect(d.text).toMatch(/needs ix-board ≥0\.9\.0/)
+  await d.unmount()
+})
+
+test('events held from an earlier read stay listed when a later read fails, with one warning', async ($, on) => {
+  trace("FR-028-AC-8")
+  let fails = false
+  const w = await setup($, on, rich(), argv => (fails ? out('', 1, 'redis down') : out(page(afterOf(argv) === '0-0' ? [[LEAD, 'QSL-1240', 'reviewer', 'running', 2]] : [], 'c1', false))))
+  fails = true
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(2 * MIN)
+  await ui.press({ key: 'kinds' })
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(lines.some(l => /review start +QSL-1240/.test(l))).toBe(true)
+  expect((await ui.find({ key: 'warnings-toggle' }))?.props).toMatchObject({ label: '1' })
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- FR-009 the work band cell
+
+test('the widget marks the merges as a lower bound where ix-board cut its activity', async ($, on) => {
+  trace("FR-028-AC-9")
+  const cut = rich({ activity: Array.from({ length: 200 }, (_, i) => act('merged', `QSL-${i}`, 't', i + 1, i)) })
+  await setup($, on, cut)
+  const d = await draw($, 'terminal', 'widget')
+  expect(d.text).toBe('2 leads · 6 tickets · ≥200 merged 24h')
+  await d.unmount()
+})
+
+test('the band marks the counts as lower bounds where one lead’s report cannot be read', async ($, on) => {
+  trace("FR-009-AC-13")
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha'), agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9)] })
+  w.leads.set(IDLE, report(IDLE, 'idle'))
+  w.files.set(`${FP}/features/default.json`, JSON.stringify({ modules: ['work'], teams: ['QSL'] }))
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === `agent-msg work --lead ${IDLE} show` ? out('', 1, 'timed out') : prior?.(argv, init))
+  await startSession($)
+  const ui = await drawBand($, CLASSIC)
+  await w.clock!.advance(20_000)
+  const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+  expect(text).toMatch(/≥1 ticket · — PRs open · — merged 24h/)
+  expect(text).toMatch(/agent-msg work: 1 of 2 leads not read/)
+  await ui.unmount()
+})
+
+test('a band with the work module reads the leads and the focus status, shows the counts and opens the Work view', async ($, on) => {
+  trace("FR-009-AC-9", "FR-009-AC-6")
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9), agent('c2', 'QSL-1251', 'coder', 'running', 9)] })
+  w.files.set(`${FP}/features/default.json`, JSON.stringify({ modules: ['work'], teams: ['QSL'] }))
+  ix(w, { projects: { Alpha: () => out(rich()) } })
+  await startSession($)
+  const ui = await drawBand($, CLASSIC)
+  await w.clock!.advance(20_000)
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join('')).toMatch(/2 tickets · 1 PR open · 2 merged 24h/)
+  expect(w.ran.filter(l => l.startsWith('agent-msg work events'))).toEqual([])
+  await ui.press({ key: 'work' })
+  await w.clock!.advance(1000)
+  expect(w.opens.at(-1)?.id).toBe('work')
   await ui.unmount()
 })

@@ -34,6 +34,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - The commands, help text and documentation a person uses to learn all of the above.
 - The Focus card of 0.7.0: progress per project, initiatives with their projects nested beneath, honest roll-up totals, and source errors folded into one footer warning icon.
 - The Work tab of 0.8.0 (leads, their tickets and merges) and the Team tab's review, flow and retro-health additions.
+- The review, spec and gate events in the Work tab's Recent list, and the work cell of the band.
 - The reads of 0.7.1: one combined progress call for the projects of a focus, a shared memory of selectors ix-board cannot answer, Linear-backed reads at most once in 30 minutes, and no read of what is not on screen.
 
 ### 2.2 Out of Scope

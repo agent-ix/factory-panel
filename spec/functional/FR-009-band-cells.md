@@ -37,12 +37,28 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
   | focus | Focus |
   | queue | Focus |
   | lead | Focus |
+  | work | Work |
   | attention | Escalations |
   | relay | Message |
   | team | Team |
 
 - The team module SHALL show the label and value of the first tile that has a reading, of the first team that has one.
 - The mod SHALL leave out the team module when no team metrics exist.
+
+### The work module
+
+- The work module SHALL read `N tickets · M PRs open · K merged 24h`, with `ticket` and `PR` in the singular for one.
+- N SHALL be the distinct tickets that the agents of the listed leads report ([FR-028](./FR-028-work-tab.md)).
+- M SHALL be the distinct open or draft PRs of those tickets, as ix-board's focus status names them.
+- K SHALL be the distinct PRs of the merged entries of the focus status's `activity[]` of the last 24 hours, so that a PR of two tickets is one; an entry that names no PR counts by itself.
+- ix-board puts at most 200 entries in `activity[]`, newest first. Where an answer holds that many and its oldest is under 24 hours old, K SHALL be drawn as a lower bound (`≥K`).
+- Where the focus status names the PRs of only some of the tickets, M SHALL be drawn as a lower bound (`≥M`).
+- A number that is unknown SHALL read `—` and never 0: M where no focus status has been read or none names the PRs of any listed ticket, and K where no focus status has an `activity` key.
+- The mod SHALL leave out the work module until the relay's leads have been read or their read has failed.
+- Where the last read of the leads failed, or every lead's report failed, N and M SHALL read `—`, and the band SHALL show the error.
+- Where some leads' reports failed, N and M SHALL be drawn as lower bounds (`≥N`), and the band SHALL say how many of the leads were not read.
+- Where every report was read, the band SHALL show the ix-board error of the focus the band shows, if any.
+- The band SHALL show an error text that two cells share once.
 
 ## Acceptance Criteria
 
@@ -56,6 +72,12 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 | FR-009-AC-6 | Pressing the digit of a cell opens the view named in the module-to-view table, for every module in the table. | Test |
 | FR-009-AC-7 | The team cell shows the first tile with a reading of the first team that has one, and is left out when no team metrics exist. | Test |
 | FR-009-AC-8 | In a real classic session a digit typed while the prompt holds text is typed into the prompt and opens nothing. | Demonstration |
+| FR-009-AC-9 | The work cell reads the distinct tickets of the leads, their distinct open and draft PRs and the merges of 24 hours. | Test |
+| FR-009-AC-10 | The work cell reads `—` for PRs and merges that ix-board has not said, and `≥M` where only some tickets' PRs are known. | Test |
+| FR-009-AC-11 | The work cell is left out until the leads have been read or their read has failed. | Test |
+| FR-009-AC-12 | A failed read of the leads reads `—` for tickets and PRs with the error in the band; an ix-board error of the focus shows where the leads were read. | Test |
+| FR-009-AC-13 | Where some leads' reports fail, tickets and PRs read as lower bounds and the band says how many of the leads were not read. | Test |
+| FR-009-AC-14 | Where an `activity[]` of 200 entries reaches back less than 24 hours, the merges read as a lower bound. | Test |
 
 ## Dependencies
 

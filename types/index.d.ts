@@ -233,8 +233,11 @@ export type WorkIssue = { identifier: string; title: string; state: string; prs:
 /** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
 export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
 
-/** What one focus status answer says of tickets; `activity` is null where ix-board has no such field. */
-export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null }
+/**
+ * What one focus status answer says of tickets; `activity` is null where ix-board has no such field. `cutAt` is set
+ * where ix-board cut the activity at its cap: entries older than this time (ms since the epoch) are missing.
+ */
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number }
 
 export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
 
@@ -244,7 +247,20 @@ export type WorkLead = { address: string; status: string; reportedAt: number | n
 /** The latest transition of one agent on one ticket, from `agent-msg work events`. */
 export type WorkLast = { role: string; status: string; at: number }
 
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null }
+/**
+ * `relayError` is why the last read of the leads gave nothing: no list of leads, or no report of any lead. `listed` and
+ * `unread` count the leads of that read and those whose report could not be read.
+ */
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; unread: number }
+
+/** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
+export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }
+
+/**
+ * What the event stream has said of those roles: the latest events, oldest first, and where each assignment
+ * (lead, agent, ticket) stands, so that a repeated report adds no event. `error` is the last read's problem.
+ */
+export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -286,6 +302,7 @@ declare module 'claude-code' {
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, WorkLast>>
       workMeta: Shaped<WorkMeta>
+      workFeed: Shaped<WorkFeed>
       workBoards: Shaped<Record<string, WorkBoard>>
       workCollapsed: string[]
       workAll: boolean

@@ -1,7 +1,7 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On, RenderElement, RenderInput } from 'claude-code'
 
-import type { BoardView, Escalation, Freshness, FocusMeta, FocusView, Machine, RelayView, TeamView } from '../../types'
+import type { BoardView, Escalation, Freshness, FocusMeta, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead, WorkMeta } from '../../types'
 import { getSelection, takeBandNote, modulesToDraw, scopeOf } from '../selection'
 import { errorText } from '../shared'
 import type { Options } from '../shared'
@@ -25,6 +25,9 @@ const focusMeta = atom({ plugin: 'factory-panel', key: 'focusMeta' } as const, {
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], { shape: 'escalations-1' })
 const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden' } as const, [] as string[])
 const teamViews = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-1' })
+const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-1' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, unread: 0 } as WorkMeta, { shape: 'workMeta-2' })
+const workBoards = atom({ plugin: 'factory-panel', key: 'workBoards' } as const, {} as Record<string, WorkBoard>, { shape: 'workBoards-1' })
 
 // Facts learned at session start: the machine this session runs on.
 let localMachine = ''
@@ -54,7 +57,7 @@ const list = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[])
 const EMPTY_RELAY = { ok: true, redis: '', watchers: [], warnings: 0, deadLetters: 0, inboxWaiting: 0, checks: [] }
 
 async function snapshot($: EngineInterface, options: Options): Promise<Snapshot> {
-  const [fresh, rel, brd, mach, foc, esc, hid, tms, fmeta] = await Promise.all([
+  const [fresh, rel, brd, mach, foc, esc, hid, tms, fmeta, wleads, wmeta, wboards, now] = await Promise.all([
     read($, freshness) as Promise<Partial<Freshness>>,
     read($, relay) as Promise<Partial<Snapshot['relay']>>,
     read($, board) as Promise<Partial<Snapshot['board']>>,
@@ -64,6 +67,10 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     read($, escalationHidden),
     read($, teamViews),
     read($, focusMeta) as Promise<Partial<FocusMeta>>,
+    read($, workLeads),
+    read($, workMeta) as Promise<Partial<WorkMeta>>,
+    read($, workBoards) as Promise<Record<string, WorkBoard> | undefined>,
+    $.clock.now(),
   ])
   return {
     machines: list(mach),
@@ -81,6 +88,8 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     relayAt: fresh?.relayAt ?? null,
     relayError: fresh?.relayError ?? null,
     boardError: brd?.error ?? null,
+    now,
+    work: { leads: list(wleads), at: wmeta?.at ?? null, relayError: wmeta?.relayError ?? null, listed: wmeta?.listed ?? 0, unread: wmeta?.unread ?? 0, boards: Object.values(wboards ?? {}) },
   }
 }
 
@@ -107,7 +116,8 @@ export async function renderBand($: EngineInterface, e: RenderInput, options: Op
       {p.text}
     </Text>
   )
-  const alerts = [...cells.flatMap(c => (c.alert === undefined ? [] : [c.alert])), ...notes]
+  // Two cells of one source say its trouble once.
+  const alerts = [...new Set([...cells.flatMap(c => (c.alert === undefined ? [] : [c.alert])), ...notes])]
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" gap={2}>

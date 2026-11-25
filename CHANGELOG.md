@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The Work tab's Recent list gains review, spec and gate events: under `a`, each start and finish of a reviewer, spec or gate agent, with its ticket, lead and age, for the leads of the selected teams. Merges stay the default. The events of `agent-msg work events` are now a read of their own every 30 seconds that waits on no lead's work report, so a review shows within a minute of its report.
+- New `work` band cell: `N tickets · M PRs open · K merged 24h`, opening the Work view. An unknown number reads `—`, and a count that may miss some (a lead whose report could not be read, a ticket whose PRs ix-board does not name) reads `≥N`. Select it with `/factory use` or a declaration.
+- `merged 24h`, in the band and the Work widget, counts distinct PRs (a PR linked to two tickets was counted twice) and reads `≥K` where ix-board’s 200-entry cap on activity cuts into the day.
+- A changed focus or teams choice reads the leads' work reports again at once.
+
 ## 0.8.0
 
 Who works on what, what merged, and how the teams perform.

@@ -4,7 +4,7 @@ factory-panel is a Claude Code plugin that keeps the state of an Agent IX factor
 
 ## What you see
 
-In the classic layout there is one line above the prompt. Each cell on it starts with a number and shows one thing: machines up or down, this machine's load, your focus and its progress, tickets ready, the lead, the lanes, escalations waiting, relay problems, team velocity. A cell with nothing to report is left out. A machine that has not reported shows as no data, never as healthy.
+In the classic layout there is one line above the prompt. Each cell on it starts with a number and shows one thing: machines up or down, this machine's load, your focus and its progress, tickets ready, the lead, the lanes, the work in hand (tickets, open PRs, merges of the last 24 hours), escalations waiting, relay problems, team velocity. A cell with nothing to report is left out. A machine that has not reported shows as no data, never as healthy. The work cell reads `N tickets · M PRs open · K merged 24h`; `—` is a number that is not known, and `≥` one that may be short (a lead whose report was not read, a ticket whose PRs ix-board does not name, or more merges than ix-board lists).
 
 In the fullscreen layout the same views are docked at the right of the chat as tabs and there is no line above the prompt.
 
@@ -14,7 +14,7 @@ The views behind the cells are:
 | --- | --- |
 | Factory | Each machine's up or down, CPU, memory and temperature, agents by status, 24-hour spend, and the herdr, ix-relay and ix-board state |
 | Focus | One card per named focus: its initiatives with their projects nested under them, progress, Ready and Blocked, and one warning icon |
-| Work | Each code lead with its tickets: Linear state, title, `[pr]`, `[review×N]`, `[spec]` and `[gate]` badges and the last action; below them the recent merges (`a` shows every kind). Needs ix-board 0.9.0 for PRs and merges; without it the tickets show without a PR badge |
+| Work | Each code lead with its tickets: Linear state, title, `[pr]`, `[review×N]`, `[spec]` and `[gate]` badges and the last action; below them the recent merges (`a` shows every kind: closed and opened entries, and the reviews, specs and gates that started or finished, read from the relay every 30 seconds). Needs ix-board 0.9.0 for PRs and merges; without it the tickets show without a PR badge |
 | Escalations | What the leads escalated, open first, with context, options and recommendation |
 | Message (`/factory relay`) | A message to every lead or one lead, and the recent broadcasts |
 | Team | Tiles per team with six-hour history in three rows (velocity and effort, review quality, flow and capacity), and the health of your teams' departments from their stored retro snapshots, or `no retro baseline`. A series the exporter does not publish reads `—`, never 0 |
@@ -38,7 +38,7 @@ What is shown is decided one feature at a time, from the first of these that sel
 2. A declaration an agent wrote for this session, usually because a skill told it to.
 3. The automatic view from the relay.
 
-The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus scope (`own`, `team` or a focus name) and the teams list.
+The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `work`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus scope (`own`, `team` or a focus name) and the teams list.
 
 | Command | Effect |
 | --- | --- |

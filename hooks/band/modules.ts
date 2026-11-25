@@ -1,13 +1,14 @@
-import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView } from '../../types'
+import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead } from '../../types'
 import { cellBar, loadColor, tempColor, usd } from '../ui/glyphs'
+import { workCounts } from '../work'
 
 // The band's modules. Each is a pure function of a snapshot of what the panes already collected,
 // so a test seeds a snapshot and reads the cell back. A module with nothing to say returns null
 // and drops out of the band.
 
-export type ModuleId = 'health' | 'local' | 'focus' | 'queue' | 'lead' | 'lanes' | 'attention' | 'relay' | 'team' | 'agents' | 'spend'
+export type ModuleId = 'health' | 'local' | 'focus' | 'queue' | 'lead' | 'lanes' | 'work' | 'attention' | 'relay' | 'team' | 'agents' | 'spend'
 
-export const MODULE_IDS: readonly ModuleId[] = ['health', 'local', 'focus', 'queue', 'lead', 'lanes', 'attention', 'relay', 'team', 'agents', 'spend']
+export const MODULE_IDS: readonly ModuleId[] = ['health', 'local', 'focus', 'queue', 'lead', 'lanes', 'work', 'attention', 'relay', 'team', 'agents', 'spend']
 
 export type Tone = 'success' | 'warning' | 'error' | 'inactive' | 'claude'
 
@@ -51,7 +52,13 @@ export type Snapshot = {
   relayAt: number | null
   relayError: string | null
   boardError: string | null
+  /** When the snapshot was taken, ms since the epoch. */
+  now: number
+  work: WorkState
 }
+
+/** What the Work view holds: the leads and how their last read went (see WorkMeta), and the focus statuses. */
+export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; unread: number; boards: readonly WorkBoard[] }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
 const DOWN_AFTER_SECS = 120
@@ -257,6 +264,26 @@ const relay = (s: Snapshot): Cell | null => {
   return { id: 'relay', pane: 'relay', parts: [{ text: `relay ${r.inboxWaiting} waiting`, tone: 'warning' }, { text: r.deadLetters > 0 ? ` · ${r.deadLetters} dead` : '', dim: true }] }
 }
 
+/** The leads' tickets, their open PRs and the day's merges; an unknown number is a dash, never a smaller one. */
+const work = (s: Snapshot): Cell | null => {
+  const w = s.work
+  if (w.at === null && w.relayError === null) return null // not asked yet
+  const { tickets, prsOpen, prsPartial, merged, mergedPartial } = workCounts(w.leads, w.boards, s.now, w.relayError === null)
+  const dash = (n: number | null, isAtLeast = false) => (n === null ? '—' : `${isAtLeast ? '≥' : ''}${n}`)
+  // A lead whose report was not read may hold more tickets and PRs.
+  const isShort = w.unread > 0
+  const parts: Part[] = [
+    { text: `${dash(tickets, isShort)} ${tickets === 1 ? 'ticket' : 'tickets'}`, tone: tickets === null ? 'inactive' : undefined },
+    { text: ` · ${dash(prsOpen, isShort || prsPartial)} ${prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
+    { text: ` · ${dash(merged, mergedPartial)} merged 24h`, dim: true },
+  ]
+  // The merges and PRs are ix-board's: where it fails, the focus's own warning says why.
+  const board = scoped(s).flatMap(f => f.warnings).find(x => x.kind === 'source')?.text
+  const unread = isShort ? `agent-msg work: ${w.unread} of ${w.listed} leads not read` : undefined
+  const alert = w.relayError === null ? (unread ?? board) : `agent-msg work: ${w.relayError}`
+  return { id: 'work', pane: 'work', parts, alert }
+}
+
 /** The first tile of the first team that has a reading: the one the Team view shows first. */
 const team = (s: Snapshot): Cell | null => {
   for (const t of s.teamViews) {
@@ -282,7 +309,7 @@ const spend = (s: Snapshot): Cell | null => {
   return { id: 'spend', pane: 'factory', parts: [{ text: `${usd(known.reduce((a, m) => a + (m.spend24hUsd ?? 0), 0))} / 24h`, dim: true }] }
 }
 
-const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local, focus, queue, lead, lanes, attention, relay, team, agents, spend }
+const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local, focus, queue, lead, lanes, work, attention, relay, team, agents, spend }
 
 /** Digits 1 to 9 go to the cells in the order drawn; a cell past the ninth has none. */
 export const MAX_DIGITS = 9

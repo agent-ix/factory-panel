@@ -16,6 +16,7 @@ export type SourceId =
   | 'announcements'
   | 'team'
   | 'work'
+  | 'events'
   | 'retro'
 
 const MINUTE = 60 * 1000
@@ -43,6 +44,9 @@ export const intervalOf = (id: SourceId): number => {
       return Math.max(MINUTE, refreshMs)
     case 'focus':
       return 2 * MINUTE
+    // The relay's event stream: cheap to ask, and a review has to show within a minute of its report.
+    case 'events':
+      return 30 * 1000
     // The stored retro snapshots change when a retro runs: every few minutes is often enough.
     case 'retro':
       return 5 * MINUTE

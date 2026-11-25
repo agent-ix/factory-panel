@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { WorkActivity, WorkAgent, WorkBoard, WorkIssue, WorkLast, WorkLead, WorkPr } from '../types'
+import type { WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLast, WorkLead, WorkPr, WorkRoleEvent } from '../types'
 
 // The model of the Work tab: what each lead has in hand, from the relay's work reports, joined with what
 // ix-board's focus status says of the tickets and of what was merged lately.
@@ -30,6 +30,9 @@ const obj = (v: unknown): Record<string, unknown> | null => (typeof v === 'objec
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 
 const KINDS = ['merged', 'closed', 'opened'] as const
+
+/** The most entries ix-board puts in `activity[]`, newest first; an answer this long may have left older ones out. */
+export const ACTIVITY_CAP = 200
 
 /** Milliseconds since the epoch of a number or an ISO time; null for anything else. */
 const timeOf = (v: unknown): number | null => {
@@ -90,7 +93,9 @@ export function boardOf(answer: unknown): WorkBoard {
     }
   }
   const activity = Array.isArray(status?.activity) ? status.activity.flatMap(a => activityOf(a) ?? []).sort((a, b) => b.at - a.at) : null
-  return { issues: [...issues.values()], activity }
+  const isCut = Array.isArray(status?.activity) && status.activity.length >= ACTIVITY_CAP
+  const oldest = activity?.at(-1)?.at
+  return { issues: [...issues.values()], activity, ...(isCut && oldest !== undefined ? { cutAt: oldest } : {}) }
 }
 
 /** The union of several answers: a ticket once (with its PRs where any answer has them), activity once, newest first. */
@@ -107,7 +112,9 @@ export function mergeBoards(boards: readonly WorkBoard[]): WorkBoard {
     const key = `${a.kind} ${a.identifier} ${a.repo}#${a.number} ${a.at}`
     return seen.has(key) ? false : (seen.add(key), true)
   }).sort((a, b) => b.at - a.at)
-  return { issues: [...issues.values()], activity }
+  // One cut answer leaves the union short from its own cut on back.
+  const cuts = boards.flatMap(b => b.cutAt ?? [])
+  return { issues: [...issues.values()], activity, ...(cuts.length === 0 ? {} : { cutAt: Math.max(...cuts) }) }
 }
 
 // ---------------------------------------------------------------- composing the view
@@ -127,17 +134,24 @@ export type WorkView = {
   leads: WorkLeadView[]
   /** null where ix-board is too old to say; newest first */
   activity: WorkActivity[] | null
+  /** see WorkBoard */
+  cutAt?: number
   /** whether any focus status answer has been read */
   hasBoard: boolean
 }
 
 const has = (role: string, word: string): boolean => role.toLowerCase().includes(word)
 
+const isOpenPr = (p: WorkPr): boolean => p.status === 'open' || p.status === 'draft'
+
+/** The distinct tickets the leads' agents report. */
+export const ticketIds = (leads: readonly WorkLead[]): string[] => [...new Set(leads.flatMap(l => l.agents.map(a => a.ticket)).filter(t => t !== ''))]
+
 const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): string[] => {
   // A finished agent keeps no badge: only those still running or waiting count.
   const agents = all.filter(a => a.status === 'running' || a.status === 'waiting')
   const badges: string[] = []
-  if (issue?.prs?.some(p => p.status === 'open' || p.status === 'draft')) badges.push('[pr]')
+  if (issue?.prs?.some(isOpenPr)) badges.push('[pr]')
   const reviewers = agents.filter(a => has(a.role, 'review')).length
   if (reviewers > 0) badges.push(reviewers === 1 ? '[review]' : `[review×${reviewers}]`)
   if (agents.some(a => has(a.role, 'spec')) || ['Specify', 'Specced'].includes(issue?.state ?? '')) badges.push('[spec]')
@@ -166,7 +180,7 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
     return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets }
   })
   views.sort((a, b) => a.address.localeCompare(b.address))
-  return { leads: views, activity: board.activity, hasBoard: boards.length > 0 }
+  return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.length > 0 }
 }
 
 /** The latest agent transition per (lead, ticket) of an `agent-msg work events` page, merged into `into`. */
@@ -184,6 +198,104 @@ export function lastOfEvents(events: readonly unknown[], into: Record<string, Wo
   }
 }
 
-/** Merges within the last `hours` and counts the merged activity. */
+/** The roles whose starts and finishes are listed under Recent; null for every other role. A spec reviewer reviews. */
+export const eventRole = (role: string): WorkRoleEvent['role'] | null => (has(role, 'review') ? 'review' : has(role, 'gate') ? 'gate' : has(role, 'spec') ? 'spec' : null)
+
+/** The latest role events the feed keeps. */
+export const FEED_CAP = 200
+
+/**
+ * Folds an `agent-msg work events` page into the feed, in stream order. A start is the first `running` report of an
+ * assignment (lead, agent, ticket) that is not already running, so a repeated report and a resume after `waiting`
+ * add nothing; `done` is listed once. `failed`, `canceled` and the removal of the agent end the assignment unlisted.
+ */
+export function foldFeed(events: readonly unknown[], feed: Pick<WorkFeed, 'events' | 'phase'>): Pick<WorkFeed, 'events' | 'phase'> {
+  const listed = [...feed.events]
+  const phase = { ...feed.phase }
+  for (const e of events) {
+    const event = obj(e)
+    const at = typeof event?.at_ms === 'number' ? event.at_ms : null
+    const address = str(obj(event?.binding)?.address)
+    const change = obj(event?.change)
+    if (at === null || address === '' || change === null) continue
+    if (change.kind === 'remove') {
+      const prefix = `${address}\u0000${str(change.agent_id)}\u0000`
+      for (const key of Object.keys(phase)) if (key.startsWith(prefix)) delete phase[key]
+      continue
+    }
+    const agent = obj(change.agent)
+    const ticket = str(agent?.ticket)
+    const role = eventRole(str(agent?.role))
+    if (agent === null || ticket === '' || role === null) continue
+    const key = `${address}\u0000${str(agent.agent_id) || str(agent.name)}\u0000${ticket}`
+    const status = str(agent.status)
+    if (status === 'running' && phase[key] !== 'running') {
+      phase[key] = 'running'
+      listed.push({ at, role, step: 'start', ticket, address })
+    } else if (status === 'done' && phase[key] !== 'done') {
+      phase[key] = 'done'
+      listed.push({ at, role, step: 'done', ticket, address })
+    } else if (status === 'failed' || status === 'canceled') delete phase[key]
+  }
+  return { events: listed.slice(-FEED_CAP), phase }
+}
+
+/** One row of Recent: a ticket or PR event of ix-board, or a role event of the relay. */
+export type RecentEntry = { at: number; activity: WorkActivity; event?: undefined } | { at: number; event: WorkRoleEvent; activity?: undefined }
+
+/**
+ * What Recent lists, newest first: the merges; with `all`, every activity and the role events of the leads of
+ * `teams` (null: every lead).
+ */
+export function recentOf(activity: readonly WorkActivity[] | null, events: readonly WorkRoleEvent[], all: boolean, teams: readonly string[] | null): RecentEntry[] {
+  const mine = (e: WorkRoleEvent) => teams === null || teams.some(t => t.toLowerCase() === (e.address.split(':')[1] ?? '').toLowerCase())
+  const rows: RecentEntry[] = [
+    ...(activity ?? []).filter(a => all || a.kind === 'merged').map(a => ({ at: a.at, activity: a })),
+    // Newest first before the sort, so that events of the same moment keep that order.
+    ...(all ? events.filter(mine).reverse().map(event => ({ at: event.at, event })) : []),
+  ]
+  return rows.sort((a, b) => b.at - a.at)
+}
+
+/** The three numbers of the band's work cell; null is unknown. */
+export type WorkCounts = {
+  tickets: number | null
+  prsOpen: number | null
+  /** true where some listed ticket's PRs are unknown, so `prsOpen` is a lower bound */
+  prsPartial: boolean
+  merged: number | null
+  /** true where ix-board cut its activity inside the last 24 hours, so `merged` is a lower bound */
+  mergedPartial: boolean
+}
+
+/**
+ * Tickets the leads report, the open or draft PRs of those tickets and the merges of the last 24 hours. With
+ * `leadsRead` false the leads held say nothing of now. A PR count is unknown where no listed ticket has its PRs said.
+ */
+export function workCounts(leads: readonly WorkLead[], boards: readonly WorkBoard[], now: number, leadsRead: boolean): WorkCounts {
+  const board = mergeBoards(boards)
+  const merged = board.activity === null ? null : mergedSince(board.activity, now, 24)
+  const mergedPartial = merged !== null && isCutWithin(board.cutAt, now, 24)
+  if (!leadsRead) return { tickets: null, prsOpen: null, prsPartial: false, merged, mergedPartial }
+  const ids = ticketIds(leads)
+  const byId = new Map(board.issues.map(i => [i.identifier, i]))
+  const known = ids.flatMap(id => {
+    const prs = byId.get(id)?.prs
+    return prs === undefined || prs === null ? [] : [prs]
+  })
+  const open = new Set(known.flat().filter(isOpenPr).map(p => p.url || `${p.repo}#${p.number}`))
+  // With no ticket listed there is no PR to count, once a focus status has been read.
+  const isSaid = known.length > 0 || (ids.length === 0 && boards.length > 0)
+  return { tickets: ids.length, prsOpen: isSaid ? open.size : null, prsPartial: isSaid && known.length < ids.length, merged, mergedPartial }
+}
+
+/** Whether activity of the last `hours` was left out by the cut. */
+export const isCutWithin = (cutAt: number | undefined, now: number, hours: number): boolean => cutAt !== undefined && now - cutAt < hours * 3_600_000
+
+/** Counts the PRs merged in the last `hours`: a PR of two tickets is one, and an entry that names no PR counts by itself. */
 export const mergedSince = (activity: readonly WorkActivity[] | null, now: number, hours: number): number =>
-  activity === null ? 0 : activity.filter(a => a.kind === 'merged' && now - a.at <= hours * 3_600_000).length
+  new Set(
+    (activity ?? [])
+      .filter(a => a.kind === 'merged' && now - a.at <= hours * 3_600_000)
+      .map(a => (a.repo === null || a.number === null ? `${a.identifier} ${a.at}` : `${a.repo}#${a.number}`)),
+  ).size
