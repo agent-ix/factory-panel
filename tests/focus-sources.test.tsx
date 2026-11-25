@@ -5,7 +5,7 @@ import { trace } from './trace'
 import { resetSources, sourceFailed } from '../hooks/sources'
 import { showText } from '../hooks/router'
 import { getSelection } from '../hooks/selection'
-import { BAD_MILESTONE, CLASSIC, NEVER, bandCells, defRow, drawBand, fake$, listJson, out, report, showJson, startSession, world } from './world'
+import { BAD_MILESTONE, CLASSIC, NEVER, bandCells, defRow, drawBand, fake$, listJson, out, report, roadmapJson, showJson, startSession, statusJson, world } from './world'
 import { LEAD, MIN, PANE, board, choose, hides, lead, named, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
 import { record } from './focus-kit'
 
@@ -54,8 +54,9 @@ test('a lead whose work report has no scope says no selectors and ix-board is no
   await started($, w)
   expect(statusCalls(w)).toEqual([])
   const lines = await paneLines($)
-  shows(lines, /^no selectors$/)
   shows(lines, /^Only a summary$/)
+  // The card draws no prose: the note is in /factory show.
+  expect(await shownText($)).toMatch(/^ {2}no selectors$/m)
 })
 
 test('ix-board failing is shown and the summary is drawn while the metrics answer', async ($, on) => {
@@ -79,7 +80,7 @@ test('agent-msg work failing is shown while the progress of a named focus is dra
   await started($, w)
   const lines = await paneLines($)
   shows(lines, /^5\/10$/)
-  shows(lines, /^agent-msg work: draco:QSL:code: no report$/)
+  expect(await shownText($)).toMatch(/^ {2}agent-msg work: draco:QSL:code: no report$/m)
 })
 
 test('Prometheus that does not answer leaves the Focus pane and the lanes drawn and the Factory view says why', async ($, on) => {
@@ -135,8 +136,8 @@ test('every source failing raises nothing and each module shows its source’s e
   await started($, w)
   const lines = await paneLines($)
   shows(lines, /^Release train summary$/)
-  shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
   shows(await factoryLines($), /^Metrics unavailable: .*503/)
+  expect(await shownText($)).toMatch(/^ {2}agent-msg work: draco:QSL:plan: no report$/m)
   expect(await shownText($)).toMatch(/^ {2}ix-board: ix-board: authentication failed$/m)
 })
 
@@ -148,9 +149,8 @@ test('agent-msg focuses list failing is listed under agent-msg focuses and the F
   named(w, () => out('', 1, 'agent-msg: relay store unavailable'))
   await started($, w)
   expect(await shownText($)).toMatch(/^ {2}agent-msg focuses: list: agent-msg: relay store unavailable$/m)
-  const lines = await paneLines($)
-  shows(lines, /^your choice: Beta$/)
-  shows(lines, /^Beta$/)
+  expect(await shownText($)).toMatch(/^your choice: Beta$/m)
+  shows(await paneLines($), /^Beta$/)
 })
 
 test('the source state of agent-msg focuses and ix-board is cleared when nothing asks them any more', async ($, on) => {
@@ -196,4 +196,33 @@ test('/factory show gives the age of ix-board projects from progress.json and of
   const none = await showText(fake$(w) as never, getSelection())
   expect(none).toMatch(/^ {2}prometheus: Prometheus 503$/m)
   expect(none).toMatch(/^ {2}agent-msg work: no live agent$/m)
+})
+
+test('/factory show prints the totals, each initiative and each project with remaining, ready and blocked, a dash where the answer lacks the key', async ($, on) => {
+  trace("FR-023-AC-2", "FR-023-AC-3", "FR-022-AC-1", "FR-022-AC-11", "FR-022-AC-5")
+  const w = world(on, true)
+  lead(w, { initiatives: ['A', '674ffba8-fe0d-47e3-82b1-c0aa40787357'], projects: ['Loose'] })
+  const calls = new Map<string, ReturnType<typeof out>>([
+    ['--project P1', out(statusJson([{ name: 'P1', done: 10, total: 25, ready: 3, layers: { open: 3, completed: 1 } }]))],
+    ['--project P2', out('', 1, BAD_MILESTONE)],
+    ['--project P3', out(statusJson([{ name: 'P3', done: 1, total: 4, ready: null, layers: null }]))],
+    ['--project Loose', out(statusJson([{ name: 'Loose', done: 2, total: 4 }]))],
+  ])
+  board(w, { combined: args => calls.get(args.join(' ')) ?? out('', 1, 'not stubbed') })
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => {
+    if (argv.join(' ') === 'ix-board --json roadmap') return out(roadmapJson([{ name: 'A', projects: [{ name: 'P1' }, { name: 'P2' }, { name: 'P3' }] }]))
+    if (argv.join(' ').startsWith('ix-board --json focus status --initiative')) return out('', 4, BAD_MILESTONE)
+    return prior?.(argv, init)
+  }
+  await started($, w)
+  const text = await shownText($)
+  expect(text).toMatch(/^ {2}total: .*3 of 4 projects.*partial.*1 initiative not expanded$/m)
+  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · .*partial$/m)
+  expect(text).toMatch(/^ {4}P1: 10\/25 · remaining 15 · ready 3 · blocked 3$/m)
+  expect(text).toMatch(/^ {4}P3: 1\/4 · remaining 3 · ready - · blocked -$/m)
+  expect(text).toMatch(/^ {4}P2: failed, no counts$/m)
+  expect(text).toMatch(/^ {2}initiative initiative 674ffba8: projects unknown$/m)
+  expect(text).toMatch(/^ {2}not in a selected initiative:$/m)
+  expect(text).toMatch(/^ {4}Loose: 2\/4 · remaining 2/m)
 })

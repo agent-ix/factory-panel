@@ -1,7 +1,7 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
-import { focusBannerNow, pollFocus } from './focus'
+import { focusBannerNow, focusDetailNow, pollFocus } from './focus'
 import { readRecords } from './progress'
 import { SOURCE_NAMES, selectorErrorList, sourceState } from './sources'
 import { pollBoard } from './factory'
@@ -88,6 +88,7 @@ export const showText = async ($: EngineInterface, sel: Selection): Promise<stri
   const id = sel.identity
   // The state the panes keep is the host's; a caller without it just has no banner line.
   const banner = await focusBannerNow($, sel).catch(() => null)
+  const detail = await focusDetailNow($, sel).catch(() => [])
   return [
     id.status === 'detected' ? `Session key: ${sel.key} (address ${id.address}, third segment: ${id.segment})` : `Session key: ${sel.key} (could not tell who this session is)`,
     line('modules', sel.modules.value.join(', '), sel.modules.source),
@@ -95,6 +96,7 @@ export const showText = async ($: EngineInterface, sel: Selection): Promise<stri
     line('focus', sel.focus.value, sel.focus.source),
     line('teams', sel.teams.value.length > 0 ? sel.teams.value.join(', ') : 'every team', sel.teams.source),
     ...(banner === null ? [] : [banner]),
+    ...detail,
     sel.hasChoices ? 'Your choices: set. /factory reset clears them.' : 'Your choices: none.',
     ...sel.notes.map(n => `Note: ${n}`),
     ...(await sourceLines($)),

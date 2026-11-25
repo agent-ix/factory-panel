@@ -93,3 +93,16 @@ export function named(w: World, list: () => ReturnType<typeof out> | Promise<Ret
 
 /** Sets the choice the session would hold: `/factory focus <name>` written to its choice file. */
 export const choose = (w: World, focus: string, key = 'draco_QSL_code') => void w.files.set(`${FP}/choices/${key}.json`, JSON.stringify({ focus }))
+
+/**
+ * Every line the Focus view and its explanations give: the pane body, the footer warning expansion (opened when the
+ * icon is drawn) and the lines of `/factory show`. The body alone is `paneLines`.
+ */
+export async function pageLines($: Parameters<TestBody>[0]): Promise<string[]> {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  if ((await ui.find({ type: 'Button', key: 'warnings-toggle' })) !== undefined) await ui.press({ key: 'warnings-toggle' })
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  await ui.unmount()
+  const shown = ((await $.command.run({ command: 'factory', args: 'show' } as never)).text as string).split('\n').map(l => l.trim())
+  return [...lines, ...shown]
+}
