@@ -133,6 +133,7 @@ export const scopeOf = (s: Selection): Scope => ({
   focus: s.focus.value,
   teams: s.teams.value,
   ownTeam: s.identity.status === 'detected' ? s.identity.team : null,
+  ownAddress: s.identity.status === 'detected' ? s.identity.address : null,
   teamsSelected: s.teams.source !== 'default',
   identity: s.identity.status,
 })

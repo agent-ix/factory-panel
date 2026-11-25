@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { compose, recordsOf, selectorArgs, selectorsOfScope } from '../hooks/board'
+import { compose, focusKey, recordsOf, selectorArgs, selectorsOfScope } from '../hooks/board'
 import type { Outcome, Refresh, Selector } from '../hooks/board'
 import { resetSources, sourceFailed } from '../hooks/sources'
 import type { Records } from '../hooks/progress'
@@ -538,11 +538,11 @@ test('every source failing raises nothing and each module shows its source’s e
   lead(w, { projects: ['A'] }, 'Release train summary')
   w.leads.set('draco:QSL:plan', undefined)
   w.fetch.value = () => ({ value: { status: 503, ok: false, headers: {}, text: '' } })
-  board(w, { combined: () => Promise.reject(new Error('spawn ix-board ENOENT')) })
+  board(w, { combined: () => out('', 1, 'ix-board: authentication failed') })
   await started($, w)
   const lines = await paneLines($)
   shows(lines, /^Release train summary$/)
-  shows(lines, /^no implementation for process\.run$/)
+  shows(lines, /^ix-board: authentication failed$/)
   shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
   shows(await factoryLines($), /^Metrics unavailable: .*503/)
 })
@@ -575,7 +575,7 @@ test('a Linear rate limit is one ix-board error, makes no single call, and holds
   shows(await paneLines($), /^Linear rate limit · paused /)
 })
 
-test('a refresh with a failed selector is not kept and is asked again at the next poll, one answered by the combined call is kept', async ($, on) => {
+test('a refresh with a failed selector is held for 5 minutes and marked, then asked again, and a manual refresh asks at once', async ($, on) => {
   trace("FR-016-AC-14")
   const w = world(on, true)
   lead(w, { projects: ['A', 'B'] })
@@ -583,14 +583,45 @@ test('a refresh with a failed selector is not kept and is asked again at the nex
   board(w, { combined: () => (healthy ? out(statusJson([{ name: 'Pa', done: 1, total: 2 }])) : out('', 1, BAD_MILESTONE)), single: args => (args[1] === 'B' ? out('', 1, 'B is broken') : pageOf('Pa', 1, 2)) })
   await started($, w)
   expect(statusCalls(w)).toHaveLength(3)
-  await w.clock!.advance(2 * MIN + 1000)
-  expect(statusCalls(w)).toHaveLength(6)
-  healthy = true
+  // The polls of the next 4 minutes make no call and the pane says it shows an earlier outcome.
+  await w.clock!.advance(4 * MIN)
+  expect(statusCalls(w)).toHaveLength(3)
+  shows(await paneLines($), /^earlier outcome from \dm ago: ix-board is asked again after 5 minutes, r asks now$/)
+  // The first poll after 5 minutes asks again.
   await w.clock!.advance(2 * MIN)
-  expect(statusCalls(w)).toHaveLength(7)
+  expect(statusCalls(w)).toHaveLength(6)
+  // The refresh key asks at once, with the held outcome two seconds old.
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await ui.press({ key: 'refresh' })
+  await ui.unmount()
+  await w.clock!.advance(1000)
+  expect(statusCalls(w)).toHaveLength(9)
+  healthy = true
+  await w.clock!.advance(6 * MIN)
+  expect(statusCalls(w)).toHaveLength(10)
   // Answered by the combined call: kept, so the polls of the next ten minutes call nothing.
   await w.clock!.advance(10 * MIN)
-  expect(statusCalls(w)).toHaveLength(7)
+  expect(statusCalls(w)).toHaveLength(10)
+})
+
+test('no more than 4 single-selector processes run at once across two focuses', async ($, on) => {
+  trace("FR-016-AC-15")
+  const w = world(on, true)
+  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'One', ['running'], { projects: ['A0', 'A1', 'A2', 'A3', 'A4', 'A5'] }))
+  w.leads.set('draco:QSL:plan', report('draco:QSL:plan', 'Two', ['running'], { projects: ['B0', 'B1', 'B2', 'B3', 'B4', 'B5'] }))
+  const live = { now: 0, max: 0 }
+  board(w, {
+    combined: () => out('', 1, BAD_MILESTONE),
+    single: args => {
+      live.max = Math.max(live.max, ++live.now)
+      return w.clock!.sleep(1000).then(() => (live.now--, pageOf(`P ${args[1]}`, 1, 2)))
+    },
+  })
+  await startSession($)
+  await w.clock!.advance(10_000)
+  expect(live.max).toBe(4)
+  expect(statusCalls(w)).toHaveLength(14)
+  expect((await paneLines($)).filter(l => /^P [AB]\d$/.test(l))).toHaveLength(12)
 })
 
 test('a successful combined call writes the focus-level record with the aggregate', async ($, on) => {
@@ -599,14 +630,14 @@ test('a successful combined call writes the focus-level record with the aggregat
   lead(w, { projects: ['A', 'B'] })
   board(w, { combined: () => out(statusJson([{ name: 'Pa', done: 4, total: 8, inProgress: 1 }, { name: 'Pb', done: 6, total: 12, inProgress: 2 }], 2)) })
   await started($, w)
-  expect(saved(w)[`focus:${LEAD}`]).toMatchObject({ done: 10, total: 20, inProgress: 3, ready: 2 })
+  expect(saved(w)[focusKey(LEAD, [{ kind: 'project', ref: 'A' }, { kind: 'project', ref: 'B' }])]).toMatchObject({ done: 10, total: 20, inProgress: 3, ready: 2 })
 })
 
 test('when everything fails and no selector has a record the focus-level record is shown old, not an empty card', async ($, on) => {
   trace("FR-017-AC-13")
   const w = world(on, true)
   lead(w, { projects: ['A', 'B'] })
-  seed(w, { [`focus:${LEAD}`]: record() })
+  seed(w, { [focusKey(LEAD, [{ kind: 'project', ref: 'A' }, { kind: 'project', ref: 'B' }])]: record() })
   board(w, { combined: () => out('', 1, BAD_MILESTONE), single: args => out('', 1, `${args[1]} is broken`) })
   await started($, w)
   const lines = await paneLines($)
@@ -615,6 +646,25 @@ test('when everything fails and no selector has a record the focus-level record 
   shows(lines, /^project A: A is broken$/)
   shows(lines, /^project B: B is broken$/)
   shows(lines, /^partial$/)
+})
+
+test('a stand-in is used only for the selectors it was recorded for, and its seen_ms is not bumped otherwise', async ($, on) => {
+  trace("FR-017-AC-14")
+  const w = world(on, true)
+  lead(w, { projects: ['A', 'C'] })
+  const stale = focusKey(LEAD, [{ kind: 'project', ref: 'A' }, { kind: 'project', ref: 'B' }])
+  seed(w, { [stale]: record() })
+  board(w, { combined: () => out('', 1, BAD_MILESTONE), single: args => out('', 1, `${args[1]} is broken`) })
+  await started($, w)
+  const lines = await paneLines($)
+  hides(lines, /· old/)
+  shows(lines, /^project A: A is broken$/)
+  expect(saved(w)[stale]!.seen_ms).toBe(record().seen_ms)
+  // Long scopes are keyed by a short stable hash, in the order the selectors are listed.
+  const many = Array.from({ length: 40 }, (_, i) => ({ kind: 'project' as const, ref: `project-number-${i}` }))
+  expect(focusKey(LEAD, many).length).toBeLessThan(60)
+  expect(focusKey(LEAD, many)).toBe(focusKey(LEAD, [...many].reverse()))
+  expect(focusKey(LEAD, [{ kind: 'project', ref: 'B' }, { kind: 'project', ref: 'A' }])).toBe(`focus:${LEAD}:project:A+project:B`)
 })
 
 test('a result older than the record another process wrote meanwhile is ignored by a real refresh', async ($, on) => {

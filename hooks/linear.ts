@@ -15,13 +15,18 @@ const CLAIM_MS = 4 * 60 * 1000
 /** A manual refresh still waits this long after the last read. */
 const MANUAL_MIN_MS = 60 * 1000
 
-type Entry = { at: number | null; claimAt: number | null; data: unknown }
+/** A refresh with a failure in it is held this long, not the whole interval, and not asked again meanwhile. */
+export const UNKEPT_TTL_MS = 5 * 60 * 1000
+
+type Entry = { at: number | null; claimAt: number | null; data: unknown; /** an outcome with a failure in it, held for UNKEPT_TTL_MS */ unkept?: boolean }
 type GateFile = { backoffUntil: number | null; entries: Record<string, Entry> }
 
 export type Gated<T> = {
   data: T | null
   /** ms since the epoch of the read that produced `data` */
   at: number | null
+  /** True when `data` is the outcome of an earlier refresh that had a failure in it, held for a few minutes. */
+  held?: boolean
   /** set while Linear's rate limit holds */
   backoffUntil: number | null
   error: string | null
@@ -120,13 +125,15 @@ async function gate<T>(
   const cached = (error: string | null, backoffUntil = g.backoffUntil): Gated<T> => ({
     data: had.data as T | null,
     at: had.at,
+    held: had.unkept === true,
     backoffUntil: backoffUntil !== null && backoffUntil > now ? backoffUntil : null,
     error,
   })
 
   if (g.backoffUntil !== null && g.backoffUntil > now) return cached(null)
   const wait = opts.manual ? MANUAL_MIN_MS : BOARD_INTERVAL_MS
-  if (had.at !== null && now - had.at < wait) return cached(null)
+  // A manual refresh asks again at once when the last one was only held after a failure.
+  if (had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached(null)
   if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached(null)
 
   const claim = now + Math.random() / 10
@@ -149,7 +156,7 @@ async function gate<T>(
     const keep = opts.keep?.(data) ?? true
     await exclusive(() =>
       save($, f => {
-        f.entries[key] = keep ? { at, claimAt: null, data } : { at: null, claimAt: null, data: had.data }
+        f.entries[key] = keep ? { at, claimAt: null, data } : { at: at - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, data, unkept: true }
       }),
     ).catch(() => undefined)
     return { data, at, backoffUntil: null, error: null }

@@ -24,6 +24,8 @@ export type Scope = {
   teams: readonly string[]
   /** The session's own team; null when the relay did not say. */
   ownTeam: string | null
+  /** The session's own address; null when the relay did not say. */
+  ownAddress?: string | null
   /** True when the user or a declaration named the teams, so one that matches nothing is worth saying. */
   teamsSelected: boolean
   identity: 'pending' | 'detected' | 'unknown'
@@ -104,8 +106,8 @@ export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: 
 
 /** The one line that says why these focuses are shown; null while the session is still being identified. */
 export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
-  // The session's own entry: the lead entry of its own team.
-  const ownEntryExists = scope.ownTeam !== null && focuses.some(f => f.via == null && same(teamOf(f.address), scope.ownTeam!))
+  // The session's own entry: an entry at the session's own address.
+  const ownEntryExists = scope.ownAddress != null && focuses.some(f => f.via == null && same(f.address, scope.ownAddress!))
   const name = scope.focus.trim()
   const lower = name.toLowerCase()
   const keyword = lower === 'own' || lower === 'team'

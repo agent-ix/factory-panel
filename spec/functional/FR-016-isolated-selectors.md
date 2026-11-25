@@ -29,8 +29,10 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - The mod SHALL classify any other non-zero exit with stderr text as a selector error.
 - Where the combined call could not start, timed out, failed to authenticate, or was rate limited, the mod SHALL show one ix-board source error.
 - Where the combined call could not start, timed out, failed to authenticate, or was rate limited, the mod SHALL make no single-selector call.
-- The mod SHALL run at most 4 single-selector calls at once, each with a timeout of 5 seconds.
-- The mod SHALL end a progress refresh after 30 seconds.
+- The mod SHALL run at most 4 single-selector ix-board processes at once per session, counted across every focus shown.
+- The mod SHALL give each single-selector call a timeout of 5 seconds.
+- The mod SHALL start the 30 second budget of a progress refresh when its first ix-board call begins, after the lookups of leads and definitions.
+- The mod SHALL end a progress refresh when that budget has passed.
 - The mod SHALL count each selector still unanswered at the end of a refresh as failed with the error `timed out`.
 - The mod SHALL make at most N+1 ix-board calls in one progress refresh for N selectors.
 - The mod SHALL show the progress of every selector whose call succeeds.
@@ -49,8 +51,10 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - The mod SHALL coalesce a tick that arrives during a refresh into the next one.
 - The mod SHALL ignore a refresh result that is older than the record it would replace.
 - The mod SHALL NOT keep a refresh in the Linear gate cache when any selector failed or when it fell back to single-selector calls.
-- Where the last refresh was not kept, the next poll SHALL ask ix-board again.
-- Where the last refresh was not kept, a manual refresh SHALL NOT wait out the minimum interval unless a Linear rate limit holds.
+- Where the last refresh was not kept, the mod SHALL NOT run the combined call and the single-selector calls again for 5 minutes.
+- Where the last refresh was not kept, the mod SHALL show its outcome during those 5 minutes, marked as an earlier outcome.
+- Where the last refresh was not kept, the mod SHALL ask ix-board again at the first poll after those 5 minutes.
+- A manual refresh SHALL ask ix-board at once, unless a Linear rate limit holds.
 
 ## Acceptance Criteria
 
@@ -69,7 +73,8 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 | FR-016-AC-11 | Given a milestone member with ref m1, the single call is `--milestone m1` with no project argument; an initiative, project and ticket map to `--initiative`, `--project` and `--issue`. | Test |
 | FR-016-AC-12 | Given a lead focus whose work report scope has initiatives, projects and tickets, those become the selectors, and given a report with none, the pane says `no selectors` and ix-board is not called. | Test |
 | FR-016-AC-13 | Given the combined call exits with stderr `Linear rate limited; retry in 60s`, the mod shows one ix-board error, makes no single-selector call, and the gate holds further calls until the retry time. | Test |
-| FR-016-AC-14 | Given a refresh in which one selector failed, the next poll after the normal 2 minute cadence asks ix-board again, and a refresh with every call answered by the combined call is kept for 15 minutes. | Test |
+| FR-016-AC-14 | Given a refresh in which one selector failed, polls during the next 5 minutes make no ix-board call and the pane marks the outcome as earlier, the first poll after 5 minutes asks again, a manual refresh asks at once, and a refresh answered by the combined call is kept for 15 minutes. | Test |
+| FR-016-AC-15 | Given two focuses each with selectors and failing combined calls, no more than 4 single-selector ix-board processes run at once across both. | Test |
 
 ## Dependencies
 

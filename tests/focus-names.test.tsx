@@ -437,10 +437,11 @@ test('a name that is the address of a lead whose work show fails shows that erro
   shows(lines, /^no focus matches "draco:QSL:plan"$/)
 })
 
-test('the banner calls the focus own only when the session’s team has an entry', async () => {
-  trace("FR-019-AC-2")
+test('the banner calls the focus own only when the session’s own address has an entry', async () => {
+  trace("FR-019-AC-2", "FR-019-AC-4")
   const entry = (address: string) => ({ address, via: null }) as never
-  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, focus: 'own', identity: 'detected' } as const
+  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', ownAddress: 'draco:QSL:code', teamsSelected: false, focus: 'own', identity: 'detected' } as const
   expect(focusBanner(scope, [entry('draco:ENG:code')])).toBe('no focus reported, showing the whole team')
-  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('draco:QSL:arch')])).toBe('own focus')
+  expect(focusBanner(scope, [entry('draco:QSL:arch')])).toBe('no focus reported, showing the whole team')
+  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('DRACO:qsl:code')])).toBe('own focus')
 })

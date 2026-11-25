@@ -31,8 +31,39 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** The label drawn for a selector: its own, else the name ix-board gave it, else its kind and ref (a UUID cut to 8). */
 export const selectorName = (s: Selector): string => s.label ?? learned.get(selectorKey(s)) ?? `${s.kind} ${UUID.test(s.ref) ? s.ref.slice(0, 8) : s.ref}`
 
-/** The key of a focus's own record: the aggregate of a successful combined call. */
-export const focusKey = (id: string): string => `focus:${id}`
+/** A short stable hash (FNV-1a), for a selector list too long to be part of a key. */
+const hash = (text: string): string => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0
+  return h.toString(16).padStart(8, '0')
+}
+
+/**
+ * The key of a focus's own record, the aggregate of a successful combined call: the focus and the sorted keys of
+ * its selectors, so a changed scope is another key. It is a JSON object key, not a path.
+ */
+export const focusKey = (id: string, selectors: readonly Selector[]): string => {
+  const keys = selectors.map(selectorKey).sort().join('+')
+  const key = `focus:${id}:${keys}`
+  return key.length > 120 ? `focus:${id}:#${hash(keys)}` : key
+}
+
+// At most CONCURRENCY single-selector processes run at once in this session, whatever the number of focuses.
+let running = 0
+const waiting: (() => void)[] = []
+const acquire = (): Promise<void> => (running < CONCURRENCY ? (running++, Promise.resolve()) : new Promise<void>(resolve => waiting.push(resolve)))
+const release = (): void => {
+  const next = waiting.shift()
+  if (next === undefined) running--
+  else next()
+}
+
+/** Forgets what an earlier session learned. */
+export function resetBoard(): void {
+  learned.clear()
+  running = 0
+  waiting.length = 0
+}
 
 /** The argument of one `ix-board focus status` call for a selector; a milestone is asked alone, by its ref. */
 export const selectorArgs = (s: Selector): string[] => [s.kind === 'ticket' ? '--issue' : `--${s.kind}`, s.ref]
@@ -131,15 +162,17 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
     }
   }
   let ended = false
-  const queue = [...selectors]
-  const worker = async (): Promise<void> => {
-    for (let s = queue.shift(); s !== undefined && !ended; s = queue.shift()) {
+  const tasks = selectors.map(async s => {
+    await acquire()
+    try {
+      if (ended) return
       const outcome = await single(s)
       if (!ended) outcomes[selectorKey(s)] = outcome
+    } finally {
+      release()
     }
-  }
-  const workers = Array.from({ length: Math.min(CONCURRENCY, selectors.length) }, worker)
-  await Promise.race([Promise.all(workers), after($, Math.max(0, deadline - (await $.clock.now())))])
+  })
+  await Promise.race([Promise.all(tasks), after($, Math.max(0, deadline - (await $.clock.now())))])
   ended = true
   for (const s of selectors) outcomes[selectorKey(s)] ??= { ok: false, error: 'timed out' }
   return { at: await $.clock.now(), combined: null, combinedError, outcomes }

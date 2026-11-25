@@ -7,6 +7,7 @@ import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { gatedBoard } from './linear'
 import { compose, focusKey, recordsOf, refreshProgress, selectorKey, selectorName, selectorsOfScope, REFRESH_BUDGET_MS } from './board'
+import { resetBoard } from './board'
 import type { Refresh } from './board'
 import type { Selector } from './board'
 import { matchLeads, resolveDefinitions } from './namedfocus'
@@ -144,7 +145,7 @@ async function progressOf($: EngineInterface, view: FocusView, selectors: Select
   if (read.data === null && sourceError === null) return null
   // After a failed read the cached result is an old one: only the records speak for the selectors.
   const refresh = read.error !== null ? null : read.data
-  const whole = focusKey(view.address)
+  const whole = focusKey(view.address, selectors)
   const mine = recordsOf(selectors, refresh, await readRecords($), now, whole)
   const records = await saveRecords($, now, mine)
   const composed = compose(selectors, refresh, sourceError, records, { key: whole, name: view.title ?? view.address })
@@ -162,7 +163,7 @@ async function progressOf($: EngineInterface, view: FocusView, selectors: Select
     failures: composed.failures,
     counts: composed.counts,
     partial: composed.partial,
-    notes: composed.notes,
+    notes: [...composed.notes, ...(read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again after 5 minutes, r asks now`] : [])],
     error: sourceError,
   }
 }
@@ -202,6 +203,7 @@ export function pollFocus($: EngineInterface, manual = false): Promise<void> {
 
 /** Forgets the refresh state of an earlier session; the tests start each session from nothing. */
 export function resetFocus(): void {
+  resetBoard()
   running = null
   again = false
   againManual = false
@@ -217,7 +219,6 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> 
     const name = scope.focus.trim()
     const isName = name !== '' && !['own', 'team'].includes(name.toLowerCase())
     const errors: SourceError[] = []
-    const endsAt = (await $.clock.now()) + REFRESH_BUDGET_MS
 
     const gather = async (): Promise<{ lead: string; report: WorkReport }[]> => {
       let leads: string[]
@@ -283,6 +284,8 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> 
     await update($, focusMeta, m => ({ ...m, errors }))
 
     const failed = new Map<string, { name: string; error: string }>()
+    // The 30 seconds of the refresh count from here, the first ix-board call, not from the lookups above.
+    const endsAt = (await $.clock.now()) + REFRESH_BUDGET_MS
     await Promise.all(
       entries.map(async e => {
         if (e.selectors.length === 0) return
