@@ -844,11 +844,10 @@ test('a failing gate file or home lookup never leaves the board busy and keeps t
   })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('factory', 'Factory'), surface: 'terminal' })
-  // The fetched agent is shown although the gate file cannot be saved, and the chip is not stuck on ◌.
+  // The fetched agent is shown although the gate file cannot be saved, and the chip is not stuck inactive.
   await ui.press({ key: 'board' })
   expect((await ui.find({ type: 'Text', text: /1\/1 working/ }))?.text).toMatch(/1\/1 working/)
-  const marks = (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(t => t.text)
-  expect(marks.slice(0, 3)[2]).toBe('●')
+  expect((await ui.find({ type: 'Text', text: /^ix-board$/ }))?.props.color).toBe('success')
   await ui.unmount()
 })
 
