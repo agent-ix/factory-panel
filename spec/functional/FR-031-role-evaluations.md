@@ -40,7 +40,9 @@ The Team view SHALL show, for each selected team, what `ix-board retro eval` say
 - Each selected team SHALL have a section `Roles` saying the length of the evaluated window and how long ago it ended.
 - Each role of the answer SHALL have one row with its pass rate, `P/E passed` of the rules the answer scored, its trend, and the number of its rules that failed, are unavailable, are not applicable, require judgement and have an unknown status, each omitted where 0.
 - The pass rate SHALL be the answer's `score.pass_rate` as a whole percentage rounded down. Where it is null the row SHALL read `no score`, never 0%.
-- The trend SHALL read `↑ +N pts` or `↓ −N pts` for the answer's change in pass rate, `= no change` where it is 0, and `trend —` where it is null. A change smaller than one point SHALL read `<1`.
+- The trend SHALL read `↑ +N pts` or `↓ −N pts` for the answer's `trend`, `= no change` where it is 0, and `trend —` where it is null. A change smaller than one point SHALL read `<1`.
+- The trend compares only the rules scored in both windows, so it SHALL say their number, the answer's `trend_matched_rules`: `over N rules` after the trend, and where that number is 0, `trend — · no rule scored in both windows`. An answer without the key SHALL read the trend with no number.
+- The mod SHALL NOT compute a trend of its own.
 - The row's mark SHALL be red where any rule fails; otherwise amber where some rule is unavailable or has a status the mod does not know; otherwise hollow where no rule was scored; otherwise green.
 - A button SHALL expand a role to its failing rules, each with its id, its value, the comparator and target, and its query, and to its rules that are not scored.
 - An unavailable and a not applicable rule SHALL read its status and the answer's reason, or `no reason given`. A rule that requires judgement SHALL read `judgement required` with its rubric id, and its reason where it has one. A rule with an unknown status SHALL read that status.
@@ -63,6 +65,7 @@ The Team view SHALL show, for each selected team, what `ix-board retro eval` say
 | FR-031-AC-1 | Each role of an answer draws its pass rate, passed and scored counts, trend and the counts of failing and unscored rules, and an expanded role draws its failing rules with value, comparator and target. | Test |
 | FR-031-AC-2 | Unavailable, not applicable and judgement required rules draw their status with the reason or rubric id, with no value, no 0 and no pass mark. | Test |
 | FR-031-AC-3 | A null pass rate reads `no score`, a null trend `trend —`, and the trend reads up, down, unchanged or less than a point by its sign and size. | Test |
+| FR-031-AC-13 | The trend says over how many rules it was compared, that no rule was scored in both windows where the number is 0, and no number where the answer has none. | Test |
 | FR-031-AC-4 | The mark is red with a failing rule, amber with an unavailable one and none failing, hollow with nothing scored, and green otherwise. | Test |
 | FR-031-AC-5 | The evaluation is run with the team's config path and `--since 24h`, one team at a time, once in 30 minutes however often the view is drawn, and not at all by the widget or the `r` key. | Test |
 | FR-031-AC-6 | An answer another session left in the gate file is drawn with no run, and one another session is running is waited for. | Test |

@@ -22,7 +22,7 @@ const MISSING = "error: unrecognized subcommand 'eval'\n\nUsage: ix-board retro 
 
 type Rule = Record<string, unknown>
 const rule = (id: string, status: string, more: Rule = {}): Rule => ({ id, query: `query.${id}`, status, value: status === 'pass' || status === 'fail' ? 3 : null, comparator: '<=', target: 1, evidence_refs: [], ...more })
-const role = (name: string, rules: Rule[], passed: number, evaluated: number, rate: number | null, trend: number | null) => ({ role: name, score: { passed, evaluated, pass_rate: rate }, previous_score: { passed, evaluated, pass_rate: rate }, trend, rules, failing_rules: rules.filter(r => r.status === 'fail').map(r => r.id), session_ids: [] })
+const role = (name: string, rules: Rule[], passed: number, evaluated: number, rate: number | null, trend: number | null, matched?: number) => ({ role: name, score: { passed, evaluated, pass_rate: rate }, previous_score: { passed, evaluated, pass_rate: rate }, trend, trend_matched_rules: matched, rules, failing_rules: rules.filter(r => r.status === 'fail').map(r => r.id), session_ids: [] })
 /** An answer whose 24 hour window ended `agoMin` minutes before the session started. */
 const answer = (roles: unknown[], agoMin = 3, schema = 1) => out(JSON.stringify({ schema_version: schema, team: 'QSL', window: { start_ms: NOW - agoMin * MIN - 24 * HOUR, end_ms: NOW - agoMin * MIN }, previous_window: { start_ms: 0, end_ms: 1 }, roles, sessions: [] }))
 
@@ -33,7 +33,7 @@ const CODER = role('coder', [
   rule('CODE-R3', 'unavailable', { query: 'github.merged_prs', comparator: '>=', reason: 'github.merged_prs: source returned no complete population for this window' }),
   rule('CODE-R4', 'not_applicable', { query: 'prom.host_build_pause_interval', comparator: '>=', reason: 'no pause producer' }),
   rule('CODE-J1', 'judgement_required', { query: 'CODE-RUBRIC-1', comparator: 'manual', target: 0, rubric_id: 'CODE-RUBRIC-1', judgement_required: true }),
-], 1, 2, 0.5, 0)
+], 1, 2, 0.5, 0, 2)
 
 type Answering = (team: string, init: Init, w: World) => Run | Promise<Run>
 
@@ -77,7 +77,7 @@ test('a role draws its pass rate, counts and trend, and expanded its failing rul
   expect(lines).toContain('24h window · ended 3m ago')
   expect(await d.buttons()).toEqual(expect.arrayContaining(['▸ coder', '▸ planner']))
   const at = lines.indexOf('50% · 1/2 passed')
-  expect(lines.slice(at, at + 3)).toEqual(['50% · 1/2 passed', '= no change', '1 failing · 1 unavailable · 1 not applicable · 1 judgement'])
+  expect(lines.slice(at, at + 3)).toEqual(['50% · 1/2 passed', '= no change over 2 rules', '1 failing · 1 unavailable · 1 not applicable · 1 judgement'])
   const planner = lines.indexOf('100% · 1/1 passed')
   expect(lines.slice(planner, planner + 2)).toEqual(['100% · 1/1 passed', '↑ +25 pts'])
   expect(lines.join('\n')).not.toContain('CODE-R2')
@@ -129,6 +129,26 @@ test('no score and no trend are said, never 0, and a trend reads by its sign and
   expect(rowAt('99% · 249/250 passed')).toEqual(['99% · 249/250 passed', '↑ <1 pts'])
   expect(rowAt('0% · 0/4 passed')).toEqual(['0% · 0/4 passed', '↓ <1 pts'])
   expect(lines.filter(l => l.startsWith('0%'))).toHaveLength(1)
+  await d.ui.unmount()
+})
+
+test('the trend says over how many rules it was compared', async ($, on) => {
+  trace("FR-031-AC-13")
+  const scored = [rule('R', 'pass')]
+  const w = await setup($, on, () => answer([
+    role('up', scored, 1, 1, 1, 0.5, 4),
+    role('single', scored, 1, 2, 0.5, -0.25, 1),
+    // A whole score now, and nothing scored in both windows: the answer's trend is null.
+    role('unmatched', scored, 2, 2, 0.9, null, 0),
+    role('older', scored, 3, 4, 0.75, 0.25),
+  ]))
+  const d = await draw($, w)
+  const lines = await d.lines()
+  const after = (score: string) => lines[lines.indexOf(score) + 1]
+  expect(after('100% · 1/1 passed')).toBe('↑ +50 pts over 4 rules')
+  expect(after('50% · 1/2 passed')).toBe('↓ −25 pts over 1 rule')
+  expect(after('90% · 2/2 passed')).toBe('trend — · no rule scored in both windows')
+  expect(after('75% · 3/4 passed')).toBe('↑ +25 pts')
   await d.ui.unmount()
 })
 

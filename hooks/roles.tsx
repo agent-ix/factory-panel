@@ -81,6 +81,7 @@ export function parseEval(answer: string): RoleReport {
       evaluated: need(number(score.evaluated)),
       passRate: number(score.pass_rate),
       trend: number(r.trend),
+      matched: number(r.trend_matched_rules),
       rules: list(r.rules).map(rule),
     }
   }
@@ -166,12 +167,15 @@ function markOf(r: RoleScore): Mark {
 // Rounded down, so that a rate short of all passing never reads 100%.
 const scoreText = (r: RoleScore): string => (r.passRate === null ? 'no score' : `${Math.floor(r.passRate * 100 + 1e-9)}% · ${r.passed}/${r.evaluated} passed`)
 
-function trendOf(trend: number | null): { text: string; color: string } {
+/** The answer's trend, with the number of rules it compares: those scored in both windows. */
+function trendOf({ trend, matched }: RoleScore): { text: string; color: string } {
+  if (matched === 0) return { text: 'trend — · no rule scored in both windows', color: 'subtle' }
   if (trend === null) return { text: 'trend —', color: 'subtle' }
-  if (trend === 0) return { text: '= no change', color: 'subtle' }
+  const over = matched === null ? '' : ` over ${matched} ${matched === 1 ? 'rule' : 'rules'}`
+  if (trend === 0) return { text: `= no change${over}`, color: 'subtle' }
   const points = Math.abs(trend) * 100
   const size = points < 1 - 1e-9 ? '<1' : `${trend > 0 ? '+' : '−'}${Math.round(points)}`
-  return trend > 0 ? { text: `↑ ${size} pts`, color: 'success' } : { text: `↓ ${size} pts`, color: 'warning' }
+  return trend > 0 ? { text: `↑ ${size} pts${over}`, color: 'success' } : { text: `↓ ${size} pts${over}`, color: 'warning' }
 }
 
 function countsOf(r: RoleScore): string {
@@ -216,7 +220,7 @@ export async function drawRoles($: EngineInterface, { Box, Text, Button }: Pick<
     const id = `${team}/${r.role}`
     const isOpen = open.includes(id)
     const { mark, color } = markOf(r)
-    const trend = trendOf(r.trend)
+    const trend = trendOf(r)
     const counts = countsOf(r)
     const failing = r.rules.filter(x => x.status === 'fail')
     const unscored = r.rules.filter(x => x.status !== 'pass' && x.status !== 'fail')

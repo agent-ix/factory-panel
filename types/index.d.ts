@@ -240,8 +240,11 @@ export type RetroMeta = { at: number | null; error: string | null }
 /** One rule of a role evaluation; `reason` and `rubric` say why one is not scored. */
 export type RoleRule = { id: string; status: string; query: string; value: number | null; comparator: string; target: number | null; reason: string | null; rubric: string | null }
 
-/** One role of an evaluation: the rules passed of those scored, and the change of the pass rate from the window before. */
-export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; rules: RoleRule[] }
+/**
+ * One role of an evaluation: the rules passed of those scored, and `trend`, the change from the window before over the
+ * `matched` rules scored in both; `matched` is null where the answer does not say.
+ */
+export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; matched: number | null; rules: RoleRule[] }
 
 /** What the mod keeps of `ix-board retro eval --json`: the window (ms since the epoch) and its roles. */
 export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
