@@ -14,13 +14,14 @@ const PANE = { plugin: 'factory-panel', component: 'Pane', requestId: 'team', pr
 const CONFIG = '/home/test/.local/state/team-retro/QSL/config.json'
 
 const STEP = 300
-const DAY = 86_400
 
-/** One series the exporter publishes: six hours of samples ending `ago` seconds before now, and samples by days ago. */
-type Series = { name: string; id: string; key?: string; values?: number[]; ago?: number; days?: Record<number, number> }
+/** One series the exporter publishes: six hours of samples ending `ago` seconds before now, with its other labels. */
+type Series = { name: string; id: string; key?: string; scope?: string; day?: number; metric?: string; values?: number[]; ago?: number }
 
 const series = (name: string, values: number[], more: Partial<Series> = {}): Series => ({ name: `ix_team_${name}`, id: 'fsl', values, ...more })
-const daily = (name: string, days: Record<number, number>, more: Partial<Series> = {}): Series => ({ name: `ix_team_${name}`, id: 'fsl', days, ...more })
+/** A daily series' samples, by the day each counts: 0 is today. */
+const daily = (name: string, days: Record<number, number>, more: Partial<Series> = {}): Series[] => Object.entries(days).map(([day, n]) => series(name, [n], { day: Number(day), ...more }))
+const coverage = (metric: string, value: number, more: Partial<Series> = {}): Series => series('metric_coverage', [value], { metric, ...more })
 
 /** What the exporter publishes for team fsl: some series, and none for the first-review latency, the oldest stage age or executing agents. */
 const SERIES: Series[] = [
@@ -38,12 +39,11 @@ function answerRange(published: readonly Series[], body: string): string {
   const end = field('end')
   const step = field('step')
   const named = /ix_team_[a-z0-9_]+/.exec(body)?.[0]
+  expect(step).toBe(STEP)
   const result = published.filter(x => x.name === named).flatMap(x => {
-    const values =
-      step === DAY
-        ? Object.entries(x.days ?? {}).map(([ago, v]): [number, string] => [end - Number(ago) * DAY, String(v)]).sort((p, q) => p[0] - q[0])
-        : (x.values ?? []).map((v, i, all): [number, string] => [end - (x.ago ?? 0) - (all.length - 1 - i) * STEP, String(v)])
-    return values.length === 0 ? [] : [{ metric: { team_id: x.id, ...(x.key === undefined ? {} : { team_key: x.key }) }, values }]
+    const values = (x.values ?? []).map((v, i, all): [number, string] => [end - (x.ago ?? 0) - (all.length - 1 - i) * STEP, String(v)])
+    const labels = { team_id: x.id, scope_id: x.scope ?? 'completion', team_key: x.key, days_ago: x.day === undefined ? undefined : String(x.day), metric: x.metric }
+    return values.length === 0 ? [] : [{ metric: Object.fromEntries(Object.entries(labels).filter(([, v]) => v !== undefined)), values }]
   })
   return JSON.stringify({ status: 'success', data: { resultType: 'matrix', result } })
 }
@@ -287,8 +287,7 @@ test('a team is headed by its team key, and the samples of its exporter id from 
     series('ready_issues', [9], { key: 'QSL' }),
     series('wip_active', [5], { key: 'QSL' }),
     series('wip_active', [1]),
-    daily('verified_path_closed_24h', { 1: 2, 2: 3 }),
-    daily('verified_path_closed_24h', { 0: 4, 1: 6 }, { key: 'QSL' }),
+    series('blocked_issues', [2]),
   ] })
   const d = await draw($, w)
   expect(d.lines).not.toContain('fsl')
@@ -296,7 +295,7 @@ test('a team is headed by its team key, and the samples of its exporter id from 
   const mine = under(d.lines, 'QSL')
   expect(after(mine, 'Ready issues')).toBe('9')
   expect(after(mine, 'Work in progress')).toBe('5')
-  expect(row(mine, 'Closures').days).toEqual(['—', '—', '—', '—', '3', '6', '4'])
+  expect(after(mine, 'Blocked')).toBe('2')
   await d.ui.unmount()
 })
 
@@ -317,14 +316,11 @@ test('exporter ids with one team key make one team: counts added, durations at t
     series('ready_issues', [3], { id: 'b', key: 'QSL' }),
     series('stage_oldest_age_seconds', [3600], { id: 'a', key: 'QSL' }),
     series('stage_oldest_age_seconds', [7200], { id: 'b', key: 'QSL' }),
-    daily('pr_merges_per_hour_24h', { 0: 0.25 }, { id: 'a', key: 'QSL' }),
-    daily('pr_merges_per_hour_24h', { 0: 0.5 }, { id: 'b', key: 'QSL' }),
   ] })
   const d = await draw($, w)
   expect(d.lines.filter(l => l === 'QSL')).toHaveLength(1)
   expect(after(d.lines, 'Ready issues')).toBe('5')
   expect(after(d.lines, 'Oldest in a stage')).toBe('2.0h')
-  expect(row(d.lines, 'Merges').days.at(-1)).toBe('18')
   await d.ui.unmount()
 })
 
@@ -354,42 +350,87 @@ test('a series that stopped more than a step ago reads a dash and keeps its hist
   await d.ui.unmount()
 })
 
-test('the daily rows show seven days oldest first, a dash for a day with no sample, and merges per day', async ($, on) => {
+test('the daily rows show the seven days oldest first with today last, and a dash for a day with no current sample', async ($, on) => {
   trace("FR-029-AC-22")
   const w = await setup($, on, { published: [
-    daily('verified_path_closed_24h', { 6: 1, 5: 0, 3: 5, 1: 2, 0: 7 }),
-    daily('pr_merges_per_hour_24h', { 2: 0.5, 1: 0.0833333333333, 0: 1 }),
+    ...daily('closures_day', { 6: 1, 5: 0, 3: 5, 1: 2, 0: 7 }),
+    ...daily('merged_prs_day', { 2: 12, 1: 2, 0: 124 }),
+    // A sample that stopped is not a count of its day any more.
+    series('merged_prs_day', [40], { day: 4, ago: 600 }),
+    series('verified_path_closed_24h', [9]),
   ] })
   const d = await draw($, w)
-  expect(d.lines).toContain('Per day · last 7 days · verified closures, merged PRs')
-  expect(row(d.lines, 'Closures').days).toEqual(['1', '0', '—', '5', '—', '2', '7'])
-  expect(row(d.lines, 'Merges').days).toEqual(['—', '—', '—', '—', '12', '2', '24'])
-  // A team only the daily series name still has all its tiles, none of them known.
-  expect(after(d.lines, 'Verified closures · 24h')).toBe('—')
-  const asked = w.queries.filter(q => q.includes('step=86400'))
-  expect(asked.every(q => q.includes('last_over_time(') && q.includes('[1h]'))).toBe(true)
-  const span = /start=([0-9]+)&end=([0-9]+)/.exec(asked[0]!)!
-  expect(Number(span[2]) - Number(span[1])).toBe(6 * 86400)
+  expect(d.lines).toContain('Per UTC day · today so far at right · trend is yesterday’s')
+  expect(row(d.lines, 'Completed').days).toEqual(['1', '0', '—', '5', '—', '2', '7'])
+  expect(row(d.lines, 'Merged PRs').days).toEqual(['—', '—', '—', '—', '12', '2', '124'])
+  expect(after(d.lines, 'Verified closures · 24h')).toBe('9')
+  expect(w.queries.filter(q => q.includes('last_over_time') || q.includes('pr_merges_per_hour_24h)') && q.includes('days_ago'))).toEqual([])
   await d.ui.unmount()
 })
 
 for (const [name, days, trend] of [
-  ['above the average of the earlier days', { 2: 2, 1: 4, 0: 5 }, '↑ prior avg 3.0'],
-  ['below it', { 2: 2, 1: 4, 0: 1 }, '↓ prior avg 3.0'],
-  ['level with it', { 4: 2, 1: 4, 0: 3 }, '= prior avg 3.0'],
-  ['with no earlier day', { 0: 3 }, 'no earlier day'],
-  ['with no newest day', { 2: 2, 1: 4 }, ''],
+  ['above the average of the earlier days', { 3: 2, 2: 4, 1: 5, 0: 0 }, '↑ prior avg 3.0'],
+  ['below it, however large today is', { 3: 2, 2: 4, 1: 1, 0: 99 }, '↓ prior avg 3.0'],
+  ['level with it', { 6: 2, 2: 4, 1: 3 }, '= prior avg 3.0'],
+  ['with no earlier day', { 1: 3, 0: 8 }, 'no earlier day'],
+  ['with no yesterday', { 3: 2, 2: 4, 0: 9 }, ''],
 ] as [string, Record<number, number>, string][]) {
   test(`the daily row says its trend ${name}`, async ($, on) => {
     trace("FR-029-AC-23")
-    const w = await setup($, on, { published: [daily('verified_path_closed_24h', days)] })
+    const w = await setup($, on, { published: daily('closures_day', days) })
     const d = await draw($, w)
-    const at = d.lines.indexOf('Closures')
-    const drawn = d.lines.slice(at + 2, d.lines.indexOf('Merges')).join(' ')
+    const at = d.lines.indexOf('Completed')
+    const drawn = d.lines.slice(at + 2, d.lines.indexOf('Merged PRs')).join(' ')
     expect(drawn).toBe(trend)
     await d.ui.unmount()
   })
 }
+
+test('a team with two scopes shows each day as at least the larger count, with no trend', async ($, on) => {
+  trace("FR-029-AC-27")
+  const w = await setup($, on, { published: [
+    ...daily('closures_day', { 2: 4, 1: 9 }, { key: 'QSL', scope: 'release' }),
+    ...daily('closures_day', { 2: 6, 1: 2, 0: 1 }, { key: 'QSL', scope: 'completion' }),
+    ...daily('closures_day', { 2: 1, 1: 5 }, { id: 'swm', key: 'SWM' }),
+  ] })
+  const d = await draw($, w)
+  const mine = under(d.lines, 'QSL', 'SWM')
+  expect(row(mine, 'Completed').days).toEqual(['—', '—', '—', '—', '≥6', '≥9', '≥1'])
+  expect(mine.join(' ')).not.toMatch(/prior avg|no earlier day/)
+  const other = under(d.lines, 'SWM')
+  expect(row(other, 'Completed').days).toEqual(['—', '—', '—', '—', '1', '5', '—'])
+  expect(other.join(' ')).toContain('↑ prior avg 1.0')
+  await d.ui.unmount()
+})
+
+test('a tile says how much of its population was measured where that is not all of it', async ($, on) => {
+  trace("FR-029-AC-26")
+  const w = await setup($, on, { published: [
+    series('executing_agents', [3]),
+    coverage('executing_agents', 0.96875),
+    // No value: the coverage says why.
+    coverage('effort_per_verified_path_closure_seconds_24h', 0.4),
+    series('stage_oldest_age_seconds', [3600]),
+    coverage('stage_oldest_age_seconds_coding', 1),
+    coverage('stage_oldest_age_seconds_review', 0.5),
+    // The weaker scope is the one that shows.
+    coverage('pr_changes_requested_share', 0.9),
+    coverage('pr_changes_requested_share', 0.755, { scope: 'release' }),
+    series('new_pr_first_review_median_seconds_24h', [60]),
+    coverage('new_pr_first_review_median_seconds_24h', 1),
+    // Coverage that stopped says nothing.
+    series('ready_issues', [4]),
+    coverage('ready_issues', 0.1, { ago: 600 }),
+  ] })
+  const d = await draw($, w)
+  const tile = (label: string) => d.lines.slice(d.lines.indexOf(label) + 1, d.lines.indexOf(label) + 3)
+  expect(tile('Executing agents')).toEqual(['3', '96% covered'])
+  expect(tile('Effort per closure')).toEqual(['—', '40% covered'])
+  expect(tile('Oldest in a stage')).toEqual(['1.0h', '50% covered'])
+  expect(tile('Changes requested')).toEqual(['—', '75% covered'])
+  expect(d.lines.filter(l => l.endsWith('% covered'))).toHaveLength(4)
+  await d.ui.unmount()
+})
 
 for (const [name, published, text] of [
   ['the closures of all teams', [series('verified_path_closed_24h', [3]), series('verified_path_closed_24h', [4], { id: 'b' })], '7 closures / 24h'],

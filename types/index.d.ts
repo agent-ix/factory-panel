@@ -208,7 +208,12 @@ export type TeamMetric = {
   /** higher is better (velocity) or worse (queues), for the trend's colour */
   better: 'up' | 'down'
   history: number[]
+  /** the share of its population the exporter measured, 0 to 1; null where it does not say */
+  coverage: number | null
 }
+
+/** The counts of 7 UTC days, oldest first and today last; null for a day with no sample. `atLeast` marks lower bounds. */
+export type DailyRow = { counts: (number | null)[]; atLeast: boolean }
 
 export type TeamView = {
   /** the Linear team key, else the exporter's team id */
@@ -216,8 +221,8 @@ export type TeamView = {
   /** whether `team` is a team key the series carry */
   keyed: boolean
   metrics: TeamMetric[]
-  /** the counts of each of the last 7 days, oldest first; null for a day with no sample */
-  days: { closures: (number | null)[]; merges: (number | null)[] }
+  /** completed issues and merged PRs per day */
+  days: { closures: DailyRow; merges: DailyRow }
 }
 
 export type TeamMeta = { at: number | null; error: string | null }

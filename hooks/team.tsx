@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { RetroClass, RetroMeta, RetroView, TeamMeta, TeamMetric, TeamView } from '../types'
+import type { DailyRow, RetroClass, RetroMeta, RetroView, TeamMeta, TeamMetric, TeamView } from '../types'
 import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
 import { ACCENT, dots } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
@@ -11,9 +11,9 @@ import { getSelection, home, scopeOf, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
 // The Team pane: coder velocity, review quality and flow per team, from the same ix_team_* series as
-// Grafana's "Team flow and effort" dashboard, each tile with six hours of history and the closures and merges of
-// each of the last seven days, and above them the health of each selected team's departments from its stored
-// retro snapshots.
+// Grafana's "Team flow and effort" dashboard, each tile with six hours of history and how much of its population was
+// measured, the completed issues and merged PRs of each of the last seven days, and above them the health of each
+// selected team's departments from its stored retro snapshots.
 
 const PANE = 'team'
 const TITLE = 'Team'
@@ -21,7 +21,7 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
-const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-2' })
+const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-3' })
 /** Teams whose health strip lists its regressing metrics. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
 const retro = atom({ plugin: 'factory-panel', key: 'retro' } as const, [] as RetroView[], { shape: 'retro-1' })
@@ -35,7 +35,7 @@ const teamMeta = atom(
 
 /** How the samples several exporter series of one team have at one time make one. */
 type Combine = 'sum' | 'max'
-type Spec = Omit<TeamMetric, 'value' | 'history'> & { series: string; combine: Combine }
+type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage'> & { series: string; combine: Combine }
 
 // Velocity and effort, then review quality, then flow and capacity. Each tile is one series of the exporter, derived
 // from nothing else: one it does not publish stays in its row as a tile reading "—", never 0.
@@ -59,13 +59,14 @@ const SPECS: Spec[] = [
   { key: 'agents', group: 'flow', label: 'Executing agents', unit: 'count', better: 'up', series: 'ix_team_executing_agents', combine: 'sum' },
 ]
 
-const DAY_SECS = 86_400
 const DAYS = 7
-/** The daily rows. Each sample of these series covers the 24 hours before it; `per` makes it a count of that day. */
-const DAILY: { key: keyof TeamView['days']; label: string; series: string; per: number }[] = [
-  { key: 'closures', label: 'Closures', series: 'ix_team_verified_path_closed_24h', per: 1 },
-  { key: 'merges', label: 'Merges', series: 'ix_team_pr_merges_per_hour_24h', per: 24 },
+/** The daily rows: the exporter's counts of each UTC day, numbered by `days_ago` with 0 for today. */
+const DAILY: { key: keyof TeamView['days']; label: string; series: string }[] = [
+  { key: 'closures', label: 'Completed', series: 'ix_team_closures_day' },
+  { key: 'merges', label: 'Merged PRs', series: 'ix_team_merged_prs_day' },
 ]
+/** How much of its population the exporter measured, 0 to 1, for the series its `metric` label names. */
+const COVERAGE = 'ix_team_metric_coverage'
 
 const GROUPS: { id: TeamMetric['group']; title: string }[] = [
   { id: 'velocity', title: 'Velocity and effort' },
@@ -109,14 +110,37 @@ function joined(series: readonly RangeSeries[], combine: Combine): [number, numb
   return [...new Map([...keyless, ...keyed])].sort(([a], [b]) => a - b)
 }
 
-/** The counts of the last DAYS days, oldest first; `null` for a day with no sample. */
-function perDay(samples: readonly [number, number][], now: number, per: number): (number | null)[] {
-  const days = Array<number | null>(DAYS).fill(null)
-  for (const [time, value] of samples) {
-    const ago = Math.round((now - time) / DAY_SECS)
-    if (ago >= 0 && ago < DAYS) days[DAYS - 1 - ago] = Math.round(value * per)
+/** The value of samples now: the last one, where it is no older than a step. A series that stopped has none. */
+function currentOf(samples: readonly [number, number][], now: number): number | null {
+  const last = samples[samples.length - 1]
+  return last !== undefined && now - last[0] <= STEP_SECS ? last[1] : null
+}
+
+/** One exporter scope of a team. */
+const scopeIn = (s: RangeSeries): string => `${s.metric.team_id}/${s.metric.scope_id}`
+
+/** The current values of a team's series, one for each distinct `part` of them, with the labels of one of its series. */
+function currents(series: readonly RangeSeries[], part: (s: RangeSeries) => string, now: number): { labels: Record<string, string>; value: number }[] {
+  const parts = new Map<string, RangeSeries[]>()
+  for (const s of series) parts.set(part(s), [...(parts.get(part(s)) ?? []), s])
+  return [...parts.values()].flatMap(same => {
+    const value = currentOf(joined(same, 'max'), now)
+    return value === null ? [] : [{ labels: same[0]!.metric, value }]
+  })
+}
+
+/**
+ * A team's counts per day, oldest first and today last; `null` for a day with no current sample. Scopes may count the
+ * same issues and PRs, so with several each day is the largest count of one, a lower bound.
+ */
+function dailyRow(series: readonly RangeSeries[], isShared: boolean, now: number): DailyRow {
+  const counts = Array<number | null>(DAYS).fill(null)
+  for (const { labels, value } of currents(series, s => `${scopeIn(s)}/${s.metric.days_ago}`, now)) {
+    const ago = Number(labels.days_ago)
+    if (!Number.isInteger(ago) || ago < 0 || ago >= DAYS) continue
+    counts[DAYS - 1 - ago] = Math.max(counts[DAYS - 1 - ago] ?? 0, value)
   }
-  return days
+  return { counts, atLeast: isShared }
 }
 
 async function readTeam($: EngineInterface, options: Options): Promise<boolean> {
@@ -124,28 +148,32 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
   const seconds = Math.floor(now / 1000)
   try {
     const query = (promql: string, span: number, step: number) => promRange($, options.prometheusUrl, promql, span, step)
-    const [tiles, daily] = await Promise.all([
+    // The daily counts and the coverage are drawn as they stand now, so one step of them is enough.
+    const [tiles, daily, coverage] = await Promise.all([
       Promise.all(SPECS.map(async spec => ({ spec, series: await query(`${spec.combine} by (team_id, team_key) (${spec.series})`, HISTORY_SECS, STEP_SECS) }))),
-      // The last sample of the hour before each day's end, so that a missed scrape does not lose the day.
-      Promise.all(DAILY.map(async day => ({ day, series: await query(`sum by (team_id, team_key) (last_over_time(${day.series}[1h]))`, (DAYS - 1) * DAY_SECS, DAY_SECS) }))),
+      Promise.all(DAILY.map(async day => ({ day, series: await query(`max by (team_id, team_key, scope_id, days_ago) (${day.series})`, STEP_SECS, STEP_SECS) }))),
+      query(`min by (team_id, team_key, scope_id, metric) (${COVERAGE})`, STEP_SECS, STEP_SECS),
     ])
-    const every = [...tiles, ...daily].flatMap(r => r.series)
+    const every = [...tiles.flatMap(r => r.series), ...daily.flatMap(r => r.series), ...coverage]
     const nameOf = teamNamer(every)
     // Every team any series names gets every tile: one the exporter lacks reads as unavailable, not as 0.
     const named = new Map<string, boolean>()
     for (const { team, keyed } of every.map(nameOf)) named.set(team, keyed || (named.get(team) ?? false))
     const views: TeamView[] = [...named]
       .map(([team, keyed]) => {
-        const of = (series: readonly RangeSeries[], combine: Combine) => joined(series.filter(s => nameOf(s).team === team), combine)
+        const own = (series: readonly RangeSeries[]) => series.filter(s => nameOf(s).team === team)
+        const measured = currents(own(coverage), s => `${scopeIn(s)}/${s.metric.metric}`, seconds)
         const metrics = tiles.map(({ spec, series }): TeamMetric => {
-          const samples = of(series, spec.combine)
-          const last = samples[samples.length - 1]
-          // A series that stopped has no current value, whatever it last said.
-          const value = last !== undefined && seconds - last[0] <= STEP_SECS ? last[1] : null
-          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value, history: samples.map(([, v]) => v) }
+          const samples = joined(own(series), spec.combine)
+          const name = spec.series.slice('ix_team_'.length)
+          // The oldest stage age is measured stage by stage; the tile is only as covered as the least covered of them.
+          const covered = measured.filter(({ labels }) => labels.metric === name || (spec.key === 'oldest' && labels.metric?.startsWith(`${name}_`))).map(m => m.value)
+          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value: currentOf(samples, seconds), history: samples.map(([, v]) => v), coverage: covered.length === 0 ? null : Math.min(...covered) }
         })
-        const days = { closures: [], merges: [] } as TeamView['days']
-        for (const { day, series } of daily) days[day.key] = perDay(of(series, 'sum'), seconds, day.per)
+        const counted = [...daily.flatMap(r => own(r.series)), ...own(coverage)]
+        const isShared = new Set(counted.filter(s => currentOf(joined([s], 'max'), seconds) !== null).map(scopeIn)).size > 1
+        const days = {} as TeamView['days']
+        for (const { day, series } of daily) days[day.key] = dailyRow(own(series), isShared, seconds)
         return { team, keyed, metrics, days }
       })
       .sort((x, y) => x.team.localeCompare(y.team))
@@ -264,11 +292,14 @@ const format = (m: TeamMetric): string => {
   return Math.round(m.value).toLocaleString('en-US')
 }
 
-/** How the newest day compares with the average of the earlier days that have a value; null where it has none. */
-function dayTrend(days: readonly (number | null)[]): { mark: string; color: string; text: string } | null {
-  const newest = days[days.length - 1]
-  if (newest === null || newest === undefined) return null
-  const earlier = days.slice(0, -1).filter((v): v is number => v !== null)
+/**
+ * How yesterday, the newest whole day, compares with the average of the earlier days that have a value. Null where
+ * yesterday has none, or where the counts are lower bounds, which say nothing of rise or fall.
+ */
+function dayTrend({ counts, atLeast }: DailyRow): { mark: string; color: string; text: string } | null {
+  const newest = counts[DAYS - 2]
+  if (atLeast || newest === null || newest === undefined) return null
+  const earlier = counts.slice(0, DAYS - 2).filter((v): v is number => v !== null)
   if (earlier.length === 0) return { mark: '', color: 'subtle', text: 'no earlier day' }
   const average = earlier.reduce((a, b) => a + b, 0) / earlier.length
   const [mark, color] = newest > average ? ['↑', 'success'] : newest < average ? ['↓', 'warning'] : ['=', 'subtle']
@@ -316,9 +347,12 @@ export function registerTeam(on: On, options: Options): void {
           {m.label}
         </Text>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
-          <Text weight="semibold" size="title" tabular>
-            {format(m)}
-          </Text>
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text weight="semibold" size="title" tabular>
+              {format(m)}
+            </Text>
+            {m.coverage !== null && m.coverage < 1 && <Text dimColor size="caption">{`${Math.floor(m.coverage * 100 + 1e-9)}% covered`}</Text>}
+          </Box>
           {!Svg && m.history.length > 0 && <Text color={ACCENT}>{dots(m.history.slice(-24), 1)[0]}</Text>}
           {Svg && (
             <Svg
@@ -334,15 +368,18 @@ export function registerTeam(on: On, options: Options): void {
 
     const dailyRows = (t: TeamView) => (
       <Box key={`${t.team}-daily`} flexDirection="column">
-        <Text dimColor size="caption">Per day · last 7 days · verified closures, merged PRs</Text>
+        <Text dimColor size="caption">Per UTC day · today so far at right · trend is yesterday’s</Text>
         {DAILY.map(day => {
+          const { counts, atLeast } = t.days[day.key]
           const trend = dayTrend(t.days[day.key])
+          const cells = counts.map(v => (v === null ? '—' : `${atLeast ? '≥' : ''}${v}`))
+          const cell = Math.max(4, ...cells.map(c => c.length + 1))
           return (
             <Box key={`${t.team}-daily-${day.key}`} flexDirection="row" gap={1}>
-              <Box width={8}>
+              <Box width={10}>
                 <Text dimColor>{day.label}</Text>
               </Box>
-              <Text tabular>{t.days[day.key].map(v => (v === null ? '—' : String(v)).padStart(4)).join('')}</Text>
+              <Text tabular>{cells.map(c => c.padStart(cell)).join('')}</Text>
               {trend !== null && trend.mark !== '' && <Text color={trend.color}>{trend.mark}</Text>}
               {trend !== null && <Text dimColor>{trend.text}</Text>}
             </Box>

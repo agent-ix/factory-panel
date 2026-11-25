@@ -16,7 +16,7 @@ relationships:
 
 ## Description
 
-The Team view SHALL show velocity and effort, review quality, flow and capacity and the closures and merges of each of the last 7 days for each team from the `ix_team_*` series, and the health of the selected teams' departments from their stored retro snapshots.
+The Team view SHALL show velocity and effort, review quality, flow and capacity and the completed issues and merged PRs of each of the last 7 days for each team from the `ix_team_*` series, and the health of the selected teams' departments from their stored retro snapshots.
 
 ## Behavior
 
@@ -42,10 +42,19 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 
 ### Closures and merges per day
 
-- Each team SHALL have a row of verified closures (`ix_team_verified_path_closed_24h`) and a row of merged PRs (24 times `ix_team_pr_merges_per_hour_24h`) for each of the last 7 days, oldest first.
-- Each day SHALL be the 24 hours ending that many whole days before now, read from the last sample of the hour before that time. A day with no sample SHALL read `—` and never 0.
-- Each row SHALL say how the newest day compares with the average of the earlier days that have a value: `↑`, `↓` or `=` with that average.
-- Where the newest day has no value the row SHALL claim no trend, and where no earlier day has one it SHALL say there is none to compare.
+- Each team SHALL have a row `Completed` (`ix_team_closures_day`) and a row `Merged PRs` (`ix_team_merged_prs_day`), each with the 7 UTC calendar days that the `days_ago` label numbers `0` (today, so far) to `6`, drawn oldest first with today last.
+- A day of the `Completed` row counts Linear transitions into a completed state of the issues of the exporter's scope. It is not the `Verified closures · 24h` tile, which counts the verified closures on the configured gate path over the trailing 24 hours, and the two SHALL NOT be expected to agree.
+- A day of the `Merged PRs` row counts PRs of the scope's repositories by GitHub's merge time.
+- The mod SHALL draw only current samples, as for the tiles. A day with none SHALL read `—` and never 0.
+- Scopes may select the same issues and repositories, and a count says nothing of which, so where a team has several scopes (`team_id` and `scope_id`) each day SHALL be drawn as `≥N`, with N the largest count of one scope. Counts of scopes SHALL NOT be added.
+- Each row SHALL say how yesterday, the newest whole day, compares with the average of the earlier whole days that have a value: `↑`, `↓` or `=` with that average. Today, a part day, SHALL take no part.
+- Where yesterday has no value, or the counts are lower bounds, the row SHALL claim no trend, and where no earlier day has a value it SHALL say there is none to compare.
+
+### Coverage
+
+- Where the current `ix_team_metric_coverage` of a tile's series, whose `metric` label is the series name without `ix_team_`, is below 1, the tile SHALL say `N% covered` beside its value, N rounded down, whether or not it has a value.
+- The coverage of `Oldest in a stage` SHALL be the lowest over the stages (`stage_oldest_age_seconds_<stage>`), and a tile over several scopes SHALL show the lowest of them.
+- A tile whose series has no current coverage sample SHALL say nothing of coverage.
 
 ### Retro health
 
@@ -85,9 +94,11 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-19 | Two exporter ids with one team key make one team, counts added and durations taken at their largest. | Test |
 | FR-029-AC-20 | No query derives effort or changes-requested from other series: where those two are absent they read `—`. | Test |
 | FR-029-AC-21 | A series whose last sample is older than one step reads `—` while its history is drawn. | Test |
-| FR-029-AC-22 | The closure and merge rows show 7 days oldest first, `—` for a day with no sample, merges as 24 times the hourly rate. | Test |
-| FR-029-AC-23 | The rows say `↑`, `↓` or `=` against the average of the earlier days with values, claim no trend with no newest value, and say there is nothing to compare with no earlier one. | Test |
+| FR-029-AC-22 | The `Completed` and `Merged PRs` rows show the days `days_ago` 6 to 0 left to right, `—` for a day with no current sample, from the two daily series and no other. | Test |
+| FR-029-AC-23 | The rows say `↑`, `↓` or `=` for yesterday against the average of the earlier days with values, ignore today, claim no trend with no yesterday, and say there is nothing to compare with no earlier day. | Test |
 | FR-029-AC-24 | The widget reads the closures of all teams, `≥N` where a team has none, and `—` where none has. | Test |
+| FR-029-AC-26 | A tile says `N% covered` for a current coverage below 1, with or without a value, taking the lowest over stages and scopes, and nothing for 1 or no sample. | Test |
+| FR-029-AC-27 | A team with two scopes shows each day as `≥` the larger count with no trend, and a team with one scope shows exact counts. | Test |
 | FR-029-AC-25 | Against the factory's Prometheus the Team view shows the values and days Prometheus answers. | Demonstration |
 
 ## Dependencies
