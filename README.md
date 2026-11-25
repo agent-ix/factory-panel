@@ -17,7 +17,7 @@ The views behind the cells are:
 | Work | Each code lead with its tickets: Linear state, title, `[pr]`, `[review×N]`, `[spec]` and `[gate]` badges and the last action; below them the recent merges (`a` shows every kind: closed and opened entries, and the reviews, specs and gates that started or finished, read from the relay every 30 seconds; half of the ten rows are held for these, so busy ticket activity does not hide them). A lead that cannot be read shows `▲` with `not read`, or `old` with the age of the report drawn. Needs ix-board 0.9.0 for PRs and merges; without it the tickets show without a PR badge |
 | Escalations | What the leads escalated, open first, with context, options and recommendation |
 | Message (`/factory relay`) | A message to every lead or one lead, and the recent broadcasts |
-| Team | Tiles per team with six-hour history in three rows (velocity and effort, review quality, flow and capacity), and the health of your teams' departments from their stored retro snapshots, or `no retro baseline`. A series the exporter does not publish reads `—`, never 0 |
+| Team | Tiles per team with six-hour history in three rows (velocity and effort, review quality, flow and capacity), and the health of your teams' departments from their stored retro snapshots, or `no retro baseline`. The health marks need ix-board 0.11.0, which names each metric's class; an older one reads `needs ix-board ≥0.11.0`. A series the exporter does not publish reads `—`, never 0 |
 
 ## How to use it
 

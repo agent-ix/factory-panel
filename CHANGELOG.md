@@ -9,6 +9,8 @@
 - Leads on other machines are no longer cut off. A lead's work report is given 20 seconds (it was 5, under what an ssh read can take), at most eight are read at once, Focus and Work share the reads, and a Redis, herdr or ssh failure that may pass is tried once more. A lead that cannot be read stays on the Work tab: drawn from its last report and marked old, or listed as not read. Each lead is drawn as it answers, and the first Focus drawing waits 5 seconds at most for them.
 - Under `a`, five of Recent's ten rows are held for review, spec and gate events, so a busy focus no longer crowds them out.
 - A progress answer that a session on an older build wrote to the shared gate is read again at once, instead of leaving PRs and merges unknown until it expired.
+- The Team tab’s health strip takes each metric’s class from the `class` field of `ix-board --json retro delta` instead of a table of its own, so a metric new to ix-board lands in its class. It needs ix-board 0.11.0: an older one reads `needs ix-board ≥0.11.0` with no marks. A team with fewer than two retro snapshots reads `no retro delta yet` instead of an empty strip.
+- The health strip waits for the session to know its team before reading, instead of saying `no retro baseline` for 5 minutes where the Team view opened first, and reads again when the teams choice changes. It says when it is still reading and when no team is selected.
 
 ## 0.8.0
 

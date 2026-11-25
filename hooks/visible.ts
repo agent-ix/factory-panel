@@ -40,7 +40,7 @@ const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   work: ['selection', 'focus', 'work', 'events'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['team', 'retro'],
+  team: ['selection', 'team', 'retro'],
 }
 
 const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
@@ -68,15 +68,15 @@ export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[]
  */
 export const bandSources = (modules: readonly ModuleId[]): readonly SourceId[] => [...new Set<SourceId>(['selection', ...modules.flatMap(m => MODULE_SOURCES[m])])]
 
-/** The focus and teams the leads and lanes were read for. */
+/** The focus and teams the leads, lanes and retro health were read for. */
 let lastScope: string | undefined
 
-/** Re-reads who the session is and what it chose; a changed focus or teams value makes the leads and lanes stale. */
+/** Re-reads who the session is and what it chose; a changed focus or teams value makes what was read for it stale. */
 async function readScope($: EngineInterface): Promise<boolean> {
   await refreshSelection($, true)
   const now = `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
   // The first refresh only records the scope: the first reads already wait for it.
-  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work')
+  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'retro')
   lastScope = now
   $.ui.invalidate('ui.render')
   return true

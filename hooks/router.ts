@@ -114,7 +114,7 @@ const readFocuses = ($: EngineInterface, changed: boolean): Promise<void> => rea
  */
 async function applied($: EngineInterface, lead: string): Promise<string> {
   const sel = await refreshSelection($)
-  markStale('focus', 'board', 'work')
+  markStale('focus', 'board', 'work', 'retro')
   await readFocuses($, true)
   $.ui.invalidate('ui.render')
   return `${lead}\n${await showText($, sel)}`

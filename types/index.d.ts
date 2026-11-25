@@ -214,7 +214,7 @@ export type TeamView = { team: string; metrics: TeamMetric[] }
 
 export type TeamMeta = { at: number | null; error: string | null }
 
-/** One department class of a team's retro delta: its mark and the metrics that regress. */
+/** One metric class of a team's retro delta: its mark and the metrics that regress. */
 export type RetroClass = { id: string; rating: 'red' | 'amber' | 'green' | 'unknown'; regressing: string[]; unavailable: number; total: number }
 
 /** A team's retro health: its classes, or `null` classes with the reason there is no baseline. */

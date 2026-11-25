@@ -7,7 +7,7 @@ import { ACCENT, dots } from './ui/glyphs'
 import type { Options } from './shared'
 import { track } from './schedule'
 import { focusTeams } from './band/modules'
-import { getSelection, home, scopeOf } from './selection'
+import { getSelection, home, scopeOf, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
 // The Team pane: coder velocity, review quality and flow per team, from the same ix_team_* series as
@@ -105,40 +105,34 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
 
 const RETRO_TIMEOUT_MS = 10_000
 
-/** The department class of each metric id of ix-board's retro catalog: the delta answer names none. */
-const CLASS_OF: Record<string, string> = {
-  path_remaining: 'progress', path_closed: 'progress', intake_new: 'progress', net_closed_minus_new: 'progress', gates_remaining: 'progress', path_closed_unverified: 'progress',
-  prs_merged_per_hour: 'flow', pr_cycle_median_hours: 'flow', pr_cycle_p90_hours: 'flow', prs_open: 'flow', prs_idle: 'flow', prs_oversize: 'flow', prs_ready_unmerged: 'flow',
-  fix_rounds_max: 'rework', fix_rounds_total: 'rework', head_force_pushes_max: 'rework', done_reopened: 'rework', full_gates_max: 'rework', repins_total: 'rework',
-  main_red_incidents: 'stability', main_red_minutes: 'stability',
-  issues_without_project: 'scope', issues_without_milestone: 'scope', in_progress_stale: 'scope', source_count_disagreement: 'scope', decisions_open: 'scope', decision_oldest_hours: 'scope',
-  agents_working_share: 'utilization', agents_idle_minutes_max: 'utilization', messages_undelivered: 'utilization',
-  worktrees_prunable: 'resource', disk_bytes: 'resource', orphan_slots: 'resource', build_lock_wait_minutes: 'resource',
-}
-const CLASS_ORDER = ['progress', 'flow', 'rework', 'stability', 'scope', 'utilization', 'resource', 'other']
+/** Where a metric with no class of its own is drawn, among metrics that have one. */
+const UNCLASSIFIED = 'unclassified'
+/** The first ix-board whose delta names each metric's class. */
+const NEEDS_CLASS = 'needs ix-board ≥0.11.0'
 
-type DeltaMetric = { id?: unknown; status?: unknown; regressing?: unknown }
+type DeltaMetric = { id?: unknown; class?: unknown; status?: unknown; regressing?: unknown }
 type Delta = { latest?: unknown; metrics?: unknown }
 
+const classOf = (m: DeltaMetric): string | null => (typeof m.class === 'string' && m.class !== '' ? m.class : null)
+
 /**
- * One class per department of the delta's metrics: red where any metric regresses, otherwise amber where some metric has
- * no value, unknown where none has, else green.
+ * One entry per class the delta's metrics name, in the order first named, those with none last: red where any metric
+ * regresses, otherwise amber where some metric has no value, unknown where none has, else green.
  */
 export function classesOf(metrics: readonly DeltaMetric[]): RetroClass[] {
   const by = new Map<string, DeltaMetric[]>()
   for (const m of metrics) {
-    const id = typeof m.id === 'string' ? m.id : ''
-    const cls = CLASS_OF[id] ?? 'other'
+    const cls = classOf(m) ?? UNCLASSIFIED
     by.set(cls, [...(by.get(cls) ?? []), m])
   }
-  return CLASS_ORDER.flatMap(id => {
-    const members = by.get(id)
-    if (members === undefined) return []
-    const regressing = members.filter(m => m.regressing === true).map(m => String(m.id))
-    const unavailable = members.filter(m => m.status !== 'ok').length
-    const rating: RetroClass['rating'] = regressing.length > 0 ? 'red' : unavailable === members.length ? 'unknown' : unavailable > 0 ? 'amber' : 'green'
-    return [{ id, rating, regressing, unavailable, total: members.length }]
-  })
+  return [...by]
+    .sort(([a], [b]) => Number(a === UNCLASSIFIED) - Number(b === UNCLASSIFIED))
+    .map(([id, members]) => {
+      const regressing = members.filter(m => m.regressing === true).map(m => String(m.id))
+      const unavailable = members.filter(m => m.status !== 'ok').length
+      const rating: RetroClass['rating'] = regressing.length > 0 ? 'red' : unavailable === members.length ? 'unknown' : unavailable > 0 ? 'amber' : 'green'
+      return { id, rating, regressing, unavailable, total: members.length }
+    })
 }
 
 /** The teams whose retro health is shown: the teams the session's focus is about. */
@@ -162,7 +156,11 @@ async function readRetroTeam($: EngineInterface, dir: string, team: string): Pro
     if (ran.exitCode !== 0) return none('retro unavailable', `${team}: ${ran.stderr.trim().split('\n').pop() || `ix-board exited ${ran.exitCode}`}`)
     const delta = JSON.parse(ran.stdout) as Delta
     if (!Array.isArray(delta.metrics)) return none('retro unavailable', `${team}: the delta has no metrics`)
-    return { view: { team, classes: classesOf(delta.metrics as DeltaMetric[]), latest: typeof delta.latest === 'string' ? delta.latest : null, reason: null }, error: null }
+    const metrics = delta.metrics as DeltaMetric[]
+    // Fewer than two snapshots make no delta, and an older ix-board names no class: neither is a failure.
+    if (metrics.length === 0) return none('no retro delta yet', null)
+    if (metrics.every(m => classOf(m) === null)) return none(NEEDS_CLASS, null)
+    return { view: { team, classes: classesOf(metrics), latest: typeof delta.latest === 'string' ? delta.latest : null, reason: null }, error: null }
   } catch (error) {
     return none('retro unavailable', `${team}: ${errorText(error)}`)
   }
@@ -172,6 +170,8 @@ async function readRetroTeam($: EngineInterface, dir: string, team: string): Pro
 export function pollRetro($: EngineInterface): Promise<boolean> {
   return track($, 'retro', async () => {
     try {
+      // Which teams are asked for is the session's scope, which waits for its identity.
+      await selectionReady()
       const now = await $.clock.now()
       const dir = `${await home($)}/.local/state/team-retro`
       const reads = await Promise.all(retroTeams().map(team => readRetroTeam($, dir, team)))
@@ -303,7 +303,7 @@ export function registerTeam(on: On, options: Options): void {
         </Box>
 
         {health.map(healthStrip)}
-        {health.length === 0 && <Text dimColor size="caption">Health: no retro baseline</Text>}
+        {health.length === 0 && <Text dimColor size="caption">{rmeta.at === null && rmeta.error === null ? 'Health: reading retro snapshots…' : 'Health: no team selected'}</Text>}
 
         {list.length === 0 && (
           <Box flexDirection="column" padding={1} backgroundColor={CARD_BG}>
