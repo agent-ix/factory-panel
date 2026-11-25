@@ -136,7 +136,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 
 ## 5. Verification
 
-Every acceptance criterion is verified by an automated test (`claude plugin test`), by inspection of the plugin source where the criterion says so, or by a demonstration in a real session of each layout (`tests/e2e/layouts.mjs`, driven through `tmux`). Tests bind to a criterion by carrying its id as a trace tag.
+Every acceptance criterion is verified by an automated test (`claude plugin test`), by inspection of the plugin source where the criterion says so, or by a demonstration in a real session of each layout (`tests/e2e/layouts.mjs`, and `tests/e2e/onscreen.mjs` for what is read on and off screen, driven through `tmux`). Tests bind to a criterion by carrying its id as a trace tag.
 
 ## 6. References
 
