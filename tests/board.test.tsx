@@ -290,7 +290,7 @@ test('a successful call for project P writes project:<id> with the aliases and a
 })
 
 test('a failing call for P with a record from 5 minutes ago draws P from it marked old and counts it in its initiative', async ($, on) => {
-  trace("FR-025-AC-2", "FR-017-AC-2")
+  trace("FR-025-AC-2", "FR-017-AC-2", "FR-006-AC-10")
   const w = world(on, true)
   seed(w, { [`project:${pid('P')}`]: record({ id: pid('P'), name: 'P', at_ms: T0 - 5 * MIN }) })
   ix(w, { roadmap: [{ name: 'A', projects: [{ name: 'P' }, { name: 'Q' }] }], projects: { P: 'P is broken', Q: project('Q', 1, 2) } })
@@ -793,4 +793,49 @@ test('a success after a name-only record replaces it with counts, and a name-onl
   const p = (await progress(w2, [proj(a)])).progress!
   expect(p.loose[0]).toMatchObject({ old: true, done: 10, name: 'FSL alpha release' })
   expect(saved(w2)[`project:${a}`].unknown).toBeUndefined()
+})
+
+// ---------------------------------------------------------------- rule 4c: the initiative named by the failing project
+
+const STABILITY = 'FSL stability: red main and blowups'
+const HARDENING_PROJECTS = ['FSL engine cross-checks', 'FSL example findings', 'FSL fuzz and mutation targets (later)', 'FSL L3: CLI contract tests', 'FSL L4: user journey tests', 'FSL L5: agent journey evals', 'FSL probability engine completion', 'FSL proof gate', 'FSL property tests', 'FSL protocol forms and partial-order reduction', 'FSL refinement, hyperproperties and composition', 'FSL residual language, checker and replay defects', 'FSL source-level program corpus', STABILITY, 'FSL standard conformance against the compiler', 'FSL test and gate trustworthiness', 'FSL timed, clock and hybrid forms', 'FSL untested requirements and catalogues']
+const chunkOf = (name: string) => out(JSON.stringify({ blocker_layers: [[]], goal: 'a goal', identifier: BAD, milestones: [], name, open_tickets: [] }))
+
+test('a failing initiative call that names a project, with no cache, takes the one roadmap initiative that lists that project, expands to its 18 projects by name and fails the named one alone', async ($, on) => {
+  trace("FR-021-AC-10")
+  const w = world(on, true)
+  const specs = HARDENING_PROJECTS.map((n, i) => project(n, i + 1, 40))
+  const b = ix(w, {
+    roadmap: [{ name: 'FSL Hardening', projects: HARDENING_PROJECTS.map(name => ({ name })) }, { name: 'FSL Completion', projects: [{ name: 'Other' }] }],
+    initiatives: { [HARD]: BAD_MILESTONE },
+    projects: { ...byName(specs), [STABILITY]: BAD_MILESTONE },
+    other: args => (args[0] === 'project-chunk' && args[1] === BAD ? chunkOf(STABILITY) : out('', 1, 'not stubbed')),
+  })
+  const shown = await progress(w, [initiative(HARD)])
+  const i = shown.progress!.initiatives[0]!
+  expect(i).toMatchObject({ name: 'FSL Hardening', failed: null, enumerated: 18, counted: 17, partial: true })
+  expect(i.projects.find(p => p.failed)!.name).toBe(STABILITY)
+  expect(b.calls.filter(c => c.startsWith('focus status --project '))).toHaveLength(18)
+  expect(b.calls).toContain(`project-chunk ${BAD}`)
+  expect(shown.progress!.warnings.map(x => x.name)).toEqual([STABILITY])
+  expect(saved(w).initiatives[HARD]).toMatchObject({ name: 'FSL Hardening' })
+  expect(saved(w).initiatives[HARD].projects).toHaveLength(18)
+  // The next refresh finds the cached name and membership, and the row reads FSL Hardening.
+  await w.clock!.advance(6 * MIN)
+  const again = await progress(w, [initiative(HARD)])
+  expect(again.progress!.initiatives[0]).toMatchObject({ name: 'FSL Hardening', enumerated: 18 })
+})
+
+test('with two roadmap initiatives that list the project, or none, the failing initiative is projects unknown', async ($, on) => {
+  trace("FR-021-AC-11")
+  const w = world(on, true)
+  ix(w, {
+    roadmap: [{ name: 'FSL Hardening', projects: [{ name: STABILITY }] }, { name: 'Another', projects: [{ name: STABILITY }] }],
+    initiatives: { [HARD]: BAD_MILESTONE },
+    other: args => (args[0] === 'project-chunk' ? chunkOf(STABILITY) : out('', 1, 'not stubbed')),
+  })
+  expect((await progress(w, [initiative(HARD)])).progress!.initiatives[0]).toMatchObject({ failed: 'projects unknown' })
+  const w2 = world(on, true)
+  ix(w2, { roadmap: [{ name: 'Elsewhere', projects: [{ name: 'Other' }] }], initiatives: { [HARD]: BAD_MILESTONE }, other: args => (args[0] === 'project-chunk' ? chunkOf(STABILITY) : out('', 1, 'not stubbed')) })
+  expect((await progress(w2, [initiative(HARD)])).progress!.initiatives[0]).toMatchObject({ failed: 'projects unknown' })
 })

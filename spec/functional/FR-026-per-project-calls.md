@@ -29,7 +29,8 @@ The mod SHALL request progress for one project per ix-board call, so that a proj
 - The mod SHALL keep the results of every other project when one project call fails.
 - Where an ix-board call fails with a source error of [FR-016](./FR-016-isolated-selectors.md), the mod SHALL make no further ix-board call in that refresh.
 - Where a Linear rate limit names a retry time, the mod SHALL make no ix-board call before that time.
-- The mod SHALL make at most `R + U + P` ix-board calls in one refresh, where R is 1 with an initiative selector and 0 without, U is the count of rule 3 calls of [FR-021](./FR-021-initiative-expansion.md), and P is the count of distinct project refs not answered by a rule 3 call.
+- The mod SHALL ask `ix-board --json project-chunk <ref>` once for a project whose call failed and that no record or cached membership has named, and keep the name in the record of the project.
+- The mod SHALL make at most `R + U + P + C` ix-board calls in one refresh, where R is 1 with an initiative selector and 0 without, U is the count of rule 3 calls of [FR-021](./FR-021-initiative-expansion.md), P is the count of distinct project refs not answered by a rule 3 call, and C is the count of `project-chunk` calls of this requirement and of rule 4c of FR-021.
 - The mod SHALL run at most 4 ix-board processes at once per session.
 - The mod SHALL give each ix-board call a timeout of 20 seconds.
 - The mod SHALL end the refresh at the 60 second budget of [FR-016](./FR-016-isolated-selectors.md).
@@ -50,7 +51,7 @@ Note: `ix-board focus status --help` states that `--project` accepts a UUID, an 
 | FR-026-AC-5 | Given a call exits with stderr `authentication failed`, the mod shows one ix-board error and makes no further call in that refresh. | Test |
 | FR-026-AC-6 | Given a call exits with `Linear rate limited; retry in 60s`, the mod shows one ix-board error, makes no further call, and makes no call for 60 seconds. | Test |
 | FR-026-AC-7 | Given 10 distinct project selectors and no initiative, at most 10 calls are made. | Test |
-| FR-026-AC-8 | Given one initiative answered by the roadmap, two initiatives needing rule 3 calls and 3 listed projects, at most 1 + 2 + 3 calls are made. | Test |
+| FR-026-AC-8 | Given one initiative answered by the roadmap, two initiatives needing rule 3 calls and 3 listed projects, at most 1 + 2 + 3 calls are made, and each `project-chunk` call is one more. | Test |
 | FR-026-AC-9 | Given two focuses with many projects, no more than 4 ix-board processes run at once across both. | Test |
 | FR-026-AC-10 | Given a project unanswered at the 20 second call timeout or at the 60 second budget, that project is failed with `timed out` and the other projects are drawn. | Test |
 | FR-026-AC-11 | Given a project renamed since its record was written, the answer's `projects[].id` matches the record, the record is replaced, and the row shows the new name. | Test |

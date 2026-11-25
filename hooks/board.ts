@@ -8,7 +8,7 @@ import { after, errorText } from './shared'
 
 // Progress of a focus: one `ix-board focus status` call per project, so a project with bad data fails
 // alone. An initiative is first expanded to its projects (the roadmap, one initiative call, or the
-// membership cached in progress.json), the projects are called by id, and the answers are rolled up.
+// membership remembered in progress.json), the projects are called by id, and the answers are rolled up.
 
 export type SelectorKind = 'initiative' | 'project' | 'milestone' | 'ticket'
 
@@ -86,7 +86,7 @@ export type Expansion = {
   /** the id when the selector is a UUID, else the name */
   collapseKey: string
   name: string
-  via: 'roadmap' | 'rule3' | 'cache' | 'none'
+  via: 'roadmap' | 'rule3' | 'memory' | 'none'
   /** Set when the initiative could not be expanded: `projects unknown` or `initiative not found`. */
   reason: string | null
   error: string | null
@@ -195,12 +195,12 @@ function matchRoadmap(list: RoadmapInitiative[], ref: string): RoadmapInitiative
   return list.find(i => (text(i.id) && same(i.id, ref)) || (text(i.identifier) && same(i.identifier, ref))) ?? list.find(i => i.name === ref)
 }
 
-/** An initiative's expansion from the membership cached for it, or none. */
-export function expandFromCache(s: Selector, cache: Initiatives, why: string | null): Expansion {
-  const cached: Membership | undefined = cache[s.ref]
+/** An initiative's expansion from the membership remembered for it, or none. */
+export function expandFromCache(s: Selector, memory: Initiatives, why: string | null): Expansion {
+  const remembered: Membership | undefined = memory[s.ref]
   const collapseKey = isUuid(s.ref) ? s.ref : (s.label ?? s.ref)
-  if (cached === undefined) return { key: selectorKey(s), collapseKey, name: isUuid(s.ref) ? initiativeName(s) : (s.label ?? s.ref), via: 'none', reason: why === NOT_FOUND ? NOT_FOUND : PROJECTS_UNKNOWN, error: null, projects: [] }
-  return { key: selectorKey(s), collapseKey, name: s.label ?? cached.name ?? initiativeName(s), via: 'cache', reason: null, error: null, projects: cached.projects.map(p => ({ ref: p.id !== '' ? p.id : p.name, id: p.id, name: p.name })) }
+  if (remembered === undefined) return { key: selectorKey(s), collapseKey, name: isUuid(s.ref) ? initiativeName(s) : (s.label ?? s.ref), via: 'none', reason: why === NOT_FOUND ? NOT_FOUND : PROJECTS_UNKNOWN, error: null, projects: [] }
+  return { key: selectorKey(s), collapseKey, name: s.label ?? remembered.name ?? initiativeName(s), via: 'memory', reason: null, error: null, projects: remembered.projects.map(p => ({ ref: p.id !== '' ? p.id : p.name, id: p.id, name: p.name })) }
 }
 
 const initiativeName = (s: Selector): string => s.label ?? `initiative ${short(s.ref)}`
@@ -215,7 +215,7 @@ const argv = (args: string[]): string[] => ['ix-board', '--json', ...args]
  * saying nothing before its first call timed out) stops every further call.
  */
 export async function refreshProgress($: EngineInterface, selectors: readonly Selector[], file: ProgressFile, endsAt?: number): Promise<Refresh> {
-  const cache = file.initiatives
+  const memory = file.initiatives
   const deadline = endsAt ?? (await $.clock.now()) + REFRESH_BUDGET_MS
   const outcomes: Record<string, Outcome> = {}
   let sourceError: string | null = null
@@ -335,12 +335,31 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
             if (text(p.name) && Array.isArray(p.also_in) && (p.also_in as unknown[]).includes(matched.name) && !projects.some(q => q.name === p.name))
               projects.push({ ref: text(p.id) ? p.id : text(p.identifier) ? p.identifier : p.name, id: text(p.id) ? p.id : '', name: p.name })
         expansions.push({ key: selectorKey(s), collapseKey: isUuid(s.ref) ? s.ref : String(matched.name), name: s.label ?? String(matched.name), via: 'roadmap', reason: null, error: null, projects })
-      } else if (roadmap === null) expansions.push(expandFromCache(s, cache, null))
+      } else if (roadmap === null) expansions.push(expandFromCache(s, memory, null))
       else if (isUuid(s.ref) || IDENTIFIER.test(s.ref)) pending.push(s)
-      else expansions.push(expandFromCache(s, cache, NOT_FOUND))
+      else expansions.push(expandFromCache(s, memory, NOT_FOUND))
     }
 
-    // Rule 3: one initiative call for each selector the roadmap cannot place; its projects come with their progress.
+    /** The roadmap initiative that holds the project an initiative call's error names, when exactly one does. */
+  const identify = async (s: Selector, error: string, list: RoadmapInitiative[]): Promise<Expansion | null> => {
+    const named = /in project ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(error)
+    if (named === null) return null
+    const chunk = await ask(['project-chunk', named[1]!])
+    if (!chunk.ok) return null
+    let name: unknown
+    try {
+      name = (JSON.parse(chunk.stdout) as { name?: unknown }).name
+    } catch {
+      return null
+    }
+    if (!text(name)) return null
+    const holders = list.filter(i => projectsOf(i).some(p => p.name === name))
+    if (holders.length !== 1) return null
+    const found = holders[0]!
+    return { key: selectorKey(s), collapseKey: isUuid(s.ref) ? s.ref : String(found.name), name: s.label ?? String(found.name), via: 'roadmap', reason: null, error: null, projects: projectsOf(found) }
+  }
+
+  // Rule 3: one initiative call for each selector the roadmap cannot place; its projects come with their progress.
     const third = new Map<string, Expansion>()
     await all(
       pending.map(async s => {
@@ -350,7 +369,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
           try {
             status = parse(result.stdout)
           } catch {
-            // falls through to the cache below
+            // falls through to the memory below
           }
           if (status !== null) {
             const rows = rowsOf(status, false)
@@ -367,12 +386,14 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
           }
         }
         const error = result.ok ? 'ix-board printed text that is not JSON' : result.error
-        const cached = expandFromCache(s, cache, NOT_FOUND_TEXT.test(error) ? NOT_FOUND : null)
-        third.set(selectorKey(s), { ...cached, error })
+        const remembered = expandFromCache(s, memory, NOT_FOUND_TEXT.test(error) ? NOT_FOUND : null)
+        // Rule 4c: the error names the project with the dangling milestone; the initiative that holds a project of that name is this one.
+        const identified = remembered.via === 'none' && roadmap !== null ? await identify(s, error, roadmap) : null
+        third.set(selectorKey(s), identified ?? { ...remembered, error })
       }),
     )
-    for (const s of pending) expansions.push(third.get(selectorKey(s)) ?? { ...expandFromCache(s, cache, null), error: 'timed out' })
-  } else for (const s of initiatives) expansions.push(expandFromCache(s, cache, null))
+    for (const s of pending) expansions.push(third.get(selectorKey(s)) ?? { ...expandFromCache(s, memory, null), error: 'timed out' })
+  } else for (const s of initiatives) expansions.push(expandFromCache(s, memory, null))
 
   // Each distinct project is called once, whichever selectors list it, unless an initiative call answered it already.
   const refs = new Set<string>()
@@ -434,15 +455,15 @@ export function recordsOf(refresh: Refresh | null, now: number, existing: Record
 }
 
 /** The membership this refresh writes for each initiative it resolved, and the one it used again (seen now). */
-export function membershipsOf(selectors: readonly Selector[], refresh: Refresh | null, cache: Initiatives, now: number): Initiatives {
+export function membershipsOf(selectors: readonly Selector[], refresh: Refresh | null, memory: Initiatives, now: number): Initiatives {
   const mine: Initiatives = {}
   if (refresh === null) return mine
   for (const s of selectors) {
     if (s.kind !== 'initiative') continue
     const e = refresh.expansions.find(x => x.key === selectorKey(s))
     if (e === undefined) continue
-    if (e.via === 'cache') {
-      if (cache[s.ref] !== undefined) mine[s.ref] = { ...cache[s.ref]!, seen_ms: now }
+    if (e.via === 'memory') {
+      if (memory[s.ref] !== undefined) mine[s.ref] = { ...memory[s.ref]!, seen_ms: now }
       continue
     }
     if (e.via === 'none') continue

@@ -30,7 +30,11 @@ A failing expansion SHALL NOT affect any other selector.
 - Rule 3: where the selector is a UUID or an identifier and the roadmap has no match, the mod SHALL make one `ix-board --json focus status --initiative <ref>` call.
 - Under rule 3 the mod SHALL take the projects, with their progress, from `projects[]` of that answer.
 - Rule 4: where the rule 3 call fails, the mod SHALL expand the initiative from the membership cached by [FR-025](./FR-025-per-project-last-good.md) for it.
-- Rule 5: where the rule 3 call fails and no membership is cached, the mod SHALL draw the initiative row as failed with `projects unknown`.
+- Rule 4c: where the rule 3 call fails with an error that names a project as `in project <project-uuid>` and no membership is cached, the mod SHALL ask `ix-board --json project-chunk <project-uuid>` for the name of that project.
+- Under rule 4c the mod SHALL take the roadmap initiative that lists a project of exactly that name as the identity of the initiative, only where exactly one roadmap initiative does.
+- Under rule 4c the mod SHALL expand the initiative to the projects of that roadmap initiative, call each by name, and store its name and project list in the `initiatives` key of `progress.json` under the selector.
+- Under rule 4c a project whose call fails SHALL fail alone and be drawn with its name and no counts.
+- Rule 5: where the rule 3 call fails, rule 4c does not resolve the initiative and no membership is cached, the mod SHALL draw the initiative row as failed with `projects unknown`.
 - Rule 4b: the mod SHALL call each project that the focus lists directly, individually and whether or not any initiative can be expanded.
 - The mod SHALL draw a directly listed project with its counts when its initiative is failed with `projects unknown`.
 - The mod SHALL show `initiative not found` only where the roadmap has no match, the rule 3 call reports the initiative as not found, and no membership is cached.
@@ -53,6 +57,8 @@ Note: a lead's scope holds initiative and project UUIDs while the roadmap lists 
 | FR-021-AC-7 | Given the roadmap has no match, the rule 3 call reports not found and no membership is cached, the row reads `initiative not found`. | Test |
 | FR-021-AC-8 | Given the roadmap call fails, each initiative is drawn from its cached membership or as failed `projects unknown`, and with a source error no project call is made. | Test |
 | FR-021-AC-9 | Given an initiative failed with `projects unknown` and two projects listed directly, both projects are called individually and drawn with their counts. | Test |
+| FR-021-AC-10 | Given the rule 3 call for a UUID fails with `issue QSL-3236 references unavailable milestone m1 in project p1`, no membership is cached, `project-chunk p1` names the project `Stability` and exactly one roadmap initiative `Hardening` lists a project of that name, the card draws `Hardening` with all its projects called by name, the project `Stability` fails alone with its name, and `progress.json` holds `Hardening` as the name of the initiative. | Test |
+| FR-021-AC-11 | Given the same failure and two roadmap initiatives that list a project of that name, or none, the initiative is drawn failed with `projects unknown`. | Test |
 
 ## Dependencies
 

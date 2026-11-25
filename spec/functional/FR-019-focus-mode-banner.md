@@ -18,17 +18,19 @@ The mod SHALL state in one line why the focuses it shows are shown.
 
 ## Behavior
 
-- The Focus pane SHALL draw the line as its first line.
+- The Focus pane SHALL state the line in the footer warning expansion.
+- `/factory show` SHALL print the line as its banner line.
+- The card body SHALL NOT carry the line.
 - `/factory show` SHALL print the same line.
 - The mod SHALL choose the reason by the first of these that holds: 1, a focus name was chosen by the user or by a declaration, matched or not, with the line `your choice: <name>`; 2, the session is not identified, with the line `could not tell who this session is, showing every focus`, which also covers the keywords `own` and `team`; 3, the focus scope is `own` and an entry exists whose address is the session's own address, with the line `own focus`; 4, the focus scope is `team`, with the line `team focuses`; 5, otherwise, with the line `no focus reported, showing the whole team`.
-- Where a chosen name matched nothing, the Focus pane SHALL add a separate warning line `no focus matches "<name>"`.
+- Where a chosen name matched nothing, the Focus view SHALL add a separate line `no focus matches "<name>"` in the same places.
 - The line SHALL name exactly one reason.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-019-AC-1 | Given `/factory focus Release Train` that matches a lead summary and an identified session, the first line of the Focus pane and of `/factory show` is `your choice: Release Train`. | Test |
+| FR-019-AC-1 | Given `/factory focus Release Train` that matches a lead summary and an identified session, `/factory show` has the line `your choice: Release Train`. | Test |
 | FR-019-AC-2 | Given the default scope and an identified session with a focus entry, the line is `own focus`. | Test |
 | FR-019-AC-3 | Given focus `team` and an identified session, the line is `team focuses`. | Test |
 | FR-019-AC-4 | Given an identified session whose team has no focus entry, the line is `no focus reported, showing the whole team`. | Test |
