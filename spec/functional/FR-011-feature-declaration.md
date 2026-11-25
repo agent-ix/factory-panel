@@ -16,7 +16,7 @@ A skill SHALL select features by instructing its agent to write a declaration fi
 
 ## Behavior
 
-- The declaration file for a session SHALL be `~/.ix/factory-panel/features/<key>.json`, where `<key>` is the output of `agent-msg whoami` with every `:` replaced by `_`, or `default` when the session has no placement.
+- The declaration file for a session SHALL be `~/.ix/factory-panel/features/<key>.json`, where `<key>` is the output of `agent-msg whoami` with every `:` replaced by `_`, or `default` when the session has no placement, after which every character outside `[A-Za-z0-9_.-]` is replaced by `_`.
 - The mod SHALL read the file named by its own key.
 - Where that file does not exist, the mod SHALL read `default.json`.
 - The mod SHALL NOT use the working directory as part of the key.
@@ -47,6 +47,7 @@ A skill SHALL select features by instructing its agent to write a declaration fi
 | FR-011-AC-8 | Given no `~/.ix/factory-panel` directory, the band shows the fallback modules, no note, and the mod creates no directory. | Test |
 | FR-011-AC-9 | Given sessions `host1:QSL:code` and `host2:ENG:plan` with different files, each band follows its own file. | Test |
 | FR-011-AC-10 | Given a file for the session's key and a `default.json`, the band follows the key's file, and with the key's file removed it follows `default.json`. | Test |
+| FR-011-AC-12 | Given the address `host1:QSL:../../x`, the key contains only characters of `[A-Za-z0-9_.-]` and the file read lies directly inside `~/.ix/factory-panel/features/`. | Test |
 | FR-011-AC-11 | The snippet in `/factory help` parses as a file the mod accepts and names the path for this session's key. | Test |
 
 ## Dependencies

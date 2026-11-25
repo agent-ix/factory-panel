@@ -19,7 +19,7 @@ relationships:
 
 ## Statement
 
-The mod SHALL draw the band within 5 seconds of an `agent-msg` call that does not return, and when a declaration or choice file is missing or malformed.
+The mod SHALL paint the band first from the fallback within the first-paint target of [NFR-001](./NFR-001-first-paint.md), update it when `agent-msg` answers, give up on an `agent-msg` call after 5 seconds, and draw it when a declaration or choice file is missing or malformed.
 
 ## Measurement and Evaluation
 
@@ -30,7 +30,7 @@ The mod SHALL draw the band within 5 seconds of an `agent-msg` call that does no
 
 ## Verification
 
-A test replaces `agent-msg` with a command that never returns and asserts the band is drawn from the fallback within 5 seconds and says the identity is unknown; a second test draws the band with a missing and a malformed declaration file and a malformed choice file.
+A test replaces `agent-msg` with a command that never returns and asserts the band paints from the fallback within the NFR-001 target and the lookup is abandoned after 5 seconds and says the identity is unknown; a second test draws the band with a missing and a malformed declaration file and a malformed choice file.
 
 ## Dependencies
 

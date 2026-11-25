@@ -33,6 +33,7 @@ The mod SHALL decide each feature from the highest source that selects it.
 | FR-012-AC-2 | Given a user choice of modules and a declaration naming a focus scope, the band shows the user's modules at the declared scope. | Test |
 | FR-012-AC-3 | Given a declaration with `teams` of ENG and the relay address `host1:QSL:code`, lanes shows team ENG. | Test |
 | FR-012-AC-4 | Given nothing selected and the relay address `host1:QSL:code` with status from `agent-msg work`, the focus and lead cells show that status. | Test |
+| FR-012-AC-6 | Given a user choice of `teams` or `hosts` and a declaration naming other values, the band uses the user's values. | Test |
 | FR-012-AC-5 | A plain `/factory` in a session with nothing selected asks no question. | Test |
 
 ## Dependencies
