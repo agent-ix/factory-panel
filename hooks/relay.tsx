@@ -2,15 +2,18 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Announcement, RelayMeta } from '../types'
-import { CARD_BG, ago, errorText, runText } from './shared'
+import { ago, errorText, runText } from './shared'
 import type { Options } from './shared'
 import { track } from './schedule'
 
-// The Relay pane: the broadcast channel through `agent-msg`. Escalations have their own pane.
+// The Message pane (view id `relay`): a message to one lead or all of them, through `agent-msg`.
+// Escalations have their own pane.
 // A send takes a second press to confirm, and reports what the relay answered.
 
 const PANE = 'relay'
-const TITLE = 'Relay'
+const TITLE = 'Message'
+/** The width of the To column. */
+const FIELD = 9
 export const PANE_SPEC = { id: PANE, title: TITLE }
 
 const announcements = atom({ plugin: 'factory-panel', key: 'announcements' } as const, [] as Announcement[], {
@@ -149,64 +152,70 @@ export function registerRelay(on: On, _options: Options): void {
     }
 
     const targets = ['all', ...leads]
+    const width = Math.max(20, e.props.bodyColumns ?? 60)
+    const rule = (key: string) => (
+      <Text key={key} dimColor wrap="truncate-end">
+        {'─'.repeat(width)}
+      </Text>
+    )
 
     return (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-          <Text weight="semibold" size="heading">
-            Relay
-          </Text>
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="flex-end">
           <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollRelay($)} />
         </Box>
 
-        <Box flexDirection="column" gap={1} padding={1} backgroundColor={CARD_BG}>
-          <Text weight="semibold">Announce</Text>
+        {rule('rule-above-to')}
+        <Box flexDirection="row">
+          <Box width={FIELD}>
+            <Text dimColor>To</Text>
+          </Box>
           <Select
             key="target"
-            label="To"
             value={target}
             options={targets.map(t => ({ value: t, label: t === 'all' ? 'every lead' : t }))}
             onSelect={value => void setTarget($, value)}
           />
-          <Input
-            key="announce"
-            placeholder="Message to send over the relay"
-            value={announce}
-            rows={2}
-            submitLabel="Send"
-            onInput={value => void setAnnounce($, value)}
-            onSubmit={() => void sendAnnouncement($)}
-          />
-          <Box flexDirection="row" gap={1}>
-            <Button
-              key="send"
-              variant="primary"
-              label={confirm === `send:${target}` ? `Confirm send to ${target === 'all' ? 'every lead' : target}` : 'Send'}
-              onPress={() => void sendAnnouncement($)}
-            />
-            {confirm.startsWith('send:') && <Button key="cancel-send" plain label="cancel" onPress={() => void cancelArmed($)} />}
-          </Box>
-          {posts.length > 0 && (
-            <Box flexDirection="column">
-              <Text dimColor size="caption">
-                Recent broadcasts
-              </Text>
-              {posts.slice(0, 8).map((p, i) => (
-                <Box key={`post-${i}`} flexDirection="row" gap={1}>
-                  <Text dimColor size="caption" tabular>
-                    {p.at}
-                  </Text>
-                  <Text dimColor size="caption">
-                    {p.from}
-                  </Text>
-                  <Text size="caption" wrap="truncate-end">
-                    {p.text}
-                  </Text>
-                </Box>
-              ))}
-            </Box>
-          )}
         </Box>
+        {rule('rule-below-to')}
+
+        <Input
+          key="announce"
+          placeholder="Type your message…"
+          value={announce}
+          rows={2}
+          submitLabel="Send"
+          onInput={value => void setAnnounce($, value)}
+          onSubmit={() => void sendAnnouncement($)}
+        />
+        <Box flexDirection="row" gap={1}>
+          <Button
+            key="send"
+            variant="primary"
+            label={confirm === `send:${target}` ? `Confirm send to ${target === 'all' ? 'every lead' : target}` : 'Send'}
+            onPress={() => void sendAnnouncement($)}
+          />
+          {confirm.startsWith('send:') && <Button key="cancel-send" plain label="cancel" onPress={() => void cancelArmed($)} />}
+        </Box>
+
+        {posts.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            {rule('rule-history')}
+            {posts.slice(0, 8).map((p, n) => (
+              <Box key={`post-${n}`} flexDirection="row" gap={1}>
+                <Text dimColor size="caption" tabular>
+                  {p.at}
+                </Text>
+                <Text dimColor size="caption">
+                  {p.from}
+                </Text>
+                <Text size="caption" wrap="truncate-end">
+                  {p.text}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        )}
 
         <Box flexDirection="row" justifyContent="space-between">
           <Text size="caption">{said}</Text>

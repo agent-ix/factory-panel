@@ -15,6 +15,9 @@ import { ACCENT, DOING } from './ui/glyphs'
 const PANE = 'escalations'
 const TITLE = 'Escalations'
 export const PANE_SPEC = { id: PANE, title: TITLE }
+/** The use button: a light blue arrow on a muted blue that stays quiet against the pane. */
+const USE_BG = '#26384c'
+const USE_FG = '#7fb2e0'
 /** Rows drawn at once; bulk actions still cover the rest. */
 const MAX_ROWS = 50
 
@@ -80,7 +83,8 @@ export function parseEscalationList(text: string): Escalation[] {
     out.push({
       id,
       status: status as EscalationStatus,
-      ticket: ticket ?? '',
+      // The listing writes `-` where there is no ticket.
+      ticket: ticket && ticket !== '-' ? ticket : '',
       lead: lead ?? '',
       filed: `${date ?? ''} ${time ?? ''}`.trim(),
       machine: '',
@@ -559,6 +563,32 @@ function filedAgo(filed: string, now: number): string {
   return ago(at.getTime(), now)
 }
 
+const ORDER = /^Order \S+ from (\S+) to (\S+) reached its ack deadline without an Acted receipt \(last receipt: ([^)]+)\)\.(?: It expects ticket (\S+?)\.(?:\s|$))?/
+
+/** A row's title and the text under it. An order nobody acted on is named for what it is: it has no ticket of its own. */
+function headline(x: Escalation): { title: string; summary: string } {
+  const order = x.kind === 'order' ? ORDER.exec(x.context) : null
+  if (!order) return { title: x.ticket || x.id, summary: x.context }
+  const [, from, to, receipt, ticket] = order
+  return { title: ['Unacked order', ticket ?? x.ticket].filter(Boolean).join(' · '), summary: `${from} → ${to} (${receipt})` }
+}
+
+/** Wraps text to `width` columns and keeps `max` lines, ending the last with an ellipsis when text is left over. */
+export function clampLines(text: string, width: number, max: number): string[] {
+  const lines: string[] = []
+  let rest = text.replace(/\s+/g, ' ').trim()
+  while (rest && lines.length < max) {
+    if (rest.length <= width) return [...lines, rest]
+    const space = rest.lastIndexOf(' ', width)
+    const cut = space > 0 ? space : width
+    lines.push(rest.slice(0, cut))
+    rest = rest.slice(cut).trimStart()
+  }
+  const last = lines.pop()
+  if (last !== undefined) lines.push(rest ? `${last.slice(0, width - 1).trimEnd()}…` : last)
+  return lines
+}
+
 /** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
 export async function startEscalations($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'escalations', description: 'Same as /factory escalations' })
@@ -608,15 +638,35 @@ export function registerEscalations(on: On, _options: Options): void {
     const mark = (s: EscalationStatus) => (s === 'waiting' ? '▲' : s === 'investigating' ? '◐' : '✓')
     const markColor = (s: EscalationStatus) => (s === 'waiting' ? 'warning' : s === 'investigating' ? DOING : ACCENT)
 
+    const width = Math.max(20, e.props.bodyColumns ?? 60)
+    const rule = (key: string) =>
+      isTerminal ? (
+        <Text key={key} dimColor wrap="truncate-end">
+          {'─'.repeat(width)}
+        </Text>
+      ) : null
+    const heading = (text: string) => (
+      <Text weight="semibold" size="caption">
+        {text}
+      </Text>
+    )
+
+    // Copies a text into the decision field. The label names the control; a blue arrow on a muted blue block is what is drawn.
+    const useButton = (key: string, text: string) => (
+      <Button key={key} plain label="use" onPress={() => void useText($, text)}>
+        <Text backgroundColor={USE_BG} color={USE_FG} weight="bold">
+          {' ➜ '}
+        </Text>
+      </Button>
+    )
+
     const detail = (x: Escalation) => (
-      <Box flexDirection="column" gap={isTerminal ? 0 : 1} paddingLeft={2} paddingTop={isTerminal ? 0 : 1}>
+      <Box flexDirection="column" gap={1} paddingLeft={2} paddingTop={1} paddingBottom={isTerminal ? 1 : 0}>
         <Text>{x.context || 'No context was recorded.'}</Text>
 
         {x.options.length > 0 && (
           <Box flexDirection="column">
-            <Text dimColor size="caption">
-              Options
-            </Text>
+            {heading('Options')}
             {x.options.map((o, i) => (
               <Box key={`opt-${x.id}-${i}`} flexDirection="row" gap={1}>
                 <Text dimColor>{i + 1}.</Text>
@@ -624,7 +674,7 @@ export function registerEscalations(on: On, _options: Options): void {
                   <Text>{o}</Text>
                 </Box>
                 {x.status !== 'resolved' && (
-                  <Button key={`use-${x.id}-${i}`} plain label="use" onPress={() => void useText($, o)} />
+                  useButton(`use-${x.id}-${i}`, o)
                 )}
               </Box>
             ))}
@@ -634,11 +684,9 @@ export function registerEscalations(on: On, _options: Options): void {
         {x.recommendation && (
           <Box flexDirection="column">
             <Box flexDirection="row" gap={1}>
-              <Text dimColor size="caption">
-                Recommended
-              </Text>
+              {heading('Recommended')}
               {x.status !== 'resolved' && (
-                <Button key={`rec-${x.id}`} plain label="use" onPress={() => void useText($, x.recommendation)} />
+                useButton(`rec-${x.id}`, x.recommendation)
               )}
             </Box>
             <Text>{x.recommendation}</Text>
@@ -647,9 +695,7 @@ export function registerEscalations(on: On, _options: Options): void {
 
         {x.status === 'resolved' ? (
           <Box flexDirection="column">
-            <Text dimColor size="caption">
-              Decision
-            </Text>
+            {heading('Decision')}
             <Text>{x.decision || 'Recorded without text.'}</Text>
           </Box>
         ) : (
@@ -707,52 +753,73 @@ export function registerEscalations(on: On, _options: Options): void {
     )
 
     // One row's actions: resolve with the recommendation (open rows that have one) and hide, or restore.
-    const actions = (x: Escalation) => (
-      <Box flexDirection="row" gap={isTerminal ? 2 : 1}>
-        {filter === 'hidden' ? (
-          <Button key={`restore-${x.id}`} plain={isTerminal ? true : undefined} label="Restore" onPress={() => void restoreOne($, x.id)} />
-        ) : (
-          <>
-            {isOpen(x) && x.recommendation && isBusy(x.id) && <Text dimColor>resolving…</Text>}
-            {isOpen(x) && x.recommendation && !isBusy(x.id) && (
-              <Button
-                key={`quick-${x.id}`}
-                plain={isTerminal ? true : undefined}
-                variant={isTerminal ? undefined : 'primary'}
-                label={isTerminal ? '✓ resolve' : 'Resolve'}
-                onPress={() => void resolveRecommended($, x.id)}
-              />
-            )}
-            <Button key={`hide-${x.id}`} plain={isTerminal ? true : undefined} label="Hide" onPress={() => void hideOne($, x.id)} />
-          </>
-        )}
-      </Box>
-    )
-
-    const row = (x: Escalation) => (
-      <Box
-        key={x.id}
-        flexDirection="column"
-        padding={isTerminal ? 0 : 1}
-        backgroundColor={isTerminal ? undefined : selected === x.id ? CARD_BG_OPEN : CARD_BG}
-      >
-        <Box flexDirection="row" gap={1} alignItems="center">
-          <Text color={markColor(x.status)}>{mark(x.status)}</Text>
-          <Button key={`sel-${x.id}`} plain label={x.ticket || x.id} onPress={() => void selectEscalation($, x.id)} />
-          <Box flexGrow={1} />
-          <Text dimColor size="caption" wrap="truncate-end">
-            {[isTerminal ? '' : x.machine, isTerminal ? '' : x.kind, filedAgo(x.filed, now)].filter(Boolean).join(' · ')}
-          </Text>
+    // Each is a direct child of the row: a fragment around them draws them one under the other.
+    const actions = (x: Escalation) => {
+      const canResolve = filter !== 'hidden' && isOpen(x) && Boolean(x.recommendation)
+      return (
+        <Box key={`actions-${x.id}`} flexDirection="row" flexShrink={0} gap={isTerminal ? 2 : 1}>
+          {filter === 'hidden' && (
+            <Button key={`restore-${x.id}`} plain={isTerminal ? true : undefined} label={isTerminal ? 'restore' : 'Restore'} onPress={() => void restoreOne($, x.id)} />
+          )}
+          {canResolve && isBusy(x.id) && <Text dimColor>resolving…</Text>}
+          {canResolve && !isBusy(x.id) && (
+            <Button
+              key={`quick-${x.id}`}
+              plain={isTerminal ? true : undefined}
+              variant={isTerminal ? undefined : 'primary'}
+              label={isTerminal ? '✓ resolve' : 'Resolve'}
+              onPress={() => void resolveRecommended($, x.id)}
+            />
+          )}
+          {filter !== 'hidden' && (
+            <Button key={`hide-${x.id}`} plain={isTerminal ? true : undefined} label={isTerminal ? 'hide' : 'Hide'} onPress={() => void hideOne($, x.id)} />
+          )}
         </Box>
-        {selected !== x.id && x.context && (
-          <Text dimColor size="footnote" wrap="truncate-end">
-            {x.context}
-          </Text>
-        )}
-        {selected === x.id && detail(x)}
-        {actions(x)}
-      </Box>
-    )
+      )
+    }
+
+    // A closed row: what is asked in two lines, and what a one-press resolve would send (or what was decided).
+    const preview = (x: Escalation, summary: string) => {
+      const answer = isOpen(x) ? x.recommendation : x.decision
+      return (
+        <Box flexDirection="column" paddingLeft={2}>
+          {clampLines(summary, width - 4, 2).map((line, i) => (
+            <Text key={`sum-${x.id}-${i}`} dimColor size="footnote" wrap="truncate-end">
+              {line}
+            </Text>
+          ))}
+          {answer && (
+            <Text key={`answer-${x.id}`} size="footnote" wrap="truncate-end">
+              {clampLines(`${isOpen(x) ? '→' : '✓'} ${answer}`, width - 4, 1)[0]}
+            </Text>
+          )}
+        </Box>
+      )
+    }
+
+    const row = (x: Escalation) => {
+      const { title, summary } = headline(x)
+      return (
+        <Box
+          key={x.id}
+          flexDirection="column"
+          padding={isTerminal ? 0 : 1}
+          backgroundColor={isTerminal ? undefined : selected === x.id ? CARD_BG_OPEN : CARD_BG}
+        >
+          {rule(`rule-${x.id}`)}
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text color={markColor(x.status)}>{mark(x.status)}</Text>
+            <Button key={`sel-${x.id}`} plain label={title} onPress={() => void selectEscalation($, x.id)} />
+            <Text dimColor size="caption" wrap="truncate-end">
+              {['', x.machine, isTerminal ? '' : x.kind, filedAgo(x.filed, now)].filter((part, i) => i === 0 || part).join(' · ').trim()}
+            </Text>
+            <Box flexGrow={1} />
+            {actions(x)}
+          </Box>
+          {selected === x.id ? detail(x) : preview(x, summary)}
+        </Box>
+      )
+    }
 
     const filterButton = (f: EscalationFilter) => (
       <Button
@@ -771,25 +838,21 @@ export function registerEscalations(on: On, _options: Options): void {
     return (
       <Box flexDirection="column" gap={isTerminal ? 0 : 1}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text weight="semibold" size="heading" color={isTerminal ? ACCENT : undefined}>
-              Escalations
-            </Text>
-            <Text color={waiting > 0 ? 'warning' : 'subtle'} size="caption">
-              {waiting} waiting
-            </Text>
-          </Box>
+          <Text color={waiting > 0 ? 'warning' : 'subtle'} weight="semibold">
+            {waiting} waiting
+          </Text>
           <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollEscalations($)} />
         </Box>
 
-        <Box flexDirection="row" gap={1} flexWrap="wrap">
-          {filterButton('open')}
-          {filterButton('resolved')}
-          {filterButton('hidden')}
-        </Box>
+        <Box flexDirection="row" justifyContent="space-between" columnGap={2} flexWrap="wrap">
+          <Box flexDirection="row" gap={1}>
+            {filterButton('open')}
+            {filterButton('resolved')}
+            {filterButton('hidden')}
+          </Box>
 
         {filter !== 'hidden' && shown.length > 0 && (
-          <Box flexDirection="row" gap={2} flexWrap="wrap">
+          <Box flexDirection="row" gap={2}>
             <Button key="hide-all" plain={isTerminal ? true : undefined} label={`Hide all ${shown.length}`} onPress={() => void hideAll($)} />
             {filter === 'open' && busy.includes('all') && <Text dimColor>resolving…</Text>}
             {filter === 'open' && !busy.includes('all') && (
@@ -803,6 +866,7 @@ export function registerEscalations(on: On, _options: Options): void {
             {bulkArmed && <Button key="cancel-bulk" plain label="cancel" onPress={() => void cancelArmed($)} />}
           </Box>
         )}
+        </Box>
         {bulkArmed && (
           <Text color="warning" size="caption">
             Resolve {withRec} {withRec === 1 ? 'escalation' : 'escalations'} with {withRec === 1 ? 'its' : 'each one’s'} recommendation
