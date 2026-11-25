@@ -105,6 +105,7 @@ test('the Focus and the Work view share one read of each lead, and the refresh k
 for (const [name, failure] of [
   ['Redis', BUSY],
   ['herdr on another machine', 'agent-msg: herdr call timed out after 5s and was killed'],
+  ['ssh to another machine', 'agent-msg: herdr exited with status 1: remote SSH connection failed: Connection closed by UNKNOWN port 65535'],
 ] as const) {
   test(`a read that fails because ${name} did not answer is tried once more at once`, async ($, on) => {
     trace("FR-030-AC-4")
@@ -238,6 +239,24 @@ test('where the leads cannot be listed those drawn are marked old, and a lead no
   await ui.unmount()
 })
 
+test('a lead that had reported nothing and stops answering is old, not never read', async ($, on) => {
+  trace("FR-030-AC-6")
+  let isDown = false
+  const w = leadsWorld(on, [NEAR, FAR], address => (address !== FAR ? undefined : isDown ? out('', 1, 'agent-msg: work target is unavailable') : out('null')))
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect((await lines(ui)).join('\n')).not.toContain(FAR)
+  isDown = true
+  await w.clock!.advance(MIN)
+  const drawn = (await lines(ui)).join('\n')
+  expect(drawn).toContain(FAR)
+  expect(drawn).toMatch(/old 1m/)
+  expect(drawn).toContain('1 old')
+  expect(drawn).not.toMatch(/not read/)
+  await ui.unmount()
+})
+
 test('where the leads were never listed the Work view says they could not be read, not that none reported', async ($, on) => {
   trace("FR-030-AC-10")
   const w = leadsWorld(on, [NEAR])
@@ -251,6 +270,26 @@ test('where the leads were never listed the Work view says they could not be rea
   expect(drawn.join('\n')).not.toMatch(/No lead has reported|Reading the leads/)
   expect((await ui.find({ key: 'warnings-toggle' }))?.props).toMatchObject({ label: '1' })
   await ui.unmount()
+})
+
+test('the first Focus drawing does not wait for a slow lead, which is drawn when it answers', async ($, on) => {
+  trace("FR-030-AC-11")
+  const w = leadsWorld(on, [NEAR, FAR], address => (address === FAR ? w.clock!.sleep(15 * SEC).then(() => out(JSON.stringify(leadReport(address, 'QSL-2')))) : undefined))
+  await startSession($)
+  const focus = await mount($, 'focus')
+  await w.clock!.advance(4 * SEC)
+  expect((await lines(focus)).join('\n')).toMatch(/Reading coordinators/)
+  await w.clock!.advance(2 * SEC)
+  const early = (await lines(focus)).join('\n')
+  expect(early).toContain(`focus of ${NEAR}`)
+  expect(early).not.toContain(`focus of ${FAR}`)
+  expect(await focus.find({ key: 'warnings-toggle' })).toBeUndefined()
+  await w.clock!.advance(10 * SEC)
+  const late = (await lines(focus)).join('\n')
+  expect(late).toContain(`focus of ${NEAR}`)
+  expect(late).toContain(`focus of ${FAR}`)
+  expect([asked(w, NEAR), asked(w, FAR)]).toEqual([1, 1])
+  await focus.unmount()
 })
 
 test('a lead is drawn as soon as it answers, and review events are read while another lead is still out', async ($, on) => {

@@ -6,7 +6,7 @@
 - New `work` band cell: `N tickets · M PRs open · K merged 24h`, opening the Work view. An unknown number reads `—`, and a count that may miss some (a lead whose report was never read, a ticket whose PRs ix-board does not name) reads `≥N`. Select it with `/factory use` or a declaration.
 - `merged 24h`, in the band and the Work widget, counts distinct PRs (a PR linked to two tickets was counted twice) and reads `≥K` where ix-board’s 200-entry cap on activity cuts into the day.
 - A changed focus or teams choice reads the leads' work reports again at once.
-- Leads on other machines are no longer cut off. A lead's work report is given 20 seconds (it was 5, under what an ssh read can take), at most eight are read at once, Focus and Work share the reads, and a Redis or herdr failure that may pass is tried once more. A lead that cannot be read stays on the Work tab: drawn from its last report and marked old, or listed as not read. Each lead is drawn as it answers.
+- Leads on other machines are no longer cut off. A lead's work report is given 20 seconds (it was 5, under what an ssh read can take), at most eight are read at once, Focus and Work share the reads, and a Redis, herdr or ssh failure that may pass is tried once more. A lead that cannot be read stays on the Work tab: drawn from its last report and marked old, or listed as not read. Each lead is drawn as it answers, and the first Focus drawing waits 5 seconds at most for them.
 - Under `a`, five of Recent's ten rows are held for review, spec and gate events, so a busy focus no longer crowds them out.
 - A progress answer that a session on an older build wrote to the shared gate is read again at once, instead of leaving PRs and merges unknown until it expired.
 

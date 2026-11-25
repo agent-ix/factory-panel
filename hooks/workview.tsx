@@ -55,7 +55,8 @@ function leadsOf(addresses: readonly string[], reads: ReadonlyMap<string, LeadRe
     const read = reads.get(address)
     if (read === undefined) return drawn.filter(l => l.address === address)
     if (read.report) return [{ ...leadOf(address, read.report), error: read.error, readAt: read.at }]
-    return read.error === null ? [] : [{ address, status: 'unknown', reportedAt: null, agents: [], error: read.error, readAt: null }]
+    // A report of nothing is a report too: such a lead that stops answering is old, and one never read has no age.
+    return read.error === null ? [] : [{ address, status: 'unknown', reportedAt: null, agents: [], error: read.error, readAt: read.at }]
   })
 }
 

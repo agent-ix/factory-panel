@@ -68,7 +68,7 @@ The lookup runs again on every refresh while your choice is a name, so a definit
 
 ### When a source fails
 
-The leads' work reports are read once for the Focus and Work views, at most eight at a time, each given 20 seconds since a lead on another machine is reached through ssh; a Redis or herdr failure that may pass is tried once more. A lead that cannot be read is drawn from the report last read and marked old, or listed as not read.
+The leads' work reports are read once for the Focus and Work views, at most eight at a time, each given 20 seconds since a lead on another machine is reached through ssh; a Redis, herdr or ssh failure that may pass is tried once more. A lead that cannot be read is drawn from the report last read and marked old, or listed as not read.
 
 Each source keeps to its own part of the view. ix-board is asked about all the projects of a focus in one call (`ix-board --json focus status --project <ref> --project <ref>`), and about each milestone and ticket on its own. At most four ix-board processes run at once across every focus, each call is given up on after 20 seconds, and a refresh ends after 60 seconds. An ix-board that is missing, refuses your credentials, does not answer the combined call in time or is rate limited by Linear shows one error and no more calls; such an error is never blamed on a project.
 

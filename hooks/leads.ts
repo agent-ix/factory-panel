@@ -15,8 +15,8 @@ export const LEAD_CONCURRENCY = 8
 /** A report read this lately is answered to the other view without a second read. */
 export const LEAD_REUSE_MS = 30_000
 
-/** A failure that a second try at once may not meet: the relay's Redis, or herdr on another machine, did not answer. */
-const TRANSIENT = /Resource temporarily unavailable|herdr call timed out|ConnectionAborted/i
+/** A failure that a second try at once may not meet: the relay's Redis, herdr or ssh on another machine did not answer. */
+const TRANSIENT = /Resource temporarily unavailable|herdr call timed out|ConnectionAborted|Connection closed by/i
 
 export type WorkReport = {
   binding?: { machine?: string; kind?: string; address?: string }
