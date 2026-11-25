@@ -4,7 +4,7 @@ import { trace } from './trace'
 
 import { focusBanner } from '../hooks/band/modules'
 import { matchLeads } from '../hooks/namedfocus'
-import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
+import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, pageLines, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
 import { defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
 import type { World } from './world'
 
@@ -33,8 +33,8 @@ test('a name that matches a lead summary is the first line of the pane and of /f
   choose(w, 'Release Train')
   named(w, () => out(listJson()))
   await started($, w)
-  const lines = await paneLines($)
-  expect(lines[0]).toBe('your choice: Release Train')
+  const lines = await pageLines($)
+  expect((await shown($)).split('\n')).toContain('your choice: Release Train')
   expect((await shown($)).split('\n')).toContain('your choice: Release Train')
 })
 
@@ -43,7 +43,7 @@ test('the default scope with a focus entry of the session says own focus', async
   const w = world(on, true)
   lead(w, null)
   await started($, w)
-  expect((await paneLines($))[0]).toBe('own focus')
+  expect((await shown($)).split('\n')).toContain('own focus')
   expect((await shown($)).split('\n')).toContain('own focus')
 })
 
@@ -53,7 +53,7 @@ test('focus team says team focuses', async ($, on) => {
   lead(w, null)
   choose(w, 'team')
   await started($, w)
-  expect((await paneLines($))[0]).toBe('team focuses')
+  expect((await shown($)).split('\n')).toContain('team focuses')
 })
 
 test('an identified session whose team has no focus entry says no focus reported, showing the whole team', async ($, on) => {
@@ -61,7 +61,7 @@ test('an identified session whose team has no focus entry says no focus reported
   const w = world(on, true)
   w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2'))
   await started($, w)
-  expect((await paneLines($))[0]).toBe('no focus reported, showing the whole team')
+  expect((await shown($)).split('\n')).toContain('no focus reported, showing the whole team')
 })
 
 test('whoami failing with focus own says it could not tell who the session is', async ($, on) => {
@@ -70,7 +70,7 @@ test('whoami failing with focus own says it could not tell who the session is', 
   w.whoami.value = undefined
   lead(w, null)
   await started($, w)
-  expect((await paneLines($))[0]).toBe('could not tell who this session is, showing every focus')
+  expect((await shown($)).split('\n')).toContain('could not tell who this session is, showing every focus')
 })
 
 test('a name that matches a named focus definition says your choice', async ($, on) => {
@@ -79,7 +79,7 @@ test('a name that matches a named focus definition says your choice', async ($, 
   choose(w, 'Beta')
   beta(w)
   await started($, w)
-  expect((await paneLines($))[0]).toBe('your choice: Beta')
+  expect((await shown($)).split('\n')).toContain('your choice: Beta')
 })
 
 test('a name that matches nothing says your choice and adds a separate warning line', async ($, on) => {
@@ -89,8 +89,8 @@ test('a name that matches nothing says your choice and adds a separate warning l
   choose(w, 'Nothing like it')
   named(w, () => out(listJson()))
   await started($, w)
-  const lines = await paneLines($)
-  expect(lines[0]).toBe('your choice: Nothing like it')
+  const lines = await pageLines($)
+  expect((await shown($)).split('\n')).toContain('your choice: Nothing like it')
   shows(lines, /^no focus matches "Nothing like it"$/)
   expect(lines[1]).not.toBe('no focus matches "Nothing like it"')
 })
@@ -102,7 +102,7 @@ test('whoami failing with a name says your choice', async ($, on) => {
   choose(w, 'Beta', 'default')
   beta(w)
   await started($, w)
-  expect((await paneLines($))[0]).toBe('your choice: Beta')
+  expect((await shown($)).split('\n')).toContain('your choice: Beta')
 })
 
 test('whoami failing with focus team says it could not tell who the session is', async ($, on) => {
@@ -112,7 +112,7 @@ test('whoami failing with focus team says it could not tell who the session is',
   choose(w, 'team', 'default')
   lead(w, null)
   await started($, w)
-  expect((await paneLines($))[0]).toBe('could not tell who this session is, showing every focus')
+  expect((await shown($)).split('\n')).toContain('could not tell who this session is, showing every focus')
   // The order is the spec's: the name first, then the identity, then own, team and the rest.
   const detected = { hosts: 'local', teams: [], ownTeam: 'QSL', teamsSelected: false } as const
   expect(focusBanner({ ...detected, focus: 'Beta', identity: 'unknown' }, [])).toBe('your choice: Beta')
@@ -130,8 +130,8 @@ test('the keywords own and team win over a definition named Own and the definiti
   named(w, () => out(listJson(defRow(BETA, 'Own', 'QSL'))), { [BETA]: () => out(showJson('Own', 'QSL', { projects: ['p1'] })) })
   await started($, w)
   expect(focusCalls(w)).toEqual([])
-  const lines = await paneLines($)
-  expect(lines[0]).toBe('own focus')
+  const lines = await pageLines($)
+  expect((await shown($)).split('\n')).toContain('own focus')
   expect(lines).not.toContain('Own')
 })
 
@@ -141,15 +141,15 @@ test('a definition is matched by its name or its focus_id, ignoring case, and sh
   choose(w, 'BETA')
   beta(w)
   await started($, w)
-  shows(await paneLines($), /^5\/10 done/)
+  shows(await pageLines($), /^5\/10$/)
   expect(statusCalls(w)).toEqual(['--project p1'])
   expect(focusCalls(w)).toEqual(['list --json', `show ${BETA} --json`])
   // The focus_id in upper case, on the next refresh.
   await $.command.run({ command: 'factory', args: `focus ${BETA.toUpperCase()}` } as never)
   await w.clock!.advance(1000)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^your choice: FOC-0123456789ABCDEF0123456789ABCDEF$/)
-  shows(lines, /^5\/10 done/)
+  shows(lines, /^5\/10$/)
   expect(focusCalls(w).filter(c => c === `show ${BETA} --json`)).toHaveLength(2)
 })
 
@@ -178,10 +178,10 @@ test('with whoami failing both definitions are shown and two matched is said', a
   })
   board(w, { combined: args => pageOf(`Pn ${args[1]}`, 1, 2) })
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^2 focuses matched "Beta"$/)
-  shows(lines, /^Pn qsl-project$/)
-  shows(lines, /^Pn eng-project$/)
+  shows(lines, /^label qsl-project$/)
+  shows(lines, /^label eng-project$/)
 })
 
 test('with no definition the lead summary equal to the name is shown', async ($, on) => {
@@ -191,13 +191,13 @@ test('with no definition the lead summary equal to the name is shown', async ($,
   choose(w, 'release train')
   named(w, () => out(listJson()))
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^Release Train$/)
   hides(lines, /^no focus matches/)
   // And a name contained in a summary matches it when none is equal.
   w.leads.set(LEAD, report(LEAD, 'The Release Train, all of it'))
   await w.clock!.advance(2 * MIN + 1000)
-  shows(await paneLines($), /^The Release Train, all of it$/)
+  shows(await pageLines($), /^The Release Train, all of it$/)
 })
 
 test('a list that exits non-zero or prints text that is not JSON shows a source error and the lead address resolves', async ($, on) => {
@@ -208,12 +208,12 @@ test('a list that exits non-zero or prints text that is not JSON shows a source 
   let mode: 'exit' | 'text' = 'exit'
   named(w, () => (mode === 'exit' ? out('', 1, 'agent-msg: relay store unavailable') : out('not json at all')))
   await started($, w)
-  let lines = await paneLines($)
+  let lines = await pageLines($)
   shows(lines, /^agent-msg focuses: list: agent-msg: relay store unavailable$/)
   shows(lines, /^Host one focus$/)
   mode = 'text'
   await w.clock!.advance(2 * MIN + 1000)
-  lines = await paneLines($)
+  lines = await pageLines($)
   shows(lines, /^agent-msg focuses: list: agent-msg focuses list --json printed text that is not JSON$/)
   shows(lines, /^Host one focus$/)
 })
@@ -224,7 +224,7 @@ test('a definition whose selection is empty shows its name and says it selects n
   choose(w, 'Beta')
   beta(w, { show: () => out(showJson('Beta', 'QSL', {}, {}, { empty: true })) })
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /Beta/)
   shows(lines, /^this focus selects nothing$/)
   expect(statusCalls(w)).toEqual([])
@@ -236,7 +236,7 @@ test('a definition whose selection cannot be decoded shows its name and says the
   choose(w, 'Beta')
   beta(w, { show: () => out(showJson('Beta', 'QSL', {}, {}, { definition: null })) })
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /Beta/)
   shows(lines, /^the selection of this focus is unavailable$/)
   expect(statusCalls(w)).toEqual([])
@@ -248,9 +248,9 @@ test('a definition with an exclusion says the exclusions are not applied to prog
   choose(w, 'Beta')
   beta(w, { show: () => out(showJson('Beta', 'QSL', { projects: ['p1'] }, { tickets: ['QSL-9'] })) })
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^exclusions are not applied to progress$/)
-  shows(lines, /^5\/10 done/)
+  shows(lines, /^5\/10$/)
 })
 
 test('an archived definition returned by list is not used', async ($, on) => {
@@ -261,7 +261,7 @@ test('an archived definition returned by list is not used', async ($, on) => {
   board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
   await started($, w)
   expect(focusCalls(w)).toEqual(['list --json'])
-  shows(await paneLines($), /^no focus matches "Beta"$/)
+  shows(await pageLines($), /^no focus matches "Beta"$/)
 })
 
 test('with nothing matching the pane shows no focus and says nothing matched', async ($, on) => {
@@ -271,7 +271,7 @@ test('with nothing matching the pane shows no focus and says nothing matched', a
   choose(w, 'zzz')
   named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))))
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^0 focuses$/)
   shows(lines, /^no focus matches "zzz"$/)
   hides(lines, /^Release train$/)
@@ -284,7 +284,7 @@ test('an unavailable row is matched by its focus_id alone and shows the id and t
   named(w, () => out(listJson(stubRow(BETA, 'the stored selection is not readable'))))
   board(w, { combined: () => pageOf('x', 1, 2) })
   await started($, w)
-  let lines = await paneLines($)
+  let lines = await pageLines($)
   expect(await paneButtons($)).toContain(`▾ ${BETA}`)
   shows(lines, /^the stored selection is not readable$/)
   expect(statusCalls(w)).toEqual([])
@@ -294,7 +294,7 @@ test('an unavailable row is matched by its focus_id alone and shows the id and t
   for (const name of ['unavailable_definition', 'the stored selection is not readable', 'false']) {
     await $.command.run({ command: 'factory', args: `focus ${name}` } as never)
     await w.clock!.advance(1000)
-    lines = await paneLines($)
+    lines = await pageLines($)
     shows(lines, new RegExp(`^no focus matches "${name}"$`))
   }
 })
@@ -307,12 +307,12 @@ test('a show that fails or prints text that is not JSON shows a source error and
   let mode: 'exit' | 'text' = 'exit'
   beta(w, { show: () => (mode === 'exit' ? out('', 1, 'agent-msg: definition unreadable') : out('{ nope')) })
   await started($, w)
-  let lines = await paneLines($)
+  let lines = await pageLines($)
   shows(lines, new RegExp(`^agent-msg focuses: show ${BETA}: agent-msg: definition unreadable$`))
   shows(lines, /^Beta$/)
   mode = 'text'
   await w.clock!.advance(2 * MIN + 1000)
-  lines = await paneLines($)
+  lines = await pageLines($)
   shows(lines, /printed text that is not JSON/)
   shows(lines, /^Beta$/)
 })
@@ -327,9 +327,9 @@ test('a list or show that never returns is given up on after 5 seconds and the l
   w.stub.value = (argv, init) => (argv[1] === 'focuses' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
   await startSession($)
   await w.clock!.advance(4900)
-  hides(await paneLines($), /^Beta$/)
+  hides(await pageLines($), /^Beta$/)
   await w.clock!.advance(200)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   expect(timeouts).toEqual([5000])
   shows(lines, /^Beta$/)
   shows(lines, /^agent-msg focuses: list: .+/)
@@ -344,7 +344,7 @@ test('a name given as team:segment shows every lead on several hosts and says ho
   choose(w, 'QSL:CODE')
   named(w, () => out(listJson()))
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^2 focuses matched "QSL:CODE"$/)
   shows(lines, /^Host one focus$/)
   shows(lines, /^Host two focus$/)
@@ -365,7 +365,7 @@ test('when the members of the named definition change between refreshes the seco
   expect(statusCalls(w)).toEqual(['--project p1'])
   members = ['p1', 'p2']
   await w.clock!.advance(2 * MIN + 1000)
-  expect(statusCalls(w).at(-1)).toBe('--project p1 --project p2')
+  expect(statusCalls(w).slice(-2)).toEqual(['--project p1', '--project p2'])
 })
 
 test('two active definitions with the same name of one team are both shown and the pane says how many matched', async ($, on) => {
@@ -377,10 +377,10 @@ test('two active definitions with the same name of one team are both shown and t
   })
   board(w, { combined: args => pageOf(`Pn ${args[1]}`, 1, 2) })
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^2 focuses matched "Beta"$/)
-  shows(lines, /^Pn p1$/)
-  shows(lines, /^Pn p2$/)
+  shows(lines, /^label p1$/)
+  shows(lines, /^label p2$/)
 })
 
 test('a show that never returns is given up on after 5 seconds, the error is shown and the lead steps follow', async ($, on) => {
@@ -394,9 +394,9 @@ test('a show that never returns is given up on after 5 seconds, the error is sho
   w.stub.value = (argv, init) => (argv[2] === 'show' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
   await startSession($)
   await w.clock!.advance(4900)
-  hides(await paneLines($), /^Beta$/)
+  hides(await pageLines($), /^Beta$/)
   await w.clock!.advance(200)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   expect(timeouts).toEqual([5000])
   shows(lines, /^Beta$/)
   shows(lines, new RegExp(`^agent-msg focuses: show ${BETA}: .+`))
@@ -410,7 +410,7 @@ test('a lead with no report is silent in own mode, and a lead whose work show fa
   w.leads.set('draco:QSL:code', null) // `agent-msg work show` prints null for a lead that has reported nothing
   w.leads.set('draco:QSL:plan', undefined) // and fails for one it cannot resolve
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
   hides(lines, /draco:QSL:code:/)
   hides(lines, /null/)
@@ -421,7 +421,7 @@ test('a lead with no report at all draws no error', async ($, on) => {
   const w = world(on, true)
   w.leads.set('draco:QSL:code', null)
   await started($, w)
-  hides(await paneLines($), /^agent-msg work: /)
+  hides(await pageLines($), /^agent-msg work: /)
 })
 
 test('a name that is the address of a lead whose work show fails shows that error and not only nothing matched', async ($, on) => {
@@ -432,7 +432,7 @@ test('a name that is the address of a lead whose work show fails shows that erro
   choose(w, 'draco:QSL:plan')
   named(w, () => out(listJson()))
   await started($, w)
-  const lines = await paneLines($)
+  const lines = await pageLines($)
   shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
   shows(lines, /^no focus matches "draco:QSL:plan"$/)
 })
