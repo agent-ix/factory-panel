@@ -193,7 +193,7 @@ async function classic() {
 
 async function fullscreen() {
   let s
-  const tabs = /Factory\s+Focus\s+Escalations\s+Message\s+Team/
+  const tabs = /Factory\s+Focus\s+Work\s+Escalations\s+Message\s+Team/
   try {
     s = new Session('fullscreen', 1)
     // NFR-001-M-1 / FR-001-AC-5: the docked panel is there 5 seconds after launch with no key sent.
@@ -222,7 +222,7 @@ async function fullscreen() {
 
     // NFR-003-M-3: Esc closes the focused tab, which only happens when the dock holds the keyboard.
     s.key('Escape')
-    const closed = await s.waitFor(t => /Factory\s+Focus\s+Escalations\s+Team/.test(t))
+    const closed = await s.waitFor(t => /Factory\s+Focus\s+Work\s+Escalations\s+Team/.test(t))
     s.capture('5-closed')
     check('fullscreen: Esc closes the focused dock tab (1 key)', closed !== null)
     check('fullscreen: the prompt has the keyboard after Esc', await promptHasKeyboard(s, '6-prompt-after-close'))

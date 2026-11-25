@@ -87,7 +87,7 @@ test('a plain /factory opens Focus when the focus module is shown and Factory wh
 test('/factory <view> opens exactly that view', async ($, on) => {
   trace("FR-003-AC-2")
   const w = world(on)
-  for (const view of ['factory', 'focus', 'escalations', 'relay', 'team']) {
+  for (const view of ['factory', 'focus', 'work', 'escalations', 'relay', 'team']) {
     w.opens.length = 0
     await runFactory(fake$(w) as never, options(), view, false)
     expect(w.opens.map(x => x.id)).toEqual([view])
@@ -170,7 +170,7 @@ test('while the layout has not been reported the band is drawn and no pane is op
   await ui.unmount()
 })
 
-test('when the layout is first reported as fullscreen the five panes open once and no band is drawn', async ($, on) => {
+test('when the layout is first reported as fullscreen the six panes open once and no band is drawn', async ($, on) => {
   trace("FR-001-AC-4")
   const w = world(on)
   await startSession($)
@@ -178,7 +178,7 @@ test('when the layout is first reported as fullscreen the five panes open once a
   const ui = await drawBand($, FULLSCREEN)
   await drawBand($, FULLSCREEN)
   await settle()
-  expect(w.opens.map(o => o.id)).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
+  expect(w.opens.map(o => o.id)).toEqual(['factory', 'focus', 'work', 'escalations', 'relay', 'team'])
   expect(await ui.find({ key: 'local' })).toBeUndefined()
   await ui.unmount()
 })
@@ -190,7 +190,7 @@ test('a pane the person closed is not reopened by a later attach', async ($, on)
   await drawBand($, FULLSCREEN)
   await settle()
   const before = w.opens.length
-  w.listed.value = ['factory', 'focus', 'escalations', 'relay'].map(id => ({ id, title: id, isPlaced: true }))
+  w.listed.value = ['factory', 'focus', 'work', 'escalations', 'relay'].map(id => ({ id, title: id, isPlaced: true }))
   await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
   await settle()
   expect(w.opens.length).toBe(before)

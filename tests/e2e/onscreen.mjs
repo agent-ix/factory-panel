@@ -60,7 +60,8 @@ const STATUS = {
   ready_queue: [],
   blocker_layers: [[]],
   work_milestones: [],
-  projects: [{ id: PROJECT, identifier: PROJECT, name: 'Payments ledger', progress: { done: 5, total: 10, completed_percent: 50 }, in_progress: [], open_by_state: [], milestones: [], membership: 'full_project', target_date: null }],
+  projects: [{ id: PROJECT, identifier: PROJECT, name: 'Payments ledger', progress: { done: 5, total: 10, completed_percent: 50 }, in_progress: [{ id: 'i1', identifier: 'QSL-1', title: 'Stand-in ticket', state: 'Coding', prs: [{ url: 'https://github.com/agent-ix/standin/pull/7', repo: 'agent-ix/standin', number: 7, status: 'open', draft: false, created_at: null, merged_at: null }] }], recently_closed: [], open_by_state: [], milestones: [], membership: 'full_project', target_date: null }],
+  activity: [{ at: new Date().toISOString(), kind: 'merged', identifier: 'QSL-2', title: 'Stand-in merge', project: 'Payments ledger', pr: { url: 'https://github.com/agent-ix/standin/pull/6', repo: 'agent-ix/standin', number: 6 } }],
 }
 const ANSWERS = {
   herdr: [['api snapshot', JSON.stringify({ result: { snapshot: { version: '0', agents: [], workspaces: [] } } })]],
@@ -68,7 +69,8 @@ const ANSWERS = {
     ['whoami', `${LEAD}  (location)  model unknown`],
     ['who', `${LEAD}  draco  claude  seen 11-24 16:26  pane p1  -  Herdr w1:w1:t1`],
     ['doctor', JSON.stringify({ ok: true, checks: [] })],
-    ['work', JSON.stringify({ binding: { machine: 'draco', kind: 'claude', address: LEAD }, scope: { initiatives: [], projects: [PROJECT], tickets: [] }, focus: { summary: 'Stand-in focus' }, agents: [] })],
+    ['work', JSON.stringify({ binding: { machine: 'draco', kind: 'claude', address: LEAD }, scope: { initiatives: [], projects: [PROJECT], tickets: [] }, focus: { summary: 'Stand-in focus' }, agents: [{ agent_id: 'a1', name: 'coder-1', ticket: 'QSL-1', role: 'coder', status: 'running', reported_at_ms: Date.now() - 240000 }] })],
+    ['work events', JSON.stringify({ version: 1, truncated: false, has_more: false, next_cursor: '0-0', events: [] })],
     ['escalations', 'e1  waiting  ENG-1  session/aa/bb  11-24 16:29'],
     ['escalation show', 'status: waiting\ncontext:\n  A stand-in escalation.'],
     ['log', '11-24 09:45 operator -> all: a stand-in broadcast'],
@@ -292,7 +294,7 @@ const none = counts => Object.keys(counts).length === 0
 const has = (counts, sources) => sources.every(source => (counts[source] ?? 0) > 0)
 const json = JSON.stringify
 
-const TABS = /Factory\s+Focus\s+Escalations\s+\S+\s+Team/
+const TABS = /Factory\s+Focus\s+Work\s+Escalations\s+\S+\s+Team/
 const BAND_SOURCES = ['prometheus query', 'agent-msg work', 'ix-board agents', 'ix-board focus']
 
 // ---------------------------------------------------------------- the scenarios
@@ -308,8 +310,15 @@ async function fullscreen(s) {
   check('fullscreen: and nothing of the other tabs', only(open, ['prometheus query', 'herdr snapshot', 'agent-msg doctor', 'agent-msg whoami', 'ix-board agents']), Object.keys(open).join(', '))
   check('fullscreen: the machine the metrics service answered is on screen', /standin-host/.test(s.screen()))
 
+  const worked = s.mark('switched to the Work tab')
+  check('fullscreen: the Work tab can be clicked', s.click(/(Factory\s+Focus\s+)Work/))
+  await sleep(4000)
+  const work = (await s.phase(worked)).counts
+  check('fullscreen: the Work tab reads the leads’ work reports and events', has(work, ['agent-msg work']), json(work))
+  check('fullscreen: the lead and its ticket are on screen', /draco:QSL:code/.test(s.screen()) && /QSL-1/.test(s.screen()), s.screen().slice(0, 600))
+
   const switched = s.mark('switched to the Message tab')
-  check('fullscreen: the Message tab can be clicked', s.click(/(Factory\s+Focus\s+Escalations\s+)\S+\s+Team/))
+  check('fullscreen: the Message tab can be clicked', s.click(/(Factory\s+Focus\s+Work\s+Escalations\s+)\S+\s+Team/))
   const other = (await s.phase(switched)).counts
   check('fullscreen: the Message tab reads its own sources', has(other, ['agent-msg log', 'agent-msg who']), json(other))
   check('fullscreen: and no source of another tab', only(other, ['agent-msg log', 'agent-msg who']), Object.keys(other).join(', '))
@@ -323,9 +332,9 @@ async function fullscreen(s) {
   s.key('Escape')
   check('fullscreen: the panel is back after the transcript view', await s.waitFor(t => TABS.test(t), 10000))
 
-  // Each close mark closes the tab on view; five close the panel.
+  // Each close mark closes the tab on view; six close the panel.
   let closes = 0
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     if (!s.click(/()✕/)) break
     closes++
     await sleep(1500)
