@@ -14,25 +14,25 @@
 //   FR-019-AC-1   /factory show says why these focuses are shown (here a typed name); the card itself holds no prose
 //   FR-008-AC-5   a first-time user, with only /factory help, opens a view, switches and chooses what to display
 //
-// The session runs with a temporary HOME, so the choice the check makes is written to a temporary
-// ~/.ix/factory-panel and never to the real one. That home links to the real ~/.claude (the person's
-// settings and plugins) and ~/Library (the keychain) and holds a .claude.json with the login keys
-// only; it is removed when the check ends. The sessions run detached in tmux, so they switch the
-// mod's view check off (FACTORY_PANEL_VIEW_CHECK=off): detached, it would read nothing.
+// The session runs with a temporary HOME (see home.mjs), so what it writes, the choice the check makes
+// among it, goes there and never to the real home; it is removed when the check ends. Only slash
+// commands are typed, never a prompt. The sessions run detached in tmux, so they switch the mod's view
+// check off (FACTORY_PANEL_VIEW_CHECK=off): detached, it would read nothing.
 //
 // These are Demonstration and capture criteria. Quire reads trace tags only from TypeScript, Python and
 // Rust symbols, not from .mjs, so they are deliberately NOT matrix-bound; the matrix shows them as
 // untagged and this script plus its evidence/ captures is their verification.
 //
-// Needs: node, tmux, claude on PATH, and the repository folder already trusted by Claude Code.
-// Run: node tests/e2e/layouts.mjs [plugin-folder]
+// Needs: node, tmux, claude on PATH, and a folder Claude Code is already trusted in to run the sessions
+// in: this repository, or the one FP_E2E_CWD names.
+// Run: [FP_E2E_CWD=<folder>] node tests/e2e/layouts.mjs [plugin-folder]
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { atEnd, endSession, makeHome } from './home.mjs'
+import { assigned, atEnd, endSession, makeHome, sessionEnv, sessionFolder } from './home.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const PLUGIN = resolve(process.argv[2] ?? ROOT)
@@ -41,8 +41,9 @@ const SOCKET = `fp-layouts-${process.pid}`
 const EVIDENCE = join(ROOT, 'tests', 'e2e', 'evidence')
 mkdirSync(EVIDENCE, { recursive: true })
 
-// A home of its own for the mod's files.
-const FPHOME = makeHome('fp-e2e-home-', ROOT, ['.claude', 'Library'])
+const CWD = sessionFolder(ROOT)
+// A home of its own for the session and the mod's files.
+const FPHOME = makeHome('fp-e2e-home-', CWD)
 const CHOICES = join(FPHOME, '.ix', 'factory-panel', 'choices', 'default.json')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -60,7 +61,8 @@ class Session {
     this.name = `fp-e2e-${layout}-${process.pid}`
     this.inputs = 0
     this.forget = atEnd(() => endSession(SOCKET, this.name))
-    tmux('new-session', '-d', '-s', this.name, '-x', '200', '-y', '50', '-c', ROOT, `env HOME=${FPHOME} CLAUDE_CODE_NO_FLICKER=${flicker} FACTORY_PANEL_VIEW_CHECK=off claude --plugin-dir '${PLUGIN}'`)
+    const env = sessionEnv(FPHOME, { CLAUDE_CODE_NO_FLICKER: String(flicker), FACTORY_PANEL_VIEW_CHECK: 'off' })
+    tmux('new-session', '-d', '-s', this.name, '-x', '200', '-y', '50', '-c', CWD, `env -i ${assigned(env)} claude --plugin-dir '${PLUGIN}'`)
   }
   capture(label) {
     const text = tmux('capture-pane', '-p', '-t', this.name).replace(/[ \t]+$/gm, '')
@@ -105,7 +107,7 @@ async function promptHasKeyboard(s, label) {
 }
 
 function assertNotTrustPrompt(s, text) {
-  if (/trust this folder/i.test(text)) throw new Error(`Claude Code asks to trust ${ROOT}; accept it once by hand, then rerun`)
+  if (/trust this folder/i.test(text)) throw new Error(`Claude Code asks to trust ${CWD}; the check does not answer that`)
 }
 
 async function classic() {

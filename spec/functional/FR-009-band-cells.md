@@ -53,14 +53,14 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 - N SHALL be the distinct tickets the leads with a current report have in hand: those their agents report and those their focus names, without the finished ones ([FR-028](./FR-028-work-tab.md)). A report is current where it was read and its newest time is at most 2 hours old.
 - Where fewer leads have a current report than are listed, N SHALL be drawn as a lower bound with the two numbers, `≥N tickets (r/t leads)`.
 - The tickets only older reports name SHALL be counted apart, `+L old`, and SHALL be in neither N nor M.
-- M SHALL be the distinct open or draft PRs of those tickets, as ix-board's focus status names them.
+- M SHALL be the distinct open or draft PRs of those tickets, as ix-board names them: in a focus status, or for a ticket none names, in its `issues` answer ([FR-028](./FR-028-work-tab.md)).
 - K SHALL be the distinct PRs of the merged entries of the focus status's `activity[]` of the last 24 hours, so that a PR of two tickets is one; an entry that names no PR counts by itself.
 - ix-board puts at most 200 entries in `activity[]`, newest first. Where an answer holds that many and its oldest is under 24 hours old, K SHALL be drawn as a lower bound (`≥K`).
-- Where the focus status names the PRs of only some of the tickets, M SHALL be drawn as a lower bound (`≥M`).
+- Where ix-board names the PRs of only some of the tickets, M SHALL be drawn as a lower bound (`≥M`).
 - A number that is unknown SHALL read `—` and never 0: M where no answer of ix-board names the PRs of any of those tickets, and K where no focus status has an `activity` key.
 - Where M or K reads `—`, the cell SHALL say why in brackets, a reason both share once: no focus status read, ix-board not read yet or could not be read, no PRs named, ix-board older than 0.9.0, or leads not read.
 - An answer of ix-board more than 35 minutes old SHALL NOT be drawn as current: the cell SHALL say its age, `ix-board <age> old`, and K SHALL be a lower bound where a focus status is that old or was never answered.
-- M SHALL also be a lower bound where N is one.
+- Wherever N is drawn as a lower bound, M SHALL be too.
 - The mod SHALL leave out the work module until the first read of the relay's leads has ended or failed.
 - A report held from an earlier read SHALL count as any other by its age ([FR-030](./FR-030-lead-report-reads.md)).
 - Where no report is held and the read of the leads failed, N and M SHALL read `—`.

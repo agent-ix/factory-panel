@@ -2,9 +2,9 @@
 // the cleanup that leaves neither it nor a tmux session behind, however the check ends.
 
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 /** The keys of ~/.claude.json a session needs to start signed in, with no first-run questions (the last two answer the browser one). */
 const LOGIN_KEYS = ['oauthAccount', 'userID', 'hasCompletedOnboarding', 'lastOnboardingVersion', 'lastReleaseNotesSeen', 'numStartups', 'installMethod', 'theme', 'claudeInChromeDefaultEnabled', 'cachedChromeExtensionInstalled']
@@ -18,31 +18,48 @@ export const atEnd = end => {
   return () => endings.delete(end)
 }
 
+/** The folder the sessions run in: `root`, or FP_E2E_CWD, a folder Claude Code is already trusted in. */
+export const sessionFolder = root => resolve(process.env.FP_E2E_CWD || root)
+
+/** The one thing of the real home a session reaches: the keychain that holds its login. */
+const KEYCHAINS = join('Library', 'Keychains')
+
 export function removeHome(home) {
-  // The links go first, so that nothing of the real ~/.claude or ~/Library is ever reached.
-  for (const name of ['.claude', 'Library']) {
-    try {
-      if (lstatSync(join(home, name)).isSymbolicLink()) unlinkSync(join(home, name))
-    } catch {}
-  }
+  // The link goes first, so that nothing of the real keychains is ever reached.
+  try {
+    if (lstatSync(join(home, KEYCHAINS)).isSymbolicLink()) unlinkSync(join(home, KEYCHAINS))
+  } catch {}
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   homes.delete(home)
 }
 
 /**
- * A temporary HOME: a .claude.json with the login keys and the trust already given to `folder`, and
- * links to the named entries of the real home. `base` shortens the path where a socket goes under it.
+ * A temporary HOME for a session in `folder`: a .claude.json holding a copy of the login keys and of the trust the
+ * person has already given that folder, an empty ~/.claude, and a link to the keychain. Nothing else of the real home
+ * is copied or linked, so the session's settings, history and mod files are the temporary ones. A folder without that
+ * trust is refused: the check never gives it. `base` shortens the path where a socket goes under it.
  */
-export function makeHome(prefix, folder, links, base = tmpdir()) {
+export function makeHome(prefix, folder, base = tmpdir()) {
+  const real = JSON.parse(readFileSync(join(homedir(), '.claude.json'), 'utf8'))
+  if (real.projects?.[folder]?.hasTrustDialogAccepted !== true) throw new Error(`Claude Code is not trusted in ${folder}; run with FP_E2E_CWD set to a folder it is trusted in`)
   const home = mkdtempSync(join(base, prefix))
   homes.add(home)
-  const real = JSON.parse(readFileSync(join(homedir(), '.claude.json'), 'utf8'))
   const kept = Object.fromEntries(LOGIN_KEYS.filter(key => real[key] !== undefined).map(key => [key, real[key]]))
-  if (real.projects?.[folder]?.hasTrustDialogAccepted === true) kept.projects = { [folder]: { hasTrustDialogAccepted: true } }
+  kept.projects = { [folder]: { hasTrustDialogAccepted: true } }
   writeFileSync(join(home, '.claude.json'), JSON.stringify(kept), { mode: 0o600 })
-  for (const name of links) symlinkSync(join(homedir(), name), join(home, name))
+  mkdirSync(join(home, '.claude'))
+  if (existsSync(join(homedir(), KEYCHAINS))) {
+    mkdirSync(join(home, 'Library'))
+    symlinkSync(join(homedir(), KEYCHAINS), join(home, KEYCHAINS))
+  }
   return home
 }
+
+/** The environment of a session of the check: nothing of the one the check runs in but what a terminal needs. */
+export const sessionEnv = (home, more) => ({ HOME: home, PATH: process.env.PATH, TERM: 'xterm-256color', USER: process.env.USER, LANG: 'en_US.UTF-8', ...more })
+
+/** `env -i` arguments for a shell command line. */
+export const assigned = env => Object.entries(env).map(([k, v]) => `'${k}=${v}'`).join(' ')
 
 const alive = pid => {
   try {
