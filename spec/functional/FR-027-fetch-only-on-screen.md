@@ -68,6 +68,7 @@ The mod SHALL read a source only while something on screen draws its data.
 - While `agent-msg whoami` has not said who the session is, the mod SHALL ask it again with the same doubling, from `refreshSeconds` to 5 minutes; a command SHALL ask at once.
 - A changed focus or teams value SHALL make the focus and `ix-board agents` reads due at the next drawing.
 - The Linear-backed reads of `ix-board` stay held by their own 30 minute gate ([FR-025](./FR-025-per-project-last-good.md)); this requirement only decides when the mod asks.
+- The mod SHALL make no Prometheus read before the metrics address is known ([FR-007](./FR-007-endpoint-discovery.md)), and SHALL NOT count a drawing before then as a failed read.
 - The mod SHALL raise no toast or notification from a read.
 
 ## Constraints
@@ -96,8 +97,9 @@ The mod SHALL read a source only while something on screen draws its data.
 | FR-027-AC-14 | With `agent-msg whoami` failing for 6 minutes it runs at most 6 times, and a command runs it at once. | Test |
 | FR-027-AC-15 | A teams value changed by a declaration file reads the lanes again before their interval is up. | Test |
 | FR-027-AC-16 | In a real session the log of commands run and queries made shows reads while the panel is open, only the shown tab's after switching tabs, and none once the panel is closed. | Demonstration |
+| FR-027-AC-17 | A view drawn while the metrics address is still being looked up sends no Prometheus query, and reads as soon as the address is known, without waiting out a backed off interval. | Test |
 
 ## Dependencies
 
 - **Upstream**: [US-001](../usecase/US-001-glance.md), [US-002](../usecase/US-002-open-more.md)
-- **See also**: [FR-004](FR-004-detail-view.md), [FR-009](FR-009-band-cells.md), [FR-016](FR-016-isolated-selectors.md), [FR-025](FR-025-per-project-last-good.md), [NFR-004](../non-functional/NFR-004-selection-never-blocks.md)
+- **See also**: [FR-004](FR-004-detail-view.md), [FR-007](FR-007-endpoint-discovery.md), [FR-009](FR-009-band-cells.md), [FR-016](FR-016-isolated-selectors.md), [FR-025](FR-025-per-project-last-good.md), [NFR-004](../non-functional/NFR-004-selection-never-blocks.md)

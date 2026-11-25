@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { ModuleId } from './band/modules'
+import { originOf } from './endpoints'
 import { pollEscalations } from './escalations'
 import { pollBoard, pollDoctor, pollHerdr, pollPrometheus } from './factory'
 import { pollFocus } from './focus'
@@ -125,7 +126,10 @@ async function readDue($: EngineInterface, options: Options, surface: Surface, s
   pending.delete(surface)
   if (surface !== 'band' && !(await isShown($, VIEW_SPECS[surface].id))) return
   const now = await $.clock.now()
-  const due = sources.filter(id => isDue(id, now))
+  // A view can be drawn before session start has found the metrics address. Nothing is asked of an
+  // unknown address, so it counts as no read; the redraw that ends session start asks.
+  const isFound = originOf(options.prometheusUrl) !== undefined
+  const due = sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team')) && isDue(id, now))
   // The selection is started first: the focus and the lanes wait for the scope it decides.
   await Promise.all(due.map(id => guarded($, `${id} read`, () => readSource($, options, id))))
 }

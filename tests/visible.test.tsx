@@ -373,3 +373,21 @@ test('a changed focus choice reads the leads and lanes again at the next drawing
   expect(reads().board).toBeGreaterThan(before.board)
   await ui.unmount()
 })
+
+test('a view drawn before the metrics address is found asks nothing of it, then reads as soon as it is known', { options: { prometheusUrl: '' } }, async ($, on) => {
+  trace("FR-027-AC-17")
+  const { w } = watched(on)
+  const asked: string[] = []
+  w.fetch.value = url => (asked.push(url), undefined)
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === 'ix config get observability.prometheusUrl' ? w.clock!.sleep(5 * SEC).then(() => out('http://prom.test\n')) : prior?.(argv, init))
+  const started = startSession($)
+  const ui = await openPane($, 'factory')
+  await pass(w, 2 * SEC)
+  expect(asked).toEqual([])
+  await pass(w, 4 * SEC)
+  await started
+  expect(asked.length).toBeGreaterThan(0)
+  expect(asked.every(url => url.startsWith('http://prom.test/'))).toBe(true)
+  await ui.unmount()
+})
