@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-The mod SHALL learn the person's role from the `role` setting, then the session's relay address, then a stored answer for the working directory, then by asking once when the person first types `/factory`.
+The mod SHALL learn the person's role from the `role` setting, then a stored answer for the working directory, then the session's relay address, then by asking once when the person first types `/factory`.
 
 ## Behavior
 
