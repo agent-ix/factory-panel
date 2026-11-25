@@ -365,12 +365,35 @@ test('a changed focus choice reads the leads and lanes again at the next drawing
   const { w, reads } = watched(on)
   await startSession($)
   const ui = await openBand($)
-  await pass(w, 30 * SEC)
+  await pass(w, 2 * SEC)
   const before = reads()
+  expect(before.board).toBe(1)
   w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify({ teams: ['ENG'] }))
-  // The file is read at the next refresh, and the focus and lanes with it, well inside their own intervals.
-  await pass(w, 32 * SEC)
-  expect(reads().board).toBeGreaterThan(before.board)
+  // The file is read at the next refresh and the lanes with it: 37 seconds after their last read,
+  // whose interval is 60.
+  await pass(w, 35 * SEC)
+  expect(reads().board).toBe(2)
+  expect(w.ran.filter(l => l.startsWith('ix-board --json agents')).at(-1)).toBe('ix-board --json agents ENG')
+  await ui.unmount()
+})
+
+test('the refresh key of the Factory view reads ix-board agents again once 60 seconds have passed, and not before', { options: { teams: 'QSL' } }, async ($, on) => {
+  trace("FR-027-AC-18")
+  const { w, reads } = watched(on)
+  await startSession($)
+  const ui = await openPane($, 'factory')
+  await pass(w, 2 * SEC)
+  expect(reads().board).toBe(1)
+  await pass(w, 20 * SEC)
+  await ui.press({ key: 'refresh' })
+  await pass(w, SEC)
+  expect(reads().board).toBe(1)
+  // Left alone, the gate holds the agents for 30 minutes; only the key asks after one.
+  await pass(w, 60 * SEC)
+  expect(reads().board).toBe(1)
+  await ui.press({ key: 'refresh' })
+  await pass(w, SEC)
+  expect(reads().board).toBe(2)
   await ui.unmount()
 })
 

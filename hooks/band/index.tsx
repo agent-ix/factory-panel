@@ -76,6 +76,7 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     scope: scopeOf(getSelection()),
     teamViews: list(tms),
     focusesLoaded: fmeta?.at !== undefined && fmeta.at !== null,
+    boardLoaded: fresh?.boardAt !== undefined && fresh.boardAt !== null,
     prometheusError: fresh?.prometheusError ?? null,
     relayAt: fresh?.relayAt ?? null,
     relayError: fresh?.relayError ?? null,

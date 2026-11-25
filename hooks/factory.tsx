@@ -298,17 +298,17 @@ const boardTeams = (options: Options): string[] => {
 }
 
 /** Reads the agents of the teams in scope; false when ix-board failed. */
-export function pollBoard($: EngineInterface, options: Options): Promise<boolean> {
-  return track($, 'board', () => readBoardState($, options))
+export function pollBoard($: EngineInterface, options: Options, how: { manual?: boolean } = {}): Promise<boolean> {
+  return track($, 'board', () => readBoardState($, options, how))
 }
 
-async function readBoardState($: EngineInterface, options: Options): Promise<boolean> {
+async function readBoardState($: EngineInterface, options: Options, how: { manual?: boolean }): Promise<boolean> {
   await selectionReady()
   const teams = boardTeams(options)
   if (teams.length === 0) return true
   await update($, freshness, f => ({ ...f, boardBusy: true }))
   try {
-    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams))
+    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams), { manual: how.manual })
     const now = await $.clock.now()
     const notes = read.data?.notes ?? []
     const error =
@@ -316,7 +316,8 @@ async function readBoardState($: EngineInterface, options: Options): Promise<boo
         ? pausedText(read.backoffUntil, now)
         : (read.error ?? (notes.length > 0 ? notes.join(' · ').slice(0, 200) : null))
     await update($, board, b => ({ teams, agents: read.data?.agents ?? b.agents, error }))
-    await update($, freshness, f => ({ ...f, boardAt: read.at }))
+    // No time without an answer: a read that has only ever failed has not been made.
+    await update($, freshness, f => ({ ...f, boardAt: read.data === null ? null : read.at }))
     return read.error === null
   } finally {
     await update($, freshness, f => ({ ...f, boardBusy: false }))
@@ -426,9 +427,12 @@ const isCurrent = (f: Freshness, now: number): boolean =>
 
 // ---------------------------------------------------------------- register
 
-/** The Factory view's `r`: reads its three sources now, whenever each was last read. */
+/**
+ * The Factory view's `r`: reads its sources now, whenever each was last read. `ix-board agents` reads
+ * Linear, so its gate still asks it at most once in 60 seconds.
+ */
 export async function refreshAll($: EngineInterface, options: Options): Promise<void> {
-  await Promise.all([pollPrometheus($, options), pollHerdr($), pollDoctor($)])
+  await Promise.all([pollPrometheus($, options), pollHerdr($), pollDoctor($), pollBoard($, options, { manual: true })])
 }
 
 async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {

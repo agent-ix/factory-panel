@@ -52,7 +52,7 @@ export const register: Register = (on, rawOptions) => {
 
   // Registered ahead of the views' own drawings, so it hears every draw of a pane and passes it on.
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
-    if (isViewId(e.requestId)) await drawn($, options, e.requestId, paneSources(e.requestId, e.props.placement === 'widget'))
+    if (isViewId(e.requestId)) await drawn($, options, e.requestId, paneSources(e.requestId, e.props.placement === 'widget'), { client: e.surface, placement: e.props.placement })
     return next(e)
   })
   registerFactory(on, options)
@@ -101,7 +101,7 @@ export const register: Register = (on, rawOptions) => {
       // A survey holds the whole slot, and a collapsed band draws nothing of its cells; the status line stays.
       const isHidden = e.props.hasSurvey || (options.inlineView === 'band' && e.props.isCollapsed)
       const plan = bandPlan(options)
-      if (!isHidden && !plan.off) await drawn($, options, 'band', bandSources(plan.ids))
+      if (!isHidden && !plan.off) await drawn($, options, 'band', bandSources(plan.ids), { client: e.surface })
       await syncStatus($, options, false)
       if (options.inlineView === 'band') {
         const band = await renderBand($, e, options)

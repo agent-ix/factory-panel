@@ -25,12 +25,25 @@ The mod SHALL read a source only while something on screen draws its data.
 ### On screen
 
 - The mod SHALL count a view as on screen when the engine runs its `ui.render` hook, and the sources of that view as wanted only then.
-- A pane counts only where `$.ui.panes()` still lists it shown and placed 150 ms after the drawing.
+- A terminal pane in a dock or inline counts only where `$.ui.panes()` still lists it shown and placed 150 ms after the drawing.
+- A drawing of a widget, or on a surface other than the terminal, SHALL count on its own, since nothing says whether `$.ui.panes()` speaks for it.
 - The band counts only in the classic layout with `inlineView` `band` or `status`, and only while no survey holds it.
 - A collapsed band does not count where `inlineView` is `band`; the status line counts whether or not the band slot is collapsed.
 - The mod SHALL redraw its sites at least every 15 seconds, or every `refreshSeconds` where that is shorter, so that a view that stays on screen keeps being read.
 - The mod SHALL start no read from a timer or from session start other than through a drawing, except the identity lookup of an interactive session at start.
 - A session that is not interactive SHALL run no identity lookup and no read.
+- A typed `/factory show` or choice command reads the focus source once, through the same 30 minute gate, although no view draws it ([FR-014](./FR-014-user-choice.md)).
+
+### A terminal nobody can see
+
+The engine draws into a terminal whether or not it can be seen, so for a drawing on the terminal herdr or tmux is asked as well.
+
+- The mod SHALL make no read for a terminal drawing while the session's pane is known to be off view, and SHALL read what is due within 15 seconds of its coming back.
+- In herdr (`HERDR_ENV` is `1`) the mod SHALL ask `herdr api snapshot`, and the pane is off view only where every pane that lists this session's id is on a tab other than `focused_tab_id`, or on that tab under another pane zoomed over it.
+- In tmux (`TMUX_PANE` is set) the mod SHALL ask `tmux display-message` for the pane, and the pane is off view only where no client is viewing its window, or another pane is zoomed over it, and no control mode client is attached.
+- The mod SHALL count the pane on view where neither or both of herdr and tmux are set, where the command fails or takes more than 3 seconds, where its answer does not say, and where `FACTORY_PANEL_VIEW_CHECK` is `off`.
+- The mod SHALL run the check only when a drawn view has a read due, at most once in 15 seconds, and as one command.
+- The `r` key SHALL read without the check, since the person pressed it.
 
 ### What each view reads
 
@@ -63,7 +76,8 @@ The mod SHALL read a source only while something on screen draws its data.
 
 - The mod SHALL read a source at once when a view that draws it comes on screen and the data is older than the interval.
 - Opening a view by command or band digit SHALL force no read.
-- The `r` key of a view SHALL read that view's sources at once.
+- The `r` key of a view SHALL read that view's sources at once, except that `ix-board agents` is read only once 60 seconds have passed since its last read ([FR-025](./FR-025-per-project-last-good.md)).
+- The mod SHALL say that a team of the `teams` choice matched nothing only where both the focus reports and `ix-board agents` for that team have been read, so a band that reads only one of them says nothing about it.
 - A source that fails, or answers more slowly than its limit, SHALL be next read after twice its interval, doubling with each further failure to at most 5 minutes, or its interval where that is longer, and SHALL return to its interval after a read that answers in time. The limits are 2.5 seconds for Prometheus, 5 seconds for herdr, escalations and relay broadcasts, and 10 seconds for `agent-msg doctor`.
 - While `agent-msg whoami` has not said who the session is, the mod SHALL ask it again with the same doubling, from `refreshSeconds` to 5 minutes; a command SHALL ask at once.
 - A changed focus or teams value SHALL make the focus and `ix-board agents` reads due at the next drawing.
@@ -75,7 +89,9 @@ The mod SHALL read a source only while something on screen draws its data.
 
 | ID | Constraint | Type | Validation |
 |----|------------|------|------------|
-| FR-027-CON-1 | The engine does not tell a mod whether the terminal itself can be seen. A detached tmux session, a herdr pane on a tab or workspace that is not on view, and a terminal window that is hidden in the dock, covered or without focus draw as usual, so their views count as on screen. | Environment | Demonstration |
+| FR-027-CON-1 | herdr 0.9.1 gives each attached client its own view and reports only the view of the client that last switched; `herdr api snapshot` lists no clients. Where two or more clients are attached to one herdr server (another window, or another machine's `herdr --machine`), a pane only another client views counts off view, and it still does after the other clients leave until the remaining one switches tab or workspace. A server with no client attached still reports a focused tab, whose sessions count on view. | Environment | Demonstration |
+| FR-027-CON-2 | Nothing says whether the terminal window itself is hidden, covered or without focus, nor whether a session herdr's Claude integration has not reported, a session in tmux inside herdr, or one in another multiplexer is on view. These count as on view. | Environment | Inspection |
+| FR-027-CON-3 | Whether the desktop app draws panes that are not on screen, and what `$.ui.panes()` says of them, is not verified. Its drawings count as on view. | Environment | Inspection |
 
 ## Acceptance Criteria
 
@@ -98,6 +114,17 @@ The mod SHALL read a source only while something on screen draws its data.
 | FR-027-AC-15 | A teams value changed by a declaration file reads the lanes again before their interval is up. | Test |
 | FR-027-AC-16 | In a real session the log of commands run and queries made shows reads while the panel is open, only the shown tab's after switching tabs, and none once the panel is closed. | Demonstration |
 | FR-027-AC-17 | A view drawn while the metrics address is still being looked up sends no Prometheus query, and reads as soon as the address is known, without waiting out a backed off interval. | Test |
+| FR-027-AC-18 | The `r` key of the Factory view reads `ix-board agents` again once 60 seconds have passed since its last read, and not before. | Test |
+| FR-027-AC-19 | No `team X matched nothing` note is drawn unless both the focus reports and `ix-board agents` for team X have been read. | Test |
+| FR-027-AC-20 | A herdr snapshot counts the session off view only where its panes are all on tabs other than the focused one or under another zoomed pane; every pane of the focused tab counts on view. | Test |
+| FR-027-AC-21 | A herdr or tmux command that fails, or an answer that does not say, leaves a drawn view reading. | Test |
+| FR-027-AC-22 | A tmux answer counts the pane off view where no client views its window or another pane is zoomed over it. | Test |
+| FR-027-AC-23 | With the pane behind another herdr tab or tmux window nothing is read through a drawing, and what is due is read within 16 seconds of its coming back. | Test |
+| FR-027-AC-24 | The check runs at most once in 15 seconds, and not while no drawn view has a read due. | Test |
+| FR-027-AC-25 | With neither herdr nor tmux, with both, or with `FACTORY_PANEL_VIEW_CHECK` `off`, no check runs and a drawn view reads. | Test |
+| FR-027-AC-26 | The `r` key reads while the pane is off view. | Test |
+| FR-027-AC-27 | A desktop pane or widget reads on being drawn, without a view check and whatever `$.ui.panes()` says. | Test |
+| FR-027-AC-28 | In real herdr and tmux sessions a panel that is behind another tab, or in a session nobody is attached to, makes no read other than the view check, and reads again when it comes back. | Demonstration |
 
 ## Dependencies
 

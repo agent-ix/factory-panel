@@ -587,6 +587,27 @@ test('/factory teams NOPE keeps NOPE and the band says team NOPE matched nothing
   await ui.unmount()
 })
 
+test('a team is said to match nothing only when the focus reports and the agents of that team were both read', () => {
+  trace("FR-027-AC-19")
+  const asked = { ...snapshotOf(), scope: scope({ teams: ['NOPE'], teamsSelected: true }), board: { teams: ['NOPE'], agents: [], error: null } }
+  expect(scopeNotes(asked)).toContain('team NOPE matched nothing')
+  // A module set that reads only the focus, or only the agents.
+  expect(scopeNotes({ ...asked, boardLoaded: false })).toEqual([])
+  expect(scopeNotes({ ...asked, focusesLoaded: false })).toEqual([])
+  // The agents held were read for another list of teams.
+  expect(scopeNotes({ ...asked, board: { teams: ['QSL'], agents: [], error: null } })).toEqual([])
+})
+
+test('the queue cell shows an unknown Ready as a dash, never as a smaller number', () => {
+  trace("FR-023-AC-10")
+  const base = focusView('draco:QSL:code', 'QSL layer 4')
+  const queueText = (ready: number | null) => buildCells(['queue'], { ...snapshotOf(), focuses: [{ ...base, header: { ...base.header!, ready } }] })[0]!.parts
+  expect(queueText(null).map(p => p.text).join('')).toBe('- ready · 2 doing')
+  expect(queueText(null)[0]!.tone).toBeUndefined()
+  expect(queueText(4).map(p => p.text).join('')).toBe('4 ready · 2 doing')
+  expect(queueText(4)[0]!.tone).toBe('warning')
+})
+
 test('/factory show prints each feature with its value and where it came from', async () => {
   trace("FR-014-AC-7")
   const w = world(() => undefined as never)
@@ -758,6 +779,7 @@ function snapshotOf() {
     scope: scope(),
     teamViews: [],
     focusesLoaded: true,
+    boardLoaded: true,
     prometheusError: null,
     relayAt: 1,
     relayError: null,

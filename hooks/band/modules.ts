@@ -43,8 +43,9 @@ export type Snapshot = {
   scope: Scope
   /** The Team view's tiles per team. */
   teamViews: readonly TeamView[]
-  /** True once the focus reports have been read, so a team that matches nothing can be said so. */
+  /** True once the focus reports and once ix-board's agents have been read: only then can a team be said to match nothing. */
   focusesLoaded: boolean
+  boardLoaded: boolean
   prometheusError: string | null
   /** When the relay check last answered (null: never) and what it last said when it failed. */
   relayAt: number | null
@@ -133,8 +134,10 @@ export const scopeNotes = (s: Snapshot): string[] => {
   const { note } = scopeFocuses(s.focuses, s.scope)
   if (note !== null && s.focusesLoaded) notes.push(note)
   const known = new Set([...s.focuses.map(f => teamOf(f.address).toLowerCase()), ...s.board.agents.map(a => a.team.toLowerCase())])
-  if (s.focusesLoaded || s.board.agents.length > 0)
-    for (const t of s.scope.teams) if (s.scope.teamsSelected && !known.has(t.toLowerCase())) notes.push(`team ${t} matched nothing`)
+  // Only the sources of what is drawn are read, so both that could name a team must have answered,
+  // ix-board for a list that holds it.
+  if (s.focusesLoaded && s.boardLoaded)
+    for (const t of s.scope.teams) if (s.scope.teamsSelected && s.board.teams.some(b => same(b, t)) && !known.has(t.toLowerCase())) notes.push(`team ${t} matched nothing`)
   return notes
 }
 
@@ -196,7 +199,9 @@ const queue = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
   if (f === undefined) return null
   const { inProgress } = progressOf(f)
-  return { id: 'queue', pane: 'focus', parts: [{ text: `${f.header?.ready ?? 0} ready`, tone: (f.header?.ready ?? 0) > 0 ? 'warning' : undefined }, { text: ` · ${inProgress} doing`, dim: true }] }
+  // An unknown Ready is a dash, never a smaller number.
+  const ready = f.header === null ? 0 : f.header.ready
+  return { id: 'queue', pane: 'focus', parts: [{ text: `${ready ?? '-'} ready`, tone: (ready ?? 0) > 0 ? 'warning' : undefined }, { text: ` · ${inProgress} doing`, dim: true }] }
 }
 
 /** A lead's status from the agents of its work report: failed, else running, else waiting, else done, else unknown. */

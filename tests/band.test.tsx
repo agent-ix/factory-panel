@@ -49,6 +49,7 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   scope: { hosts: 'all', focus: 'own', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' },
   teamViews: [],
   focusesLoaded: true,
+  boardLoaded: true,
   prometheusError: null,
   relayAt: 1,
   relayError: null,
