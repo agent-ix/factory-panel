@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1
+
+Fetch less.
+
+- A source is read only while a view that draws it is on screen, and read at once when the view comes back with data older than its interval. A session that is not interactive reads nothing. Prometheus follows `refreshSeconds`; herdr and `agent-msg doctor` are read once a minute; a source that fails or answers slowly is read less often, up to every 5 minutes.
+- All healthy projects of a focus are asked in one `ix-board --json focus status --project <ref> --project <ref> ...` call instead of one call each. A focus of 20 projects went from about 22 calls every 5 minutes (with one bad project) to one call every 30 minutes.
+- A project that makes the combined call fail is found (from the id in the error, else by halves, in at most 12 further calls), remembered in `~/.ix/factory-panel/known-bad.json` for every session, left out of the combined call and asked alone at most once an hour or on the refresh key. An error of the source (ix-board missing or refusing, rate limit, a timed out combined call) is never blamed on a project.
+- Linear-backed reads (progress, roadmap, `ix-board agents`) run at most once every 30 minutes across all sessions; the refresh key still asks after 60 seconds. A failed project no longer shortens the interval; only an error of the source holds a read for 5 minutes, and a read that fails outright is now held too instead of being repeated at every poll.
+- An initiative's project list is used for 6 hours before the roadmap or an initiative call is asked again, the roadmap is read at most once every 30 minutes across all sessions, and an initiative that fails is tried again after an hour.
+- Changed numbers: a combined answer does not say which project a blocker belongs to, so a project asked with others shows `-` for Blocked, as do the initiatives that hold it; the header Blocked is now the number of distinct open blockers of the focus, no longer a sum that counted a shared blocker once per project. Done, total and Ready are as before.
+- A recorded value is drawn in the warning tone after 60 minutes (it was 30), since progress is now read every 30 minutes.
+
 ## 0.7.0
 
 - The Focus card draws each initiative with its projects nested under it, each project with its own bar, `done/total`, Remaining, Ready and Blocked, and a header total over every counted project with the stage counts from `open_by_state`. The totals are honest: an initiative reads `X of Y projects`, is marked partial only when a project is missing, says `includes old data (oldest 5m)` when a counted project comes from a record, and a header with a missing or old part or an initiative that could not be expanded is never drawn as complete.
