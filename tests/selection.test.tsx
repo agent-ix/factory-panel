@@ -2,12 +2,12 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { MODULE_IDS, buildCells, scopeFocuses, scopeNotes } from '../hooks/band/modules'
+import { MODULE_IDS, buildCells, scopeFocuses, scopeNotes, statusOf } from '../hooks/band/modules'
 import type { Scope } from '../hooks/band/modules'
 import { helpText, runFactory, showText } from '../hooks/router'
 import { FALLBACK_MODULES, decide, getSelection, keyOf, modulesToDraw, parseFile, parseIdentity, refreshSelection } from '../hooks/selection'
 import type { FocusView } from '../types'
-import { CLASSIC, FP, HOME, bandCells, bandLine, drawBand, fake$, options, report, settle, startSession, world } from './world'
+import { CLASSIC, FULLSCREEN, FP, HOME, bandCells, bandLine, drawBand, fake$, options, report, settle, startSession, whoamiLine, world } from './world'
 import type { World } from './world'
 
 // Tests for the feature selection requirements: relay identity (FR-005), the fallback and the
@@ -59,7 +59,8 @@ async function band($: Parameters<TestBody>[0], view = CLASSIC) {
 test('the relay address host1:QSL:code scopes to team QSL and asks nothing', async () => {
   trace("FR-005-AC-1")
   const w = world(() => undefined as never)
-  w.whoami.value = 'host1:QSL:code'
+  // The real output has the location source and the models after the address.
+  w.whoami.value = whoamiLine('host1:QSL:code')
   const sel = await refresh(w)
   expect(sel.identity).toEqual({ status: 'detected', address: 'host1:QSL:code', host: 'host1', team: 'QSL', segment: 'code' })
   expect(sel.teams).toEqual({ value: ['QSL'], source: 'default' })
@@ -157,8 +158,9 @@ test('with nothing selected and whoami failing the band shows the fallback modul
   const sel = decide({ status: 'unknown' }, {}, {}, [], false)
   expect(sel.modules.value).toEqual([...FALLBACK_MODULES])
   expect(modulesToDraw(sel)).toEqual(['health', ...FALLBACK_MODULES])
+  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4'))
   const ui = await band($)
-  expect(await bandCells(ui)).toContain('local')
+  expect(await bandCells(ui)).toEqual(['health', 'local', 'focus', 'lead'])
   await ui.unmount()
 })
 
@@ -389,11 +391,22 @@ test('a declaration naming teams ENG shows lanes for ENG although the session is
 test('with nothing selected the focus and lead cells show the status of the relay report', async ($, on) => {
   trace("FR-012-AC-4")
   const w = world(on)
-  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4', 'idle'))
+  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4', ['waiting']))
   const ui = await band($)
   expect((await ui.find({ key: 'focus' }))?.text).toMatch(/^QSL layer 4/)
   expect((await ui.find({ key: 'lead' }))?.text).toBe('lead draco:QSL:code ◌')
   await ui.unmount()
+})
+
+test('a lead\'s status is derived from the agents of its work report', () => {
+  trace("FR-012-AC-7")
+  const of = (...s: string[]) => statusOf(s.map(status => ({ status })))
+  expect(of('done', 'failed')).toBe('failed')
+  expect(of('running', 'waiting')).toBe('running')
+  expect(of('waiting', 'done')).toBe('waiting')
+  expect(of('done')).toBe('done')
+  expect(of('canceled')).toBe('unknown')
+  expect(statusOf(undefined)).toBe('unknown')
 })
 
 test('a plain /factory with nothing selected asks no question', async () => {
@@ -745,3 +758,66 @@ function snapshotOf() {
     boardError: null,
   } as Parameters<typeof buildCells>[1]
 }
+
+// ---------------------------------------------------------------- review follow-ups
+
+test('a declaration that changes the focus scope re-reads the leads at the next refresh', async ($, on) => {
+  trace("FR-013-AC-2")
+  const w = world(on, true)
+  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4'))
+  w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2'))
+  await startSession($)
+  await w.clock!.advance(1000)
+  const focusText = async () => {
+    const ui = await drawBand($, CLASSIC)
+    const text = (await ui.find({ key: 'focus' }))?.text
+    await ui.unmount()
+    return text
+  }
+  expect(await focusText()).not.toMatch(/\+1$/)
+  feature(w, { focus: 'team', teams: ['QSL', 'ENG'] })
+  await w.clock!.advance(15_000)
+  await w.clock!.advance(1000)
+  expect(await focusText()).toMatch(/\+1$/)
+})
+
+test('a malformed declaration is noted for the first band drawn, not consumed by a layout without one or by a command', async ($, on) => {
+  trace("FR-011-AC-7")
+  const w = world(on, true)
+  feature(w, '{ not json')
+  await startSession($)
+  await w.clock!.advance(1000)
+  const full = await drawBand($, FULLSCREEN)
+  await full.unmount()
+  await $.command.run({ command: 'factory', args: 'show' })
+  const ui = await drawBand($, CLASSIC)
+  expect(await bandLine(ui)).toMatch(/not valid JSON/)
+  await ui.unmount()
+  const again = await drawBand($, CLASSIC)
+  expect(await bandLine(again)).toBeUndefined()
+  await again.unmount()
+})
+
+test('a malformed key declaration or choice file is treated as if it did not exist, so default.json is read', async () => {
+  trace("FR-011-AC-6", "FR-014-AC-14")
+  const w = world(() => undefined as never)
+  feature(w, '{ not json')
+  feature(w, { modules: ['lanes'] }, 'default')
+  choice(w, '[1,2')
+  choice(w, { modules: ['queue'], teams: ['OPS'] }, 'default')
+  const shown = await run(w, 'show')
+  expect(getSelection().modules).toEqual({ value: ['queue'], source: 'user' })
+  expect(getSelection().teams).toEqual({ value: ['OPS'], source: 'user' })
+  expect(shown).toMatch(/features\/draco_QSL_code\.json: ignored, not valid JSON/)
+  expect(shown).toMatch(/choices\/draco_QSL_code\.json: ignored, not valid JSON/)
+  feature(w, '{ not json')
+  w.files.delete(`${FP}/choices/${KEY}.json`)
+  choice(w, '[1,2')
+  const before = w.files.get(`${FP}/choices/default.json`)
+  const reset = await run(w, 'reset')
+  expect(written(w, 'choices')).toEqual({})
+  expect(w.files.get(`${FP}/choices/default.json`)).toBe(before)
+  expect(w.writes).toEqual([`${FP}/choices/${KEY}.json`])
+  expect(reset).toMatch(/Your choices: none/)
+  expect(getSelection().modules).toEqual({ value: ['lanes'], source: 'declaration' })
+})

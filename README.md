@@ -62,7 +62,7 @@ All settings are optional and appear in the config menu.
 | `inlineView` | What a classic session shows: band, status or off |
 | `prometheusUrl` | Prometheus to query. Empty uses the shared ix config, then this host's relay endpoint, then the factory's |
 | `grafanaUrl` | Grafana for dashboard links. Empty follows Prometheus's name |
-| `teams` | Comma-separated herdr workspace labels ix-board may be asked about when no choice or declaration names teams |
+| `teams` | Comma-separated herdr workspace labels. Only the ix-board query list for a session the relay cannot identify, and only when no choice or declaration names teams; it never narrows what is shown |
 | `refreshSeconds` | How often Prometheus and herdr are polled, and the declaration and choice files are re-read |
 
 ix-board reads share a rate-limit gate across sessions on a machine. It keeps each read's result and any Linear retry time in `~/.ix/factory-panel/linear-gate.json`, runs each read at most once every 15 minutes (60 seconds for a manual refresh) and calls ix-board again only after a Linear rate limit has passed. A cache an earlier version left in `~/.cache/factory-panel/` is read once as the starting point and never written.

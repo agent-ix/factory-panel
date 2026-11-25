@@ -177,13 +177,27 @@ const queue = (s: Snapshot): Cell | null => {
   return { id: 'queue', pane: 'focus', parts: [{ text: `${f.ready} ready`, tone: f.ready > 0 ? 'warning' : undefined }, { text: ` · ${inProgress} doing`, dim: true }] }
 }
 
+/** A lead's status from the agents of its work report: failed, else running, else waiting, else done, else unknown. */
+export const statusOf = (agents: readonly { status?: string }[] | undefined): string => {
+  const has = (status: string) => (agents ?? []).some(a => a.status === status)
+  return has('failed') ? 'failed' : has('running') ? 'running' : has('waiting') ? 'waiting' : has('done') ? 'done' : 'unknown'
+}
+
+const MARKS: Record<string, { mark: string; tone: Tone }> = {
+  working: { mark: '◐', tone: 'claude' },
+  running: { mark: '◐', tone: 'claude' },
+  idle: { mark: '◌', tone: 'warning' },
+  waiting: { mark: '◌', tone: 'warning' },
+  failed: { mark: '✕', tone: 'error' },
+  done: { mark: '✓', tone: 'success' },
+}
+
 const lead = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
   if (f === undefined) return null
   const agent = s.board.agents.find(a => a.agent === f.address)
   const status = agent?.status ?? f.status
-  const tone: Tone = status === 'working' ? 'claude' : status === 'idle' ? 'warning' : 'inactive'
-  const mark = status === 'working' ? '◐' : status === 'idle' ? '◌' : '○'
+  const { mark, tone } = MARKS[status] ?? { mark: '○', tone: 'inactive' as Tone }
   return { id: 'lead', pane: 'focus', parts: [{ text: 'lead ', dim: true }, { text: `${f.address} ` }, { text: mark, tone }] }
 }
 

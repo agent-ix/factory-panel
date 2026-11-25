@@ -51,13 +51,13 @@ export const normalizeModules = (names: readonly string[]): ModuleId[] =>
     .filter((t): t is ModuleId => (MODULE_IDS as readonly string[]).includes(t))
     .filter((t, i, all) => all.indexOf(t) === i)
 
-/** The modules named in a comma or space list. */
-export const parseModules = (text: string): ModuleId[] => normalizeModules(text.split(/[\s,]+/))
-
-/** Reads `host:team:segment` out of `agent-msg whoami`; `unknown` when the output has no such address. */
+/**
+ * Reads `host:team:segment` out of `agent-msg whoami`: the first word of any line that has that
+ * form (the real output is `host:team:segment  (location)  <models>`); `unknown` when none does.
+ */
 export const parseIdentity = (text: string): Identity => {
   for (const raw of text.split('\n')) {
-    const m = /^([^\s:]+):([^\s:]+):([^\s:]+)$/.exec(raw.trim())
+    const m = /^([^\s:]+):([^\s:]+):([^\s:]+)$/.exec(raw.trim().split(/\s+/)[0] ?? '')
     if (m) return { status: 'detected', address: `${m[1]}:${m[2]}:${m[3]}`, host: m[1]!, team: m[2]!, segment: m[3]! }
   }
   return { status: 'unknown' }
@@ -67,7 +67,8 @@ export const parseIdentity = (text: string): Identity => {
 export const keyOf = (identity: Identity): string =>
   identity.status === 'detected' ? identity.address.replace(/:/g, '_').replace(/[^A-Za-z0-9_.-]/g, '_') : 'default'
 
-export type Parsed = { picked: Picked; notes: string[] }
+/** `ignored` is true when the whole file was set aside, as if it did not exist. */
+export type Parsed = { picked: Picked; notes: string[]; ignored?: boolean }
 
 /** Reads a declaration or choice file's text. A file that is not a JSON object is ignored whole. */
 export function parseFile(text: string, file: string): Parsed {
@@ -77,9 +78,9 @@ export function parseFile(text: string, file: string): Parsed {
   try {
     json = JSON.parse(text)
   } catch {
-    return { picked, notes: [`${file}: ignored, not valid JSON`] }
+    return { picked, notes: [`${file}: ignored, not valid JSON`], ignored: true }
   }
-  if (typeof json !== 'object' || json === null || Array.isArray(json)) return { picked, notes: [`${file}: ignored, not a JSON object`] }
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return { picked, notes: [`${file}: ignored, not a JSON object`], ignored: true }
   const o = json as Record<string, unknown>
   for (const k of Object.keys(o)) if (!(FEATURES as readonly string[]).includes(k)) notes.push(`${file}: ignored unknown key ${k}`)
   const strings = (v: unknown): string[] | null => (Array.isArray(v) && v.every(x => typeof x === 'string') ? (v as string[]) : null)
@@ -146,16 +147,26 @@ const pendingSelection = (): Selection => decide({ status: 'pending' }, {}, {}, 
 
 let current: Selection = pendingSelection()
 let homeDir: string | undefined
-/** What the band note last said, so an unchanged file does not repeat it on later refreshes. */
-let lastNoteKey = ''
-let bandNote: string | undefined
+/** The note found by the latest refresh that no band has drawn yet, with the content it was found for. */
+let pendingNote: { key: string; text: string } | undefined
+/** The content of the last note a band drew, so an unchanged file does not repeat it. */
+let shownNoteKey = ''
 let ready: Promise<void> = Promise.resolve()
 let identity: Identity = { status: 'pending' }
 let lookup: Promise<void> | undefined
 
 export const getSelection = (): Selection => current
-/** The note the band shows after the latest refresh, if that refresh found a new problem. */
-export const getBandNote = (): string | undefined => bandNote
+/**
+ * The note a band that is being drawn now shows, once: taking it marks that content as shown. A
+ * refresh never clears a note nobody has drawn, and a layout without a band never takes it.
+ */
+export function takeBandNote(): string | undefined {
+  const note = pendingNote
+  if (note === undefined) return undefined
+  shownNoteKey = note.key
+  pendingNote = undefined
+  return note.text
+}
 /** Resolves once the first identity lookup has answered or given up. */
 export const selectionReady = (): Promise<void> => ready
 
@@ -163,8 +174,8 @@ export const selectionReady = (): Promise<void> => ready
 export function resetSelection(): void {
   current = pendingSelection()
   identity = { status: 'pending' }
-  lastNoteKey = ''
-  bandNote = undefined
+  shownNoteKey = ''
+  pendingNote = undefined
   lookup = undefined
   ready = Promise.resolve()
 }
@@ -190,27 +201,36 @@ async function lookupIdentity($: EngineInterface): Promise<void> {
   }
 }
 
-/** Reads `<dir>/<key>.json`, else `<dir>/default.json`; null when neither exists. */
-async function readKeyed($: EngineInterface, dir: string, key: string): Promise<{ file: string; text: string } | null> {
-  for (const name of key === 'default' ? ['default'] : [key, 'default']) {
-    const file = `${dir}/${name}.json`
-    try {
-      return { file, text: await $.fs.read(file) }
-    } catch {
-      // missing: try the next
-    }
-  }
-  return null
-}
-
 const shown = (file: string, base: string): string => file.replace(base, '~/.ix/factory-panel')
 
+/**
+ * Reads `<dir>/<key>.json`, else `<dir>/default.json`. A file that is missing or ignored (not a JSON
+ * object, not valid JSON) counts as if it did not exist, so the next one is read; what an ignored
+ * file said is a note. `raw` is what was read, to tell a changed file from an unchanged one.
+ */
+async function readParsed($: EngineInterface, dir: string, key: string, base: string): Promise<{ parsed: Parsed; raw: string }> {
+  const notes: string[] = []
+  let raw = ''
+  for (const name of key === 'default' ? ['default'] : [key, 'default']) {
+    const file = `${dir}/${name}.json`
+    let text: string
+    try {
+      text = await $.fs.read(file)
+    } catch {
+      continue // missing: try the next
+    }
+    const parsed = parseFile(text, shown(file, base))
+    raw += text
+    notes.push(...parsed.notes)
+    if (!parsed.ignored) return { parsed: { picked: parsed.picked, notes }, raw }
+  }
+  return { parsed: { picked: {}, notes }, raw }
+}
+
 /** The choices stored for this session, as the mod would apply them. */
-async function readChoice($: EngineInterface, base: string, key: string): Promise<{ parsed: Parsed; any: boolean }> {
-  const found = await readKeyed($, `${base}/choices`, key)
-  if (found === null) return { parsed: { picked: {}, notes: [] }, any: false }
-  const parsed = parseFile(found.text, shown(found.file, base))
-  return { parsed, any: Object.keys(parsed.picked).length > 0 }
+async function readChoice($: EngineInterface, base: string, key: string): Promise<{ parsed: Parsed; raw: string; any: boolean }> {
+  const found = await readParsed($, `${base}/choices`, key, base)
+  return { ...found, any: Object.keys(found.parsed.picked).length > 0 }
 }
 
 /**
@@ -235,13 +255,14 @@ async function readSelection($: EngineInterface): Promise<Selection> {
     }
     const base = await factoryDir($)
     const key = keyOf(identity)
-    const declared = await readKeyed($, `${base}/features`, key)
-    const decl: Parsed = declared === null ? { picked: {}, notes: [] } : parseFile(declared.text, shown(declared.file, base))
+    const declared = await readParsed($, `${base}/features`, key, base)
+    const decl = declared.parsed
     const choice = await readChoice($, base, key)
     const notes = [...decl.notes, ...choice.parsed.notes]
-    const noteKey = notes.length === 0 ? '' : `${declared?.text ?? ''}\u0000${notes.join('\n')}`
-    bandNote = notes.length > 0 && noteKey !== lastNoteKey ? notes.join(' · ') : undefined
-    lastNoteKey = noteKey
+    // A note is kept for the next band that is drawn, unless that content has already been shown.
+    const noteKey = notes.length === 0 ? '' : `${declared.raw}\u0000${choice.raw}\u0000${notes.join('\n')}`
+    pendingNote = notes.length > 0 && noteKey !== shownNoteKey ? { key: noteKey, text: notes.join(' · ') } : undefined
+    if (notes.length === 0) shownNoteKey = ''
     current = decide(identity, choice.parsed.picked, decl.picked, notes, choice.any)
   } catch (error) {
     $.ui.log(`factory-panel: selection failed: ${errorText(error)}`, { to: 'debug' })

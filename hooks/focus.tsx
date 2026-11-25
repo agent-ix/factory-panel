@@ -6,7 +6,7 @@ import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { gatedBoard } from './linear'
-import { focusTeams, scopeFocuses, teamOf } from './band/modules'
+import { focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
 import { getSelection, scopeOf, selectionReady } from './selection'
 import type { Options } from './shared'
 
@@ -34,8 +34,8 @@ const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as 
 // ---------------------------------------------------------------- data
 
 type WorkReport = {
-  status?: string
-  binding?: { machine?: string; kind?: string; model?: string; address?: string }
+  binding?: { machine?: string; kind?: string; address?: string }
+  agents?: { status?: string }[]
   scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number }
   focus?: { summary?: string; reported_at_ms?: number }
 }
@@ -96,9 +96,10 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport, man
     address: report.binding?.address ?? lead,
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
-    model: report.binding?.model ?? null,
+    // The work report carries no model; the pane shows the harness kind.
+    model: null,
     summary: report.focus?.summary ?? '',
-    status: typeof report.status === 'string' ? report.status.toLowerCase() : '',
+    status: statusOf(report.agents),
     scope: {
       initiatives: report.scope?.initiatives?.length ?? 0,
       projects: report.scope?.projects?.length ?? 0,

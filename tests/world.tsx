@@ -58,7 +58,7 @@ export type World = {
 
 export function world(on: On, withClock = false): World {
   resetSelection()
-  const w: World = { opens: [], closes: [], asks: [], statuses: [], store: new Map(), whoami: { value: 'draco:QSL:code' }, listed: { value: undefined }, relayFails: { value: false }, registered: [], files: new Map(), writes: [], ran: [], leads: new Map(), boardAgents: [], whoamiTimeout: { value: undefined }, whoamiMode: { value: 'answer' }, reads: [], clock: undefined }
+  const w: World = { opens: [], closes: [], asks: [], statuses: [], store: new Map(), whoami: { value: 'draco:QSL:code  (location)  model unknown' }, listed: { value: undefined }, relayFails: { value: false }, registered: [], files: new Map(), writes: [], ran: [], leads: new Map(), boardAgents: [], whoamiTimeout: { value: undefined }, whoamiMode: { value: 'answer' }, reads: [], clock: undefined }
   if (withClock) w.clock = mock.clock(on, { now: Date.UTC(2026, 10, 24, 12, 0) })
   on('command.register', (_, e) => (w.registered.push(e.name), { value: { command: e.name } }))
   on('ui.open', (_, e) => {
@@ -158,8 +158,19 @@ export function fake$(w: World) {
   }
 }
 
-/** A work report that gives a lead a focus summary and no tracker scope, so no ix-board read follows. */
-export const report = (address: string, summary: string, status = 'working') => ({ binding: { address, machine: address.split(':')[0] }, focus: { summary }, status })
+/**
+ * A work report in the shape `agent-msg work show` prints (relay-core WorkReport): a focus summary and
+ * no tracker scope, so no ix-board read follows, and one agent for each status given.
+ */
+export const report = (address: string, summary: string, agentStatuses: string[] = ['running']) => ({
+  binding: { machine: address.split(':')[0], pane: 'w1:p1', session: 'sess-1', process_id: 4242, kind: 'codex', address },
+  scope: null,
+  focus: { summary, tickets: [], reported_at_ms: 1795214759001 },
+  agents: agentStatuses.map((status, i) => ({ agent_id: `a${i}`, name: `agent ${i}`, ticket: 'QSL-1', role: 'coder', status, pane: null, session: null, reported_at_ms: 1795214759001 })),
+})
+
+/** What `agent-msg whoami` prints for a lead: the address, the source of the location, then the models. */
+export const whoamiLine = (address: string) => `${address}  (location)  model unknown`
 
 export const startSession = ($: Parameters<TestBody>[0], isInteractive = true, cwd = '/proj') => $.session.start({ cwd, surface: 'terminal', isInteractive })
 

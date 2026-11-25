@@ -84,10 +84,10 @@ export type FocusView = {
   address: string
   machine: string
   kind: string
-  /** The model, e.g. claude-opus-5-5, once ix-relay reports it in the work binding. */
+  /** The model, when a source reports one; the work report does not, so it is null. */
   model: string | null
   summary: string
-  /** What the lead's work report says it is doing (working, idle), '' when it says nothing. */
+  /** Derived from the agents of the lead's work report: failed, running, waiting, done or unknown. */
   status: string
   scope: { initiatives: number; projects: number; tickets: number }
   focusReportedAt: number | null

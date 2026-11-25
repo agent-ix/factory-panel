@@ -2,7 +2,7 @@ import { atom, read } from 'claude-code'
 import type { EngineInterface, On, RenderElement, RenderInput } from 'claude-code'
 
 import type { BoardView, Escalation, Freshness, FocusMeta, FocusView, Machine, RelayView, TeamView } from '../../types'
-import { getBandNote, getSelection, modulesToDraw, scopeOf } from '../selection'
+import { getSelection, takeBandNote, modulesToDraw, scopeOf } from '../selection'
 import { errorText } from '../shared'
 import type { Options } from '../shared'
 import { showView, isViewId } from '../views'
@@ -83,12 +83,12 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
   }
 }
 
-async function cellsFor($: EngineInterface, options: Options): Promise<{ cells: Cell[]; notes: string[] }> {
+async function cellsFor($: EngineInterface, options: Options, drawing = false): Promise<{ cells: Cell[]; notes: string[] }> {
   const plan = bandPlan(options)
   if (plan.off) return { cells: [], notes: [] }
   const snap = await snapshot($, options)
-  // The one-time note about an ignored file or value, then what the scope has to say.
-  const note = getBandNote()
+  // The one-time note about an ignored file or value (taken only by a band that is drawn), then what the scope has to say.
+  const note = drawing ? takeBandNote() : undefined
   return { cells: buildCells(plan.ids, snap), notes: [...(note === undefined ? [] : [note]), ...scopeNotes(snap)] }
 }
 
@@ -98,7 +98,7 @@ export const cellText = (cells: readonly Cell[]): string =>
 
 /** Draws the band for a classic-layout session; null when it has nothing to show. */
 export async function renderBand($: EngineInterface, e: RenderInput, options: Options): Promise<RenderElement | null> {
-  const { cells, notes } = await cellsFor($, options)
+  const { cells, notes } = await cellsFor($, options, true)
   if (cells.length === 0 && notes.length === 0) return null
   const { Box, Text, Button } = $.ui.resolve(e)
   const part = (p: Part, i: number) => (

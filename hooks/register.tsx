@@ -1,13 +1,13 @@
 import type { EngineInterface, Register, RenderViewport } from 'claude-code'
 
 import { PANE_SPEC as ESCALATIONS_PANE, registerEscalations, startEscalations } from './escalations'
-import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './factory'
-import { PANE_SPEC as FOCUS_PANE, registerFocus, startFocus } from './focus'
+import { PANE_SPEC as FACTORY_PANE, pollBoard, registerFactory, startFactory } from './factory'
+import { PANE_SPEC as FOCUS_PANE, pollFocus, registerFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { resolveEndpoints } from './endpoints'
 import { renderBand, startBand, syncStatus } from './band'
-import { refreshSelection, resetSelection } from './selection'
+import { getSelection, refreshSelection, resetSelection } from './selection'
 import { registerRouter } from './router'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
 
@@ -22,6 +22,8 @@ const everOpened = new Set<string>()
 // layouts open them, any other layout leaves them to /factory (an open the person asked for).
 let isInteractive = false
 let isLayoutDecided = false
+// The selection's refresh timer is started once per process, however often a session starts.
+let isSelectionTimed = false
 
 const HINT = 'panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
 
@@ -41,6 +43,10 @@ function decideLayout($: EngineInterface, viewport: RenderViewport | undefined, 
   })
 }
 
+/** What the focus and lane scope reads: the focus value and the teams. */
+const scopeKey = (): string => `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
+let lastScope: string | undefined
+
 export const register: Register = (on, rawOptions) => {
   const options = readOptions(rawOptions as Record<string, unknown>)
   registerFactory(on, options)
@@ -55,11 +61,26 @@ export const register: Register = (on, rawOptions) => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     resetSelection()
+    lastScope = undefined
     // The band paints from the fallback at once; who the session is, what a skill declared and
     // what the user chose follow when `agent-msg whoami` and the files answer (never waited for).
-    const refresh = () => guarded($, 'Selection', async () => void (await refreshSelection($))).then(() => $.ui.invalidate('ui.render'))
+    const refresh = () =>
+      guarded($, 'Selection', async () => {
+        await refreshSelection($)
+        const now = scopeKey()
+        // A changed focus or teams value (a declaration written, a choice made elsewhere) re-reads the leads and lanes it now covers.
+        // The first refresh only records the scope: the first polls already wait for it.
+        if (lastScope !== undefined && lastScope !== now) {
+          void guarded($, 'Focus poll', () => pollFocus($))
+          void guarded($, 'Board poll', () => pollBoard($, options))
+        }
+        lastScope = now
+      }).then(() => $.ui.invalidate('ui.render'))
     void refresh()
-    $.clock.every(options.refreshSeconds * 1000, () => void refresh())
+    if (!isSelectionTimed) {
+      isSelectionTimed = true
+      $.clock.every(options.refreshSeconds * 1000, () => void refresh())
+    }
     await guarded($, 'Endpoint discovery', () => resolveEndpoints($, options))
     await guarded($, 'Factory start', () => startFactory($, options))
     await guarded($, 'Focus start', () => startFocus($, options))

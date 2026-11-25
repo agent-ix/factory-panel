@@ -12,7 +12,7 @@ hub:ENG:code  hub  codex  seen 11-21 09:40  pane w1F:pR  -  Herdr w1F:w1F:tG
 `
 
 const WORK = JSON.stringify({
-  binding: { machine: 'hub', pane: 'w1F:p13', kind: 'claude', model: 'claude-opus-5-5', address: 'hub:ENG:arch' },
+  binding: { machine: 'hub', pane: 'w1F:p13', kind: 'claude', session: 'sess-1', process_id: 4242, address: 'hub:ENG:arch' },
   scope: { initiatives: ['00000000-0000-4000-8000-000000000001'], projects: [], tickets: [], reported_at_ms: 1795216041262 },
   focus: { summary: 'Payments v2: finish the ledger and export work', tickets: [], reported_at_ms: 1795214759001 },
   agents: [],
@@ -232,7 +232,8 @@ test('the Focus pane draws a coordinator’s focus, its progress and its open pr
     // The terminal caption is one line; desktop keeps separate pieces.
     expect((await ui.find({ type: 'Text', text: /117.{1,3}124 done/ }))?.text).toBe(surface === 'terminal' ? '117/124 done · 6 in progress · 0 ready' : '117 / 124 done')
     expect((await ui.find({ type: 'Text', text: /6 in progress/ }))?.text).toMatch(/6 in progress/)
-    expect((await ui.find({ type: 'Text', text: 'Opus 5.5' }))?.text).toBe('Opus 5.5')
+    // The real work binding carries no model, so the card shows the harness kind.
+    expect((await ui.find({ type: 'Text', text: 'claude' }))?.text).toBe('claude')
     // Open projects show, most work left first; the finished one hides behind a toggle.
     const names = (await ui.findAll({ type: 'Text', text: /^Payments [a-z ]+$/ })).map(t => t.text)
     expect(names).toEqual(['Payments ledger', 'Payments export'])
