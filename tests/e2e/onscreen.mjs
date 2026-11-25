@@ -46,7 +46,9 @@ const VIEWERS = `fp-onscreen-viewer-${process.pid}`
 const SETTLING_SECS = 20
 
 const sleep = ms => new Promise(done => setTimeout(done, ms))
-const which = command => execFileSync('/usr/bin/which', [command], { encoding: 'utf8' }).trim()
+/** A command that has not ended after this long is killed and fails the check, rather than hanging it. */
+const COMMAND_MS = 30000
+const which = command => execFileSync('/usr/bin/which', [command], { encoding: 'utf8', timeout: COMMAND_MS }).trim()
 const REAL = { tmux: which('tmux') }
 
 const results = []
@@ -206,7 +208,7 @@ class Session {
     return s
   }
   tmux(...args) {
-    return execFileSync(REAL.tmux, ['-L', SESSIONS, ...args], { encoding: 'utf8' })
+    return execFileSync(REAL.tmux, ['-L', SESSIONS, ...args], { encoding: 'utf8', timeout: COMMAND_MS })
   }
   /** Starts a herdr server in the session's home, a client of it in tmux, and `claude` in the first of two tabs. */
   async startHerdr(bin, claude) {
@@ -216,7 +218,7 @@ class Session {
     writeFileSync(join(this.home, '.config', 'herdr', 'config.toml'), 'onboarding = false\n[update]\nversion_check = false\nmanifest_check = false\n')
     // Nothing of a herdr this check may itself be running in: its variables are not passed on.
     const env = { ...this.env, SHELL: '/bin/sh' }
-    this.herdr = (...args) => execFileSync(binary, args, { encoding: 'utf8', env })
+    this.herdr = (...args) => execFileSync(binary, args, { encoding: 'utf8', env, timeout: COMMAND_MS })
     const out = openSync(join(this.home, 'herdr-server.out'), 'a')
     this.daemon = spawn(binary, ['server'], { env, stdio: ['ignore', out, out] })
     for (let i = 0; i < 40 && !/status: running/.test(this.herdr('status')); i++) await sleep(500)
@@ -379,7 +381,7 @@ async function fullscreen(s) {
   check('fullscreen: the transcript view covers the panel', !TABS.test(s.screen()))
   check('fullscreen: nothing is read while it does', none(covered), json(covered))
   s.key('Escape')
-  check('fullscreen: the panel is back after the transcript view', await s.waitFor(t => TABS.test(t), 10000))
+  check('fullscreen: the panel is back after the transcript view', await s.waitFor(t => TABS.test(t), 10000), s.screen())
 
   // Each close mark closes the tab on view; six close the panel.
   let closes = 0
@@ -389,7 +391,7 @@ async function fullscreen(s) {
     await sleep(1500)
   }
   check('fullscreen: a close mark was clicked', closes > 0, `${closes} clicks`)
-  check('fullscreen: the panel is closed', await s.waitFor(t => !/✕/.test(t) && !TABS.test(t), 5000))
+  check('fullscreen: the panel is closed', await s.waitFor(t => !/✕/.test(t) && !TABS.test(t), 5000), s.screen())
   await sleep(5000)
   const closed = (await s.phase(s.mark('panel closed'))).counts
   check('fullscreen: nothing is read with the panel closed', none(closed), json(closed))
@@ -429,7 +431,7 @@ async function tmuxViewed(s) {
   const detached = (await s.phase({ label: 'nobody attached', from: 0 })).steady
   check('tmux: with nobody attached only the view check runs', only(detached, ['tmux view check']), json(detached))
   const attach = s.mark('attached')
-  execFileSync(REAL.tmux, ['-L', VIEWERS, 'new-session', '-d', '-s', 'viewer', '-x', '200', '-y', '50', `env -u TMUX ${quoted(REAL.tmux)} -L ${SESSIONS} attach -t ${s.tmuxName}`])
+  execFileSync(REAL.tmux, ['-L', VIEWERS, 'new-session', '-d', '-s', 'viewer', '-x', '200', '-y', '50', `env -u TMUX ${quoted(REAL.tmux)} -L ${SESSIONS} attach -t ${s.tmuxName}`], { timeout: COMMAND_MS })
   const attached = (await s.phase(attach)).counts
   check('tmux: attached, the band reads', has(attached, BAND_SOURCES), json(attached))
   check('tmux: and shows what it read', /Payments ledger/.test(s.screen()) && /1 working/.test(s.screen()))

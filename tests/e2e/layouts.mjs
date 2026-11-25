@@ -47,7 +47,8 @@ const FPHOME = makeHome('fp-e2e-home-', CWD)
 const CHOICES = join(FPHOME, '.ix', 'factory-panel', 'choices', 'default.json')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-const tmux = (...args) => execFileSync('tmux', ['-L', SOCKET, ...args], { encoding: 'utf8' })
+// A tmux command that has not ended after this long is killed and fails the check, rather than hanging it.
+const tmux = (...args) => execFileSync('tmux', ['-L', SOCKET, ...args], { encoding: 'utf8', timeout: 30000 })
 
 const results = []
 const check = (name, ok, detail = '') => {

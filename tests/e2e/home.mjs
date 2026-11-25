@@ -74,8 +74,8 @@ const alive = pid => {
 export function endSession(server, name) {
   let pids = []
   try {
-    pids = execFileSync('tmux', ['-L', server, 'list-panes', '-s', '-t', name, '-F', '#{pane_pid}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').map(Number)
-    execFileSync('tmux', ['-L', server, 'kill-session', '-t', name], { stdio: 'ignore' })
+    pids = execFileSync('tmux', ['-L', server, 'list-panes', '-s', '-t', name, '-F', '#{pane_pid}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000 }).trim().split('\n').map(Number)
+    execFileSync('tmux', ['-L', server, 'kill-session', '-t', name], { stdio: 'ignore', timeout: 30000 })
   } catch {}
   const until = Date.now() + 10_000
   while (pids.some(alive) && Date.now() < until) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
