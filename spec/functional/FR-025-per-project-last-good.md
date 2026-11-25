@@ -9,6 +9,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-021"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-026"
+    type: traces_to
   - target: "ix://agent-ix/factory-panel/NFR-004"
     type: traces_to
 ---
@@ -33,7 +35,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 - Where a refresh had a failed project or a failed roadmap call, the mod SHALL NOT call ix-board again for 5 minutes.
 - Where ix-board is not called during those 5 minutes, the mod SHALL mark the outcome as earlier.
 - The mod SHALL ask ix-board again at the first poll after those 5 minutes.
-- A manual refresh SHALL ask ix-board at once, unless a rate limit holds as [FR-021](./FR-021-per-project-progress.md) states.
+- A manual refresh SHALL ask ix-board at once, unless a rate limit holds as [FR-026](./FR-026-per-project-calls.md) states.
 
 ## Acceptance Criteria
 
@@ -52,4 +54,4 @@ The mod SHALL key last-good records by project id, remember which projects belon
 ## Dependencies
 
 - **Upstream**: [US-013](../usecase/US-013-see-initiatives-with-their-projects.md)
-- **See also**: [FR-017](FR-017-last-good-progress.md), [FR-021](FR-021-per-project-progress.md)
+- **See also**: [FR-017](FR-017-last-good-progress.md), [FR-021](FR-021-initiative-expansion.md), [FR-026](FR-026-per-project-calls.md)

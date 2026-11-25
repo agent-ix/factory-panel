@@ -13,6 +13,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-021"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-026"
+    type: traces_to
 ---
 # FR-018: Source errors visible and not fatal
 

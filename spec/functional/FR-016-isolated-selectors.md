@@ -11,6 +11,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-021"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-026"
+    type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-022"
     type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-025"
@@ -27,7 +29,7 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - A selector SHALL be one initiative, one project, one milestone or one ticket of the shown focus.
 - The selectors of a named focus SHALL be its `include` members.
 - The selectors of a lead's focus SHALL be the initiatives, projects and tickets of its `agent-msg work` report scope.
-- The mod SHALL ask ix-board for the progress of a selector as [FR-021](./FR-021-per-project-progress.md) states, with an initiative expanded to its projects first.
+- The mod SHALL ask ix-board for the progress of a selector as [FR-026](./FR-026-per-project-calls.md) states, with an initiative expanded to its projects first as [FR-021](./FR-021-initiative-expansion.md) states.
 - The mod SHALL classify a spawn failure as a source error.
 - The mod SHALL classify a timeout as a source error.
 - The mod SHALL classify stderr text that indicates an authentication or authorisation failure as a source error.
@@ -56,25 +58,25 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 
 ## Superseded in 0.7.0
 
-[FR-021](./FR-021-per-project-progress.md), [FR-022](./FR-022-initiative-rollup-and-honest-totals.md) and [FR-025](./FR-025-per-project-last-good.md) replace the combined `focus status` call, the per-selector retry, the summed-from-parts note, the `F fresh, O old, X failed` line and the 5 minute hold of this requirement. The bullets and criteria below were removed from it. The source-error classification, the bounds, the single refresh at a time and the empty-card rule remain.
+[FR-021](./FR-021-initiative-expansion.md), [FR-026](./FR-026-per-project-calls.md), [FR-022](./FR-022-initiative-rollup-and-honest-totals.md) and [FR-025](./FR-025-per-project-last-good.md) replace the combined `focus status` call, the per-selector retry, the summed-from-parts note, the `F fresh, O old, X failed` line and the 5 minute hold of this requirement. The bullets and criteria below were removed from it. The source-error classification, the bounds, the single refresh at a time and the empty-card rule remain.
 
 | Removed | Replaced by |
 |---------|-------------|
-| FR-016-AC-1 (four single calls after a failing combined call) | FR-021-AC-1 and FR-021-AC-2 |
-| FR-016-AC-2 (one failing project named, others shown) | FR-021-AC-2 |
+| FR-016-AC-1 (four single calls after a failing combined call) | FR-026-AC-2 and FR-021-AC-1 |
+| FR-016-AC-2 (one failing project named, others shown) | FR-026-AC-2 |
 | FR-016-AC-3 (`F fresh, O old, X failed` aggregate) | FR-022-AC-1 and FR-022-AC-7 |
-| FR-016-AC-4 (successful combined call, no partial mark) | FR-022-AC-2 and FR-021-AC-16 |
+| FR-016-AC-4 (successful combined call, no partial mark) | FR-022-AC-2 and FR-026-AC-13 |
 | FR-016-AC-5 (every selector fails) | FR-022-AC-6 |
-| FR-016-AC-6 (single-call timeout) | FR-021-AC-12 |
+| FR-016-AC-6 (single-call timeout) | FR-026-AC-10 |
 | FR-016-AC-7 (summed-from-parts note) | dropped; there is no combined call to overlap |
-| FR-016-AC-8 (source errors make no single call) | FR-021-AC-9 |
-| FR-016-AC-9 (N+1 calls, 4 at once, 30 s) | FR-021-AC-10, FR-021-AC-11 and FR-021-AC-12 |
-| FR-016-AC-11 (selector to argument mapping) | FR-021-AC-13 |
-| FR-016-AC-13 (rate limit) | FR-021-AC-9 |
+| FR-016-AC-8 (source errors make no single call) | FR-026-AC-3, FR-026-AC-4 and FR-026-AC-5 |
+| FR-016-AC-9 (N+1 calls, 4 at once, 30 s) | FR-026-AC-7, FR-026-AC-9 and FR-026-AC-10 |
+| FR-016-AC-11 (selector to argument mapping) | FR-026-AC-1 |
+| FR-016-AC-13 (rate limit) | FR-026-AC-6 |
 | FR-016-AC-14 (5 minute hold, 15 minute kept refresh) | FR-025-AC-4 |
-| FR-016-AC-15 (4 processes across two focuses) | FR-021-AC-11 |
+| FR-016-AC-15 (4 processes across two focuses) | FR-026-AC-9 |
 
 ## Dependencies
 
 - **Upstream**: [US-011](../usecase/US-011-focus-survives-bad-data.md)
-- **See also**: [FR-006](FR-006-honest-states.md), [FR-017](FR-017-last-good-progress.md), [FR-021](FR-021-per-project-progress.md), [NFR-004](../non-functional/NFR-004-selection-never-blocks.md)
+- **See also**: [FR-006](FR-006-honest-states.md), [FR-017](FR-017-last-good-progress.md), [FR-021](FR-021-initiative-expansion.md), [NFR-004](../non-functional/NFR-004-selection-never-blocks.md)

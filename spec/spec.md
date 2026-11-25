@@ -116,11 +116,12 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-018 | Source errors visible and not fatal | [FR-018](functional/FR-018-errors-visible-not-fatal.md) |
 | FR-019 | Focus mode banner | [FR-019](functional/FR-019-focus-mode-banner.md) |
 | FR-020 | Named focus resolution | [FR-020](functional/FR-020-named-focus-resolution.md) |
-| FR-021 | Per-project progress calls | [FR-021](functional/FR-021-per-project-progress.md) |
+| FR-021 | Initiative expansion | [FR-021](functional/FR-021-initiative-expansion.md) |
 | FR-022 | Initiative roll-up and honest totals | [FR-022](functional/FR-022-initiative-rollup-and-honest-totals.md) |
 | FR-023 | Nested initiative display | [FR-023](functional/FR-023-nested-initiative-display.md) |
 | FR-024 | Warnings as a footer icon | [FR-024](functional/FR-024-warning-icon-in-footer.md) |
 | FR-025 | Last good progress per project | [FR-025](functional/FR-025-per-project-last-good.md) |
+| FR-026 | Per-project progress calls | [FR-026](functional/FR-026-per-project-calls.md) |
 
 ### 4.3 Non-Functional Requirements
 

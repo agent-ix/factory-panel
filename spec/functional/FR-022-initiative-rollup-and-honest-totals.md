@@ -30,7 +30,7 @@ The mod SHALL state wherever a part is missing or old.
 - The mod SHALL sum the header total over each distinct project id once.
 - The mod SHALL print the stage counts that `open_by_state` supplies, summed over the same projects, in the header.
 - The mod SHALL print `X of Y projects` in the header over all enumerated projects.
-- Where an initiative cannot be enumerated, the header SHALL state `N initiatives not expanded`.
+- Where an initiative cannot be enumerated, the header SHALL state `N initiatives not expanded` and, for one, `1 initiative not expanded`.
 - Where any project is missing or any initiative is not expanded, the header SHALL carry the partial mark.
 - Where any counted project is old, the header SHALL print `includes old data (oldest <age>)`.
 - The mod SHALL draw the header total as complete only where its done equals its total and no part is missing, old or not expanded.
@@ -54,9 +54,9 @@ The mod SHALL state wherever a part is missing or old.
 | FR-022-AC-8 | Given 17 distinct projects with done d1 to d17 and total t1 to t17, the header done is the sum of d and the total the sum of t and it reads `17 of 17 projects`. | Test |
 | FR-022-AC-9 | Given initiative A whose 4 projects all fail with no record and initiative B whose projects succeed, A reads `0 of 4 projects` with no total, B is drawn, and the header sums B only and is partial. | Test |
 | FR-022-AC-10 | Given a record whose `at_ms` is 24 hours 1 minute old and a failing call, the project is drawn failed and not counted. | Test |
-| FR-022-AC-11 | Given an initiative that cannot be enumerated, its row is failed with `projects unknown` and the header says `1 initiatives not expanded` and is partial. | Test |
+| FR-022-AC-11 | Given an initiative that cannot be enumerated, its row is failed with `projects unknown` the header says `1 initiative not expanded` and is partial, and with two such initiatives it says `2 initiatives not expanded`. | Test |
 
 ## Dependencies
 
 - **Upstream**: [US-013](../usecase/US-013-see-initiatives-with-their-projects.md)
-- **See also**: [FR-016](FR-016-isolated-selectors.md), [FR-021](FR-021-per-project-progress.md)
+- **See also**: [FR-016](FR-016-isolated-selectors.md), [FR-021](FR-021-initiative-expansion.md)

@@ -30,6 +30,7 @@ The mod SHALL draw each initiative with its projects indented beneath it, each w
 - The mod SHALL hide completed projects, those with `done` equal to `total`, unless the existing `focusShowDone` state is set.
 - Where hiding completed projects leaves an initiative with no child row, the mod SHALL still draw the initiative row with `all projects done`.
 - A failed project row SHALL carry only a short mark and the project name, with no error text.
+- The mod SHALL leave every error text out of the card body, the error being in the footer warning expansion and in `/factory show`.
 - The mod SHALL list a project in several selected initiatives under each of them.
 
 ## Acceptance Criteria
@@ -42,7 +43,7 @@ The mod SHALL draw each initiative with its projects indented beneath it, each w
 | FR-023-AC-4 | Collapsing A draws A's row and roll-up without P1 and P2, expanding restores them, and the collapsed state is held under A's id, or A's name where no id is known. | Test |
 | FR-023-AC-5 | With P1 complete and `focusShowDone` unset, P1 is hidden, and with it set P1 is drawn. | Test |
 | FR-023-AC-6 | With every project of A complete and hidden, A is drawn with `all projects done`. | Test |
-| FR-023-AC-7 | A failed project P2 shows a short mark and its name and no error text. | Test |
+| FR-023-AC-7 | A failed project P2 shows a short mark and its name and no error text, and its error is in the footer warning expansion and in `/factory show`. | Test |
 | FR-023-AC-8 | A project under A and B is drawn under both. | Test |
 
 ## Dependencies

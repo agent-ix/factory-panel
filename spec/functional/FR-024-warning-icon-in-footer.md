@@ -24,7 +24,7 @@ The mod SHALL fold every source and selector error of the Focus card into one ex
 - A project whose call failed and that is drawn from an old record SHALL count.
 - The mod SHALL draw no warning line where the count is zero.
 - The mod SHALL draw the warning line in the warning tone.
-- The mod SHALL draw no error text in the card body.
+- The mod SHALL draw no error text in the card body or in a project row.
 - The mod SHALL expand the warning line into the full messages just above the footer when the user presses `e` or activates the line by Button.
 - An expanded message SHALL name the ticket, milestone and project with their ids and names where the error text supplies them.
 - The mod SHALL collapse the messages on the next activation.
