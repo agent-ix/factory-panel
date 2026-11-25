@@ -1,5 +1,6 @@
 import { loadProgress } from '../hooks/progressview'
 import type { Progress } from '../hooks/progressview'
+import type { WorkBoard } from '../types'
 import type { Selector } from '../hooks/board'
 import type { Records } from '../hooks/progress'
 import { FP, combine, fake$, out, projectRefs, roadmapJson, statusJson } from './world'
@@ -77,7 +78,7 @@ export function ix(w: World, served: Served): Ix {
 export const initiative = (ref: string, label?: string): Selector => ({ kind: 'initiative', ref, ...(label === undefined ? {} : { label }) })
 export const proj = (ref: string): Selector => ({ kind: 'project', ref })
 
-export type Shown = { progress: Progress | null; failed: Map<string, { name: string; error: string }> }
+export type Shown = { progress: Progress | null; board: WorkBoard | null; failed: Map<string, { name: string; error: string }> }
 
 /** One progress refresh of a focus with these selectors, as the pane asks for it. */
 export async function progress(w: World, selectors: Selector[], opts: { manual?: boolean; advance?: number } = {}): Promise<Shown> {
@@ -85,7 +86,8 @@ export async function progress(w: World, selectors: Selector[], opts: { manual?:
   const endsAt = (await w.clock!.now()) + 60_000
   const run = loadProgress(fake$(w) as never, selectors, opts.manual ?? false, endsAt, failed)
   if (opts.advance !== undefined) await w.clock!.advance(opts.advance)
-  return { progress: await run, failed }
+  const loaded = await run
+  return { progress: loaded?.progress ?? null, board: loaded?.board ?? null, failed }
 }
 
 export const seed = (w: World, records: Record<string, unknown>) => void w.files.set(PROGRESS, JSON.stringify(records))

@@ -4,9 +4,10 @@ import type { EngineInterface, On } from 'claude-code'
 import type { FocusInitiative, FocusMeta, FocusProject, FocusView, FocusWarning, SourceError } from '../types'
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
-import { CARD_BG, INK, after, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
+import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { REFRESH_BUDGET_MS, resetBoard, selectorsOfScope } from './board'
-import { loadProgress } from './progressview'
+import { loadProgress, progressKeyOf } from './progressview'
+import { holdBoard, keepBoards } from './work'
 import type { Selector } from './board'
 import { matchLeads, resolveDefinitions } from './namedfocus'
 import type { Resolved } from './namedfocus'
@@ -28,7 +29,7 @@ const PANE = 'focus'
 const TITLE = 'Focus'
 export const PANE_SPEC = { id: PANE, title: TITLE }
 /** an agent-msg call is given up on after this long. */
-const WORK_TIMEOUT_MS = 5_000
+export const WORK_TIMEOUT_MS = 5_000
 export const NO_SELECTORS = 'no selectors'
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
@@ -46,15 +47,15 @@ const focusWarnings = atom({ plugin: 'factory-panel', key: 'focusWarnings' } as 
 
 // ---------------------------------------------------------------- data
 
-type WorkReport = {
+export type WorkReport = {
   binding?: { machine?: string; kind?: string; address?: string }
-  agents?: { status?: string }[]
+  agents?: { name?: string; ticket?: string; role?: string; status?: string; reported_at_ms?: number }[]
   scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number } | null
   focus?: { summary?: string; reported_at_ms?: number } | null
 }
 
 /** The verified lead addresses `agent-msg who` lists; unverified rows start with `-`. */
-async function listLeads($: EngineInterface): Promise<string[]> {
+export async function listLeads($: EngineInterface): Promise<string[]> {
   const text = await runText($, ['agent-msg', 'who'], WORK_TIMEOUT_MS)
   return text
     .split('\n')
@@ -63,7 +64,7 @@ async function listLeads($: EngineInterface): Promise<string[]> {
 }
 
 /** `agent-msg work show` prints `null` for a lead that has reported nothing: that is no report, not a failure. */
-async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport | null } | { error: string }> {
+export async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport | null } | { error: string }> {
   try {
     return { report: await runJson<WorkReport | null>($, ['agent-msg', 'work', '--lead', lead, 'show'], WORK_TIMEOUT_MS) }
   } catch (error) {
@@ -294,11 +295,16 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
     await Promise.all(
       entries.map(async e => {
         if (e.selectors.length === 0) return
-        const progress = await loadProgress($, e.selectors, manual, endsAt, failed)
-        if (progress === null) return
+        const loaded = await loadProgress($, e.selectors, manual, endsAt, failed)
+        if (loaded === null) return
+        const { progress } = loaded
+        if (loaded.board !== null) await holdBoard($, progressKeyOf(e.selectors), loaded.board)
         await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
       }),
     )
+    // The Work tab keeps the answers of the focuses now shown only.
+    const keys = new Set(entries.filter(e => e.selectors.length > 0).map(e => progressKeyOf(e.selectors)))
+    await keepBoards($, keys)
     // Sources nobody asks any more say nothing: ix-board when no focus has a selector, the named focus lookup when the choice is not a name.
     if (!isName) sourceClear('agent-msg focuses')
     if (entries.every(e => e.selectors.length === 0)) sourceClear('ix-board')
@@ -581,6 +587,3 @@ export function registerFocus(on: On, _options: Options): void {
     )
   })
 }
-
-/** An age without the "ago": 19h, 6m. */
-const agoShort = (at: number, now: number): string => ago(at, now).replace(/ ago$/, '')

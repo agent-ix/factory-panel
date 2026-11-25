@@ -124,7 +124,7 @@ const TEAM_RANGE = JSON.stringify({
 const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', result: [] } })
 
 const shownViews = (placed: ReadonlyMap<string, boolean> = new Map()) =>
-  ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: placed.get(id) ?? true }))
+  ['factory', 'focus', 'work', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: placed.get(id) ?? true }))
 
 /** Stands in for the engine and the host: every command and fetch the mod makes is answered here. */
 function engine(
@@ -684,12 +684,12 @@ test('a pane the host leaves undrawn is reported with its reason, and opened aga
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(opens).toEqual([]) // session.start does not know the layout, so it opens nothing
   await drawBand($, FULLSCREEN)
-  expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
-  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Message, Team waiting \(below 144 columns \(now 100\)\)/)
+  expect(opens).toEqual(['factory', 'focus', 'work', 'escalations', 'relay', 'team'])
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Work, Escalations, Message, Team waiting \(below 144 columns \(now 100\)\)/)
 
   placed = true
   await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
-  expect(opens).toHaveLength(10)
+  expect(opens).toHaveLength(12)
   expect(statuses.at(-1)).toBeUndefined()
 
   // Let the polls started at session start settle before the file ends.
@@ -707,11 +707,11 @@ test('a throwing open is reported and never breaks startup', async ($, on) => {
       throw new Error('no surface')
     },
     // The host lists the panes that were asked for and never drawn, so the settle timer keeps them waiting.
-    panes: () => ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isPlaced: false })),
+    panes: () => ['factory', 'focus', 'work', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isPlaced: false })),
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await drawBand($, FULLSCREEN)
-  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Message, Team waiting \(.+\)/)
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Work, Escalations, Message, Team waiting \(.+\)/)
 
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
   await ui.unmount()
@@ -741,7 +741,7 @@ test('the panes open once, when the first band draw reports the fullscreen layou
   expect(opens).toEqual([])
   await drawBand($, FULLSCREEN)
   await drawBand($, FULLSCREEN)
-  expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
+  expect(opens).toEqual(['factory', 'focus', 'work', 'escalations', 'relay', 'team'])
 
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
   await ui.unmount()
@@ -773,7 +773,7 @@ test('a closed pane is not reopened on attach, and the status names only panes s
   const statuses: (string | undefined)[] = []
   type Listed = { id: string; title: string; isPlaced: boolean }
   const entry = (id: string, isPlaced: boolean): Listed => ({ id, title: id, isPlaced })
-  let listed: Listed[] = ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => entry(id, false))
+  let listed: Listed[] = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'].map(id => entry(id, false))
   engine(on, ran, {
     teamMetrics: false,
     status: text => statuses.push(text),
@@ -786,20 +786,20 @@ test('a closed pane is not reopened on attach, and the status names only panes s
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await drawBand($, FULLSCREEN)
-  expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
-  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Message, Team waiting/)
+  expect(opens).toEqual(['factory', 'focus', 'work', 'escalations', 'relay', 'team'])
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Work, Escalations, Message, Team waiting/)
 
   // Factory got placed, the person closed Relay (it is no longer listed), Focus and Team wait.
   listed = [entry('factory', true), entry('focus', false), entry('escalations', true), entry('team', false)]
   await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
-  expect(opens.slice(5)).toEqual(['focus', 'team'])
+  expect(opens.slice(6)).toEqual(['focus', 'team'])
   expect(statuses.at(-1)).toMatch(/Focus, Team waiting/)
   expect(statuses.at(-1)).not.toMatch(/Factory|Relay/)
 
   // Focus is placed and Team was closed: nothing waits, nothing is reopened, the status clears.
   listed = [entry('factory', true), entry('focus', true), entry('escalations', true)]
   await $.session.attach({ surface: 'terminal', clientId: 'terminal:second', viewport: FULLSCREEN })
-  expect(opens).toHaveLength(7)
+  expect(opens).toHaveLength(8)
   expect(statuses.at(-1)).toBeUndefined()
 
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })

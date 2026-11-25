@@ -3,6 +3,7 @@ import type { MockClock } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { resetFocus } from '../hooks/focus'
+import { resetWork } from '../hooks/workview'
 import { resetSelection } from '../hooks/selection'
 import { resetSources } from '../hooks/sources'
 import type { Options } from '../hooks/shared'
@@ -61,16 +62,17 @@ export type World = {
   /** Makes `mv` fail, as an interrupted write would. */
   mvFails: { value: boolean }
   /** What `http.fetch` (Prometheus) answers: undefined for the usual empty answer. */
-  fetch: { value: ((url: string) => unknown) | undefined }
+  fetch: { value: ((url: string, body: string) => unknown) | undefined }
 }
 
-/** The five panes, each shown and placed. */
-export const SHOWN = ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true }))
+/** The six panes, each shown and placed. */
+export const SHOWN = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true }))
 
 export function world(on: On, withClock = false): World {
   resetSelection()
   resetSources()
   resetFocus()
+  resetWork()
   const w: World = { opens: [], closes: [], asks: [], statuses: [], store: new Map(), whoami: { value: 'draco:QSL:code  (location)  model unknown' }, listed: { value: undefined }, relayFails: { value: false }, registered: [], files: new Map(), writes: [], ran: [], leads: new Map(), boardAgents: [], whoamiTimeout: { value: undefined }, whoamiMode: { value: 'answer' }, reads: [], clock: undefined, stub: { value: undefined }, mvFails: { value: false }, fetch: { value: undefined } }
   if (withClock) w.clock = mock.clock(on, { now: Date.UTC(2026, 10, 24, 12, 0) })
   on('command.register', (_, e) => (w.registered.push(e.name), { value: { command: e.name } }))
@@ -111,7 +113,7 @@ export function world(on: On, withClock = false): World {
     return { value: undefined }
   })
   on('http.fetch', (_, e) => {
-    const custom = w.fetch.value?.(e.url)
+    const custom = w.fetch.value?.(e.url, typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : '')
     if (custom !== undefined) return custom as never
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'success', data: { result: [] } }) } }
   })
@@ -166,7 +168,7 @@ export function answerRun(w: World, argv: readonly string[], init: Init): Run | 
 export function fake$(w: World) {
   return {
     process: { run: async (argv: string[], init?: Init) => answerRun(w, argv, init) },
-    http: { fetch: async (url: string) => (w.fetch.value?.(url) as never) ?? { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'success', data: { result: [] } }) } },
+    http: { fetch: async (url: string, init?: { body?: string }) => (w.fetch.value?.(url, typeof init?.body === 'string' ? decodeURIComponent(init.body) : '') as never) ?? { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'success', data: { result: [] } }) } },
     fs: {
       read: async (path: string) => {
         w.reads.push(path)

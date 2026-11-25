@@ -5,18 +5,20 @@ import { PANE_SPEC as FACTORY_PANE } from './factory'
 import { PANE_SPEC as FOCUS_PANE } from './focus'
 import { PANE_SPEC as RELAY_PANE } from './relay'
 import { PANE_SPEC as TEAM_PANE } from './team'
+import { PANE_SPEC as WORK_PANE } from './workview'
 import type { Options } from './shared'
 
-// The five detail views. Each is a pane; a band cell, `/factory <view>` and the old per-pane
+// The six detail views. Each is a pane; a band cell, `/factory <view>` and the old per-pane
 // commands all open one through showView, so they behave the same way.
 
-export type ViewId = 'factory' | 'focus' | 'escalations' | 'relay' | 'team'
+export type ViewId = 'factory' | 'focus' | 'work' | 'escalations' | 'relay' | 'team'
 
-export const VIEW_IDS: readonly ViewId[] = ['factory', 'focus', 'escalations', 'relay', 'team']
+export const VIEW_IDS: readonly ViewId[] = ['factory', 'focus', 'work', 'escalations', 'relay', 'team']
 
 export const VIEW_SPECS: Record<ViewId, { id: string; title: string }> = {
   factory: FACTORY_PANE,
   focus: FOCUS_PANE,
+  work: WORK_PANE,
   escalations: ESCALATIONS_PANE,
   relay: RELAY_PANE,
   team: TEAM_PANE,

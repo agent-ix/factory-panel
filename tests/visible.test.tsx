@@ -13,9 +13,9 @@ const MIN = 60 * SEC
 const LEAD = 'draco:QSL:code'
 
 /** Every read the mod makes, by the source behind it. */
-type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; whoami: number }
+type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; work: number; retro: number; whoami: number }
 
-const VIEWS = ['factory', 'focus', 'escalations', 'relay', 'team'] as const
+const VIEWS = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'] as const
 type View = (typeof VIEWS)[number]
 
 /** A world with a clock, a lead to read and every fetch recorded by what asked for it. */
@@ -42,6 +42,8 @@ function watched(on: Parameters<TestBody>[1]) {
     escalations: count(l => l === 'agent-msg escalations'),
     announcements: count(l => l.startsWith('agent-msg log')),
     team: fetched.filter(u => u.endsWith('/api/v1/query_range')).length,
+    work: count(l => l.startsWith('agent-msg work events')),
+    retro: count(l => l.startsWith('ix-board --json retro')),
     whoami: count(l => l === 'agent-msg whoami'),
   })
   return { w, reads }
@@ -68,7 +70,7 @@ test('with nothing on screen no source is read, however long the session runs', 
   const { w, reads } = watched(on)
   await startSession($)
   await pass(w, 20 * MIN)
-  expect(since({ ...reads(), prometheus: 0, herdr: 0, doctor: 0, board: 0, focus: 0, escalations: 0, announcements: 0, team: 0 }, reads())).toEqual([])
+  expect(since({ ...reads(), prometheus: 0, herdr: 0, doctor: 0, board: 0, focus: 0, escalations: 0, announcements: 0, team: 0, work: 0, retro: 0 }, reads())).toEqual([])
   expect(w.ran.filter(l => l.startsWith('agent-msg who') && l !== 'agent-msg whoami')).toEqual([])
   expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual([])
 })
@@ -84,9 +86,10 @@ test('a session with nobody at it reads nothing and does not ask who it is', asy
 const DRAWS: Record<View, string[]> = {
   factory: ['prometheus', 'herdr', 'doctor', 'board'],
   focus: ['focus'],
+  work: ['focus', 'work'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['team'],
+  team: ['team', 'retro'],
 }
 
 for (const view of VIEWS) {

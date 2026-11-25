@@ -15,6 +15,8 @@ export type SourceId =
   | 'escalations'
   | 'announcements'
   | 'team'
+  | 'work'
+  | 'retro'
 
 const MINUTE = 60 * 1000
 /** The longest a failing or slow source is left alone, unless its own interval is longer. */
@@ -41,6 +43,9 @@ export const intervalOf = (id: SourceId): number => {
       return Math.max(MINUTE, refreshMs)
     case 'focus':
       return 2 * MINUTE
+    // The stored retro snapshots change when a retro runs: every few minutes is often enough.
+    case 'retro':
+      return 5 * MINUTE
     default:
       return MINUTE
   }

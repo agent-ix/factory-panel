@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+Who works on what, what merged, and how the teams perform.
+
+- New Work tab after Focus (`/factory work`). One block per code lead from `agent-msg who`, with a status mark and the age of its latest report; under it the tickets of the lead's agents (`agent-msg work --lead <address> show`) with Linear state and title, the badges `[pr]` (open or draft PR), `[review×N]`, `[spec]` and `[gate]`, and the last action from `agent-msg work events` (read in pages, since the stream starts at its oldest event). A lead collapses with its arrow. Below, a Recent list of merges, newest first; `a` shows closed and opened entries too.
+- The Work tab makes no Linear call of its own. Tickets, PRs and activity come from the `ix-board --json focus status` answer the Focus tab already reads under its 30 minute gate; the answer's `in_progress[]`, `recently_closed[]` and `activity[]` are kept instead of being counted, and an answer wrapped in a stale `result` key is read as the object inside. With an ix-board older than 0.9.0 (no `prs`, no `activity`) the tickets show without a PR badge and Recent says `needs ix-board ≥0.9.0`.
+- Team tab: review quality (first-review latency, share of PRs with findings, confirmed findings by severity, changes requested), effort per verified closure, and flow and capacity (oldest age in a stage, ready issues beside executing agents), in three rows per team. A metric a team has no series for reads `—`, never 0. Effort per closure and the changes-requested share are computed from `ix_team_execution_seconds_total`, `ix_team_prs_changes_requested` and `ix_team_prs_open` where the exporter has no series of its own.
+- Team tab health strip: one mark per department class (progress, flow, rework, stability, scope, utilization, resource) from `ix-board --json retro delta --config ~/.local/state/team-retro/<team>/config.json` for the teams of your focus, read from the stored snapshots every 5 minutes: red where a metric regresses, amber where some metric has no value, green otherwise. A team with no retro config or snapshot reads `no retro baseline`.
+- Six panes now open in the fullscreen layout.
+
 ## 0.7.1
 
 Fetch less.
