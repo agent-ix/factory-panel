@@ -7,6 +7,10 @@ relationships:
     type: implements
   - target: "ix://agent-ix/factory-panel/US-008"
     type: implements
+  - target: "ix://agent-ix/factory-panel/FR-020"
+    type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-019"
+    type: traces_to
 ---
 # FR-013: Scoping hosts, focus and teams
 
@@ -25,7 +29,7 @@ The mod SHALL narrow the hosts, focuses and lanes it shows to the scope selected
 - The default `teams` list SHALL be the session's own team.
 - A `teams` selection SHALL replace the default `teams` list.
 - A focus value of `own` or `team` SHALL win over a focus name that is spelled the same.
-- With a focus name the mod SHALL show the focus whose summary equals the name ignoring case, and when none equals it, the focuses whose summary contains the name ignoring case.
+- The mod SHALL resolve a focus name in the order of [FR-020](./FR-020-named-focus-resolution.md), whose last step is to show the focus whose summary equals the name ignoring case, and when none equals it, the focuses whose summary contains the name ignoring case.
 - Where more than one focus matches a name, the mod SHALL show all matches.
 - Where more than one focus matches a name, the mod SHALL say how many matched.
 - Where no focus matches a name, the mod SHALL show no focus and say that it matched nothing.
@@ -52,3 +56,4 @@ The mod SHALL narrow the hosts, focuses and lanes it shows to the scope selected
 ## Dependencies
 
 - **Upstream**: [US-007](../usecase/US-007-own-focus.md), [US-008](../usecase/US-008-coordinator-teams.md)
+- **See also**: [FR-019](FR-019-focus-mode-banner.md), [FR-020](FR-020-named-focus-resolution.md)
