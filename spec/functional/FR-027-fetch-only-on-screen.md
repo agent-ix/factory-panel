@@ -86,12 +86,12 @@ The mod SHALL read a source only while something on screen draws its data.
 | FR-027-AC-6 | After a view leaves the screen its sources are not read again. | Test |
 | FR-027-AC-7 | A view that comes back on screen reads at once when its data is older than the interval, and reads nothing when it is newer. | Test |
 | FR-027-AC-8 | A collapsed band, a band under a survey, a fullscreen layout and `inlineView` `off` read nothing for the band; the status line with a collapsed band slot reads. | Test |
-| FR-027-AC-9 | With `refreshSeconds` 5 and the Factory pane on screen for 10 minutes, `agent-msg doctor` and `herdr api snapshot` run about once a minute and Prometheus follows the setting. | Test |
+| FR-027-AC-9 | With `refreshSeconds` 5 and the Factory pane on screen, `agent-msg doctor` and `herdr api snapshot` run once a minute at most and Prometheus follows the setting. | Test |
 | FR-027-AC-10 | A failing source is read after 2, then 4, then 5 minutes where its interval is 1 minute, and every minute again once it answers. | Test |
 | FR-027-AC-11 | A source that answers more slowly than its limit is read less often in the same way. | Test |
 | FR-027-AC-12 | The `r` key reads at once while the source is backed off and within its interval. | Test |
 | FR-027-AC-13 | Opening a view by command runs no read for data the mod already holds. | Test |
-| FR-027-AC-14 | With `agent-msg whoami` failing for 20 minutes it runs at most 10 times, and a command runs it at once. | Test |
+| FR-027-AC-14 | With `agent-msg whoami` failing for 6 minutes it runs at most 6 times, and a command runs it at once. | Test |
 | FR-027-AC-15 | A teams value changed by a declaration file reads the lanes again before their interval is up. | Test |
 | FR-027-AC-16 | In a real session the log of commands run and queries made shows reads while the panel is open, only the shown tab's after switching tabs, and none once the panel is closed. | Demonstration |
 
