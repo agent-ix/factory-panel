@@ -19,6 +19,7 @@ The mod SHALL show a missing, stale or failed source as missing, with its reason
 - The mod SHALL say in the band which machines are not reporting.
 - The mod SHALL leave out a source that has not been asked yet, rather than draw it as healthy.
 - When a source reports an error, the mod SHALL show the error text for that source.
+- Where a source fails for only part of its data, the mod SHALL show the parts that succeeded, as [FR-016](./FR-016-isolated-selectors.md) and [FR-018](./FR-018-errors-visible-not-fatal.md) say.
 - When the metrics service does not answer, each detail view SHALL say the metrics are unavailable, give the reason, and mark any last-known value as old.
 
 ## Acceptance Criteria

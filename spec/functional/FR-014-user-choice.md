@@ -18,6 +18,8 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 
 - `/factory use <modules>` SHALL replace the module selection with the listed modules.
 - `/factory focus <own|team|name>` SHALL set the focus scope, where the name is the rest of the line including spaces.
+- The mod SHALL resolve the name of `/factory focus` as [FR-020](./FR-020-named-focus-resolution.md) says.
+- The Focus pane SHALL state the reason for its scope as [FR-019](./FR-019-focus-mode-banner.md) says.
 - `/factory focus` with no argument SHALL open the Focus view.
 - `/factory teams <list>` SHALL replace the `teams` selection.
 - A team that matches nothing SHALL be kept in the `teams` selection and reported as matching nothing.
