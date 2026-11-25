@@ -18,9 +18,10 @@ The mod SHALL provide one command, `/factory`, to open more detail.
 
 ## Behavior
 
-- When the person types `/factory`, the mod SHALL open the detail view that their role looks at first: Factory for a coordinator or worker, Focus for a code lead or planner.
-- When the person types `/factory` followed by `factory`, `focus`, `escalations`, `relay` or `team`, the mod SHALL open that view.
+- When the person types `/factory`, the mod SHALL open the Focus view when the focus module is shown, and the Factory view otherwise.
+- When the person types `/factory` followed by `factory`, `focus`, `escalations`, `relay` or `team` and nothing more, the mod SHALL open that view.
 - When the person types `/factory help`, the mod SHALL print the help.
+- The mod SHALL accept the choice commands of FR-014.
 - When the person types `/factory` with any other argument, the mod SHALL say the argument is not a command and print the help.
 - The commands `/focuses`, `/escalations`, `/relay` and `/team` SHALL remain for one release as aliases for `/factory <view>`.
 - The mod SHALL NOT register a command named `band`.
@@ -29,8 +30,7 @@ The mod SHALL provide one command, `/factory`, to open more detail.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-003-AC-1 | For a code lead `/factory` opens the Focus view, and for a coordinator it opens the Factory view. | Test |
-| FR-003-AC-2 | For a planner `/factory` opens Focus, and for a worker it opens Factory. | Test |
+| FR-003-AC-1 | With the focus module shown `/factory` opens the Focus view, and without it opens the Factory view. | Test |
 | FR-003-AC-3 | For each of `factory`, `focus`, `escalations`, `relay` and `team`, `/factory <view>` opens exactly that view. | Test |
 | FR-003-AC-4 | `/factory focus2` says `focus2` is not a command and prints the help. | Test |
 | FR-003-AC-5 | `/focuses`, `/escalations`, `/relay` and `/team` each open the same view as `/factory <view>`. | Test |

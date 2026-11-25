@@ -28,7 +28,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 
 - The ambient view: a one-row band above the prompt in the classic terminal layout and docked panes in the fullscreen layout.
 - The detail views (Factory, Focus, Escalations, Relay, Team) and how a person opens, switches and closes them.
-- Role-based defaults for what the ambient view shows, and how the role is learned.
+- Features and scopes the ambient view can show, how an agent or the user selects them, and the automatic defaults taken from the relay.
 - How the mod finds the factory's metrics endpoints.
 - The commands, help text and documentation a person uses to learn all of the above.
 
@@ -40,13 +40,16 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 | Changing tickets or project state other than resolving or hiding escalations and sending relay announcements | Linear and ix-board own tracker writes. |
 | Mouse interaction in the classic layout | The terminal does not capture the mouse there; every action has a keyboard path. |
 | Per-user theming of the views | The shared style layer in `docs/STYLE.md` is deliberate and uniform. |
+| A named-focus field in ix-board | A focus is named by its lead's summary; ix-board owns its data model. |
+| A new relay protocol | The mod reads `agent-msg whoami` and `agent-msg work` as they are. |
+| Roles in the mod, including roles as dynamic plugin configuration | Skills select features; the mod has no role concept. Dynamic role configuration is a possible later step. |
 | Running in non-interactive (`-p`) sessions | There is no surface to draw on and nobody to ask. |
 
 ## 3. System Overview
 
 ### 3.1 Users
 
-- **Program coordinator**: watches the whole factory (hosts, programs, escalations).
+- **Program coordinator** (a skill that selects all hosts and team grouping): watches the whole factory (hosts, programs, escalations).
 - **Code lead**: owns one project or a few; cares about this machine's load, the project's progress, their orchestrator and their coders.
 - **Planner**: shapes and orders work; cares about progress, the ready queue and blockers.
 
@@ -76,20 +79,29 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | US-004 | Set up once | [US-004](usecase/US-004-set-up-once.md) |
 | US-005 | Trust what I see | [US-005](usecase/US-005-trust-what-i-see.md) |
 | US-006 | The same in both layouts | [US-006](usecase/US-006-both-layouts.md) |
+| US-007 | See only my own focus | [US-007](usecase/US-007-own-focus.md) |
+| US-008 | See the teams under me | [US-008](usecase/US-008-coordinator-teams.md) |
+| US-009 | Let a skill select the features | [US-009](usecase/US-009-select-features.md) |
+| US-010 | Choose what to display | [US-010](usecase/US-010-choose-display.md) |
 
 ### 4.2 Functional Requirements
 
 | ID | Title | Artifact |
 | --- | --- | --- |
 | FR-001 | Ambient view by layout | [FR-001](functional/FR-001-ambient-view.md) |
-| FR-002 | Role presets | [FR-002](functional/FR-002-role-presets.md) |
+| FR-002 | Fallback defaults | [FR-002](functional/FR-002-fallback-defaults.md) |
 | FR-003 | One command | [FR-003](functional/FR-003-one-command.md) |
 | FR-004 | Detail view | [FR-004](functional/FR-004-detail-view.md) |
-| FR-005 | Role resolution | [FR-005](functional/FR-005-role-resolution.md) |
+| FR-005 | Relay identity as an input | [FR-005](functional/FR-005-relay-identity.md) |
 | FR-006 | Honest states | [FR-006](functional/FR-006-honest-states.md) |
 | FR-007 | Metrics endpoint discovery | [FR-007](functional/FR-007-endpoint-discovery.md) |
 | FR-008 | Help and documentation | [FR-008](functional/FR-008-help-and-docs.md) |
 | FR-009 | Band cells and digits | [FR-009](functional/FR-009-band-cells.md) |
+| FR-010 | Features | [FR-010](functional/FR-010-features.md) |
+| FR-011 | Feature selection by an agent | [FR-011](functional/FR-011-feature-declaration.md) |
+| FR-012 | Selection precedence | [FR-012](functional/FR-012-selection-precedence.md) |
+| FR-013 | Scoping hosts, focus and teams | [FR-013](functional/FR-013-scoping.md) |
+| FR-014 | User choice of display | [FR-014](functional/FR-014-user-choice.md) |
 
 ### 4.3 Non-Functional Requirements
 
@@ -98,6 +110,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | NFR-001 | First paint | [NFR-001](non-functional/NFR-001-first-paint.md) |
 | NFR-002 | No stalls at session start | [NFR-002](non-functional/NFR-002-no-stalls.md) |
 | NFR-003 | Few steps | [NFR-003](non-functional/NFR-003-few-steps.md) |
+| NFR-004 | Selection never blocks | [NFR-004](non-functional/NFR-004-selection-never-blocks.md) |
 
 ## 5. Verification
 
