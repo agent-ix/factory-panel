@@ -27,3 +27,17 @@ Ticket: SWM-303. Planless audit at head 3f358bf893af5e644ed4dc44a4027a4f7842f9e5
 Plan completion: not assessed
 
 Semantic review: skipped (opt-in, not requested). Demonstration criteria of the changed requirements (FR-028-AC-11, FR-029-AC-25, FR-030-AC-9, FR-031-AC-11, FR-032-AC-8) are untagged as expected; the PR records them as partly shown live or by fixtures. Run evidence: not bound.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | all ten positional metric ids M-1 to M-10 now bind a test of that row (head 9c36ef3) |
+| FND-002 | fixed | the metric is scoped to progress and ticket reads, and the ticket read uses the limiter. The wording for retro delta is FND-003 (head 9c36ef3) |
+| FND-003 | fixed | NFR-004 states that retro eval and the ledger query run one at a time and retro delta once for each selected team at the same time (head ab6ff6e) |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | NFR-004 says retro delta, retro eval and the ledger query run `each one at a time for its own view`, but pollRetro starts one `retro delta` per selected team at once (Promise.all). Fix the text: `retro eval` runs one team at a time and the ledger query one at a time; `retro delta` runs once for each selected team at the same time. | hooks/team.tsx:295 |

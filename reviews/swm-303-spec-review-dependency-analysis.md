@@ -20,3 +20,9 @@ Ticket: SWM-303. The relationship edges of FR-030 to FR-032 resolve to existing 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | FR-028 now relies on FR-030 for which leads are listed and how an unread one is drawn, and FR-009 does for the work cell counts, but neither declares a relationship to FR-030; only the reverse edge FR-030 to FR-028 exists, which orders them backwards. Fix: add the prerequisite edges from FR-028 and FR-009 to FR-030. | spec/functional/FR-028-work-tab.md:1-16 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | both prerequisite edges added (head 9c36ef3) |
