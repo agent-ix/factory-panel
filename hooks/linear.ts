@@ -8,24 +8,32 @@ import { errorText } from './shared'
 // result is kept for the others, and when Linear says "rate limited; retry in N s" nobody calls
 // ix-board again until then.
 
-/** Long enough that ix-board's five-minute cache serves most reads. */
-export const BOARD_INTERVAL_MS = 15 * 60 * 1000
+/** Every gated read of Linear, `ix-board agents` included, runs at most once in this long across all sessions. */
+export const BOARD_INTERVAL_MS = 30 * 60 * 1000
 /** A fetch another session claimed is trusted to finish within this long. */
 const CLAIM_MS = 4 * 60 * 1000
 /** A manual refresh still waits this long after the last read. */
 const MANUAL_MIN_MS = 60 * 1000
 
-/** A refresh with a failure in it is held this long, not the whole interval, and not asked again meanwhile. */
+/** An outcome a source error cut short is held this long, not the whole interval, and not asked again meanwhile. */
 export const UNKEPT_TTL_MS = 5 * 60 * 1000
 
-type Entry = { at: number | null; claimAt: number | null; data: unknown; /** an outcome with a failure in it, held for UNKEPT_TTL_MS */ unkept?: boolean }
+type Entry = {
+  at: number | null
+  claimAt: number | null
+  data: unknown
+  /** an outcome a source error cut short, held for UNKEPT_TTL_MS */
+  unkept?: boolean
+  /** the error of a read that failed outright, shown while it is held */
+  error?: string
+}
 type GateFile = { backoffUntil: number | null; entries: Record<string, Entry> }
 
 export type Gated<T> = {
   data: T | null
   /** ms since the epoch of the read that produced `data` */
   at: number | null
-  /** True when `data` is the outcome of an earlier refresh that had a failure in it, held for a few minutes. */
+  /** True when `data` is the outcome of an earlier refresh that a source error cut short, held for a few minutes. */
   held?: boolean
   /** set while Linear's rate limit holds */
   backoffUntil: number | null
@@ -101,7 +109,7 @@ export function gatedBoard<T>(
   $: EngineInterface,
   key: string,
   fetch: () => Promise<T>,
-  opts: { manual?: boolean; /** false keeps a result out of the cache: it is shown, and the next poll asks again */ keep?: (data: T) => boolean } = {},
+  opts: { manual?: boolean; /** false holds a result for UNKEPT_TTL_MS only, not the whole interval */ keep?: (data: T) => boolean } = {},
 ): Promise<Gated<T>> {
   const running = inFlight.get(key)
   if (running) return running as Promise<Gated<T>>
@@ -122,7 +130,8 @@ async function gate<T>(
   const now = await $.clock.now()
   const g = await load($)
   const had = g.entries[key] ?? { at: null, claimAt: null, data: null }
-  const cached = (error: string | null, backoffUntil = g.backoffUntil): Gated<T> => ({
+  // A read that failed outright keeps saying so while it is held.
+  const cached = (error: string | null = had.unkept === true ? (had.error ?? null) : null, backoffUntil = g.backoffUntil): Gated<T> => ({
     data: had.data as T | null,
     at: had.at,
     held: had.unkept === true,
@@ -130,11 +139,11 @@ async function gate<T>(
     error,
   })
 
-  if (g.backoffUntil !== null && g.backoffUntil > now) return cached(null)
+  if (g.backoffUntil !== null && g.backoffUntil > now) return cached()
   const wait = opts.manual ? MANUAL_MIN_MS : BOARD_INTERVAL_MS
   // A manual refresh asks again at once when the last one was only held after a failure.
-  if (had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached(null)
-  if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached(null)
+  if (had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
+  if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached()
 
   const claim = now + Math.random() / 10
   // With the gate file unwritable no claim can be made or checked; this session fetches on its own.
@@ -147,12 +156,12 @@ async function gate<T>(
     )
     return !claimed || (await load($)).entries[key]?.claimAt === claim
   })
-  if (!taken) return cached(null)
+  if (!taken) return cached()
   try {
     const data = await fetch()
     const at = await $.clock.now()
     // A failed save must not throw the fetched data away: this session still shows it.
-    // A result with a failure in it is shown but not kept: the next poll asks again.
+    // A result that is not to be kept is shown, held for UNKEPT_TTL_MS, and asked again after it.
     const keep = opts.keep?.(data) ?? true
     await exclusive(() =>
       save($, f => {
@@ -166,9 +175,12 @@ async function gate<T>(
     const until = retry !== null ? now + retry : null
     await exclusive(() =>
       save($, f => {
-        // A failed read is not a read: the next poll asks again, unless Linear says to wait.
-        f.entries[key] = { ...had, at: opts.keep === undefined ? had.at : null, claimAt: null }
-        if (until !== null) f.backoffUntil = until
+        // A read that failed outright is held a few minutes like any source error; Linear's own wait holds every read.
+        if (until === null) f.entries[key] = { data: had.data, at: now - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, unkept: true, error: text }
+        else {
+          f.entries[key] = { ...had, claimAt: null }
+          f.backoffUntil = until
+        }
       }),
     ).catch(() => undefined)
     return cached(until !== null ? null : text, until)

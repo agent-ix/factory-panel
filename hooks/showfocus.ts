@@ -5,6 +5,8 @@ import { ago } from './shared'
 // project with its numbers. The card itself draws no prose, so this is where the totals and the wording
 // of FR-022 can be read in full.
 
+const BLOCKED_NOTE = 'blocked is counted once over the focus: a combined ix-board answer does not say which project a blocker belongs to'
+
 const dash = (n: number | null): string => (n === null ? '-' : String(n))
 const age = (at: number, now: number): string => ago(at, now).replace(/ ago$/, '')
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
@@ -36,6 +38,8 @@ export function focusDetail(views: readonly FocusView[], now: number): string[] 
       if (h.notExpanded > 0) parts.push(`${plural(h.notExpanded, 'initiative', 'initiatives')} not expanded`)
       lines.push(`  total: ${parts.join(' · ')}`)
       if (h.stages.length > 0) lines.push(`  stages: ${h.stages.map(([s, c]) => `${s} ${c}`).join(' · ')}`)
+      if (h.blocked !== null && [...f.initiatives.flatMap(i => i.projects), ...f.loose].some(p => !p.failed && !p.old && p.blocked === null))
+        lines.push(`  ${BLOCKED_NOTE}`)
     }
     for (const i of f.initiatives) {
       if (i.failed !== null) {
