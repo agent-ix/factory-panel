@@ -33,6 +33,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - How the mod finds the factory's metrics endpoints.
 - The commands, help text and documentation a person uses to learn all of the above.
 - The Focus card of 0.7.0: progress per project, initiatives with their projects nested beneath, honest roll-up totals, and source errors folded into one footer warning icon.
+- The reads of 0.7.1: one combined progress call for the projects of a focus, a shared memory of selectors ix-board cannot answer, Linear-backed reads at most once in 30 minutes, and no read of what is not on screen.
 
 ### 2.2 Out of Scope
 
@@ -121,7 +122,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-023 | Nested initiative display | [FR-023](functional/FR-023-nested-initiative-display.md) |
 | FR-024 | Warnings as a footer icon | [FR-024](functional/FR-024-warning-icon-in-footer.md) |
 | FR-025 | Last good progress per project | [FR-025](functional/FR-025-per-project-last-good.md) |
-| FR-026 | Per-project progress calls | [FR-026](functional/FR-026-per-project-calls.md) |
+| FR-026 | Combined progress calls | [FR-026](functional/FR-026-per-project-calls.md) |
 | FR-027 | Fetch only what is on screen | [FR-027](functional/FR-027-fetch-only-on-screen.md) |
 
 ### 4.3 Non-Functional Requirements

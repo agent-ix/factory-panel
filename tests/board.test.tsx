@@ -438,7 +438,7 @@ test('with a failing initiative call and a cached membership the initiative is d
   const w = world(on, true)
   const id = pid('P')
   seed(w, {
-    initiatives: { [HARD]: { at_ms: T0 - 10 * MIN, seen_ms: T0 - MIN, projects: [{ id, name: 'P' }] } },
+    initiatives: { [HARD]: { at_ms: T0 - 7 * 60 * MIN, seen_ms: T0 - MIN, projects: [{ id, name: 'P' }] } },
     [`project:${id}`]: record({ id, name: 'P', at_ms: T0 - 7 * MIN }),
   })
   ix(w, { roadmap: [{ name: 'Elsewhere', projects: [{ name: 'Other' }] }], initiatives: { [HARD]: BAD_MILESTONE }, projects: { [id]: BAD_MILESTONE } })
@@ -685,7 +685,7 @@ test('no more than 4 ix-board processes run at once across two focuses', async (
 })
 
 test('a unit unanswered at the call timeout or at the budget fails alone and is not remembered', async ($, on) => {
-  trace("FR-026-AC-25", "FR-016-AC-10")
+  trace("FR-026-AC-25")
   const w = world(on, true)
   ix(w, { projects: { A: project('A', 1, 2) }, other: (_, init) => hang(w)(init) })
   const shown = await progress(w, [proj('A'), { kind: 'ticket', ref: 'QSL-9' }], { advance: 21_000 })
@@ -971,7 +971,7 @@ test('an initiative name learned from the roadmap is kept in the cache and shown
 })
 
 test('a direct project whose status call fails is named by project-chunk, shown failed with its name and no counts, and the name is kept for later failures', async ($, on) => {
-  trace("FR-026-AC-2", "FR-025-AC-3")
+  trace("FR-026-AC-18", "FR-025-AC-3")
   const w = world(on, true)
   const [a, b2] = REAL_SCOPE.projects as [string, string]
   const chunk = (name: string, id: string) => out(JSON.stringify({ blocker_layers: [[]], goal: 'a goal', identifier: id, milestones: [], name, open_tickets: [] }))

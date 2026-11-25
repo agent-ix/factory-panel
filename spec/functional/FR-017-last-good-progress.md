@@ -34,8 +34,8 @@ The mod SHALL keep the last successful progress of each selector and show it, ma
 - When a refresh of a selector fails and a record exists, the mod SHALL show the recorded progress marked old with its age, and the error in the footer warning of [FR-024](./FR-024-warning-icon-in-footer.md) and in `/factory show`.
 - When a refresh of a selector fails and no record exists, the mod SHALL show the row as failed with a short mark, and the error in the footer warning and in `/factory show`.
 - A later success of a selector SHALL replace its record and clear its old mark.
-- The mod SHALL show a record older than 30 minutes with its age after the counts in the warning tone.
-- The mod SHALL show a record of exactly 30 minutes with its age after the counts in the dim tone.
+- The mod SHALL show a record drawn as old that is more than 60 minutes old with its age after the counts in the warning tone, progress being read every 30 minutes ([FR-025](./FR-025-per-project-last-good.md)), so that such a record has missed a whole read.
+- The mod SHALL show a record drawn as old that is 60 minutes old or younger with its age after the counts in the dim tone.
 - Where a record's time is in the future, the mod SHALL treat its age as zero.
 - Where the file is missing, not valid JSON or not a JSON object, the mod SHALL treat it as holding no records.
 - Where the file was missing or invalid, the mod SHALL write a valid file on the next success.
@@ -49,7 +49,7 @@ The mod SHALL keep the last successful progress of each selector and show it, ma
 | FR-017-AC-1 | After a successful call for project C, `progress.json` holds the key `project:C` with `at_ms`, `seen_ms`, `done`, `total`, `inProgress` and `ready`, and a new session reads it. | Test |
 | FR-017-AC-2 | Given a record for C from 5 minutes ago and a failing refresh of C, the pane shows C's progress marked old, age 5 minutes, and no error text in the card body, the error being in the footer warning expansion and in `/factory show`. | Test |
 | FR-017-AC-3 | After that failure, a successful refresh of C makes the pane show the new progress with no old mark and the record holds the new time. | Test |
-| FR-017-AC-4 | A record 30 minutes 0 seconds old is drawn with a dim age after its counts, and one 30 minutes 1 second old is drawn with that age in the warning tone. | Test |
+| FR-017-AC-4 | A record 60 minutes 0 seconds old is drawn with a dim age after its counts, and one 60 minutes 1 second old is drawn with that age in the warning tone. | Test |
 | FR-017-AC-5 | Given a failing refresh of D with no record, the pane shows D as failed with a short mark and no progress, and D's error is in the footer warning expansion and in `/factory show`, not in the card body. | Test |
 | FR-017-AC-6 | Given a malformed `progress.json`, the pane draws, no error is raised for the file, and the next success writes a valid file. | Test |
 | FR-017-AC-7 | Given one malformed entry among valid ones, the valid entries are used and the malformed one is ignored. | Test |

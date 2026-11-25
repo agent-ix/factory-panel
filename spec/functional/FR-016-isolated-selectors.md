@@ -22,7 +22,7 @@ relationships:
 
 ## Description
 
-The mod SHALL compute the progress of a focus per selector, so that one failing selector never removes the progress of the others, with a bounded number of calls.
+The mod SHALL keep the progress of a focus per selector, so that one failing selector never removes the progress of the others, with a bounded number of calls.
 
 ## Behavior
 
@@ -32,7 +32,9 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - The mod SHALL ask ix-board for the progress of a selector as [FR-026](./FR-026-per-project-calls.md) states, with an initiative expanded to its projects first as [FR-021](./FR-021-initiative-expansion.md) states.
 - The mod SHALL classify a spawn failure as a source error.
 - The mod SHALL classify the timeout of an ix-board call as a source error where no ix-board call of that refresh has answered yet.
-- The mod SHALL classify the timeout of an ix-board call as the failure of that project, with the error `timed out`, where another call of that refresh has answered.
+- The mod SHALL classify the timeout of a call that asks more than one project as a source error.
+- The mod SHALL classify the timeout of a call that asks one thing as the failure of that thing, with the error `timed out`, where another call of that refresh has answered.
+- The mod SHALL NOT lay a source error on a selector.
 - The mod SHALL classify stderr text that names an authentication, authorisation, token, credential or API key failure, or an unauthorised or forbidden answer, as a source error.
 - The mod SHALL NOT classify a ticket identifier such as `QSL-403` in an error text as an authorisation failure.
 - The mod SHALL classify a non-zero exit with no stderr text as the failure of that call, with its stdout text as the error where it has any.
@@ -58,8 +60,9 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 |----|----------|--------------|
 | FR-016-AC-10 | Given a refresh in flight and two ticks, only one further refresh runs afterwards, and a result older than the stored record is ignored. | Test |
 | FR-016-AC-12 | Given a lead focus whose work report scope has initiatives, projects and tickets, those become the selectors, and given a report with none, `/factory show` and the warning expansion say `no selectors` and ix-board is not called. | Test |
-| FR-016-AC-16 | Given the first ix-board call of a refresh times out, the mod shows one ix-board error, and given a project call times out after another call answered, only that project fails with `timed out`. | Test |
-| FR-016-AC-17 | Given an error `issue QSL-403 references unavailable milestone m1 in project p1` on one project call, that project fails alone and no source error is shown, and given a call that exits with no stderr text, only that call fails. | Test |
+| FR-016-AC-16 | Given the first ix-board call of a refresh times out, the mod shows one ix-board error, and given a call for one ticket times out after another call answered, only that ticket fails with `timed out`. | Test |
+| FR-016-AC-17 | Given an error `issue QSL-403 references unavailable milestone m1 in project p1` for one project of a combined call, that project fails and no source error is shown, and given a project whose call exits with no stderr text, it fails and the others are drawn. | Test |
+| FR-016-AC-18 | Given a combined call that fails because of one project, every other project is drawn with its progress and the failing one is named with the error text. | Test |
 
 ## Superseded in 0.7.0
 
@@ -67,18 +70,18 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 
 | Removed | Replaced by |
 |---------|-------------|
-| FR-016-AC-1 (four single calls after a failing combined call) | FR-026-AC-2 and FR-021-AC-1 |
-| FR-016-AC-2 (one failing project named, others shown) | FR-026-AC-2 |
+| FR-016-AC-1 (four single calls after a failing combined call) | FR-016-AC-18 and FR-021-AC-1 |
+| FR-016-AC-2 (one failing project named, others shown) | FR-016-AC-18 |
 | FR-016-AC-3 (`F fresh, O old, X failed` aggregate) | FR-022-AC-1 and FR-022-AC-7 |
-| FR-016-AC-4 (successful combined call, no partial mark) | FR-022-AC-2 and FR-026-AC-13 |
+| FR-016-AC-4 (successful combined call, no partial mark) | FR-022-AC-2 and FR-026-AC-16 |
 | FR-016-AC-5 (every selector fails) | FR-022-AC-6 |
-| FR-016-AC-6 (single-call timeout) | FR-026-AC-10 |
-| FR-016-AC-7 (summed-from-parts note) | dropped; there is no combined call to overlap |
+| FR-016-AC-6 (single-call timeout) | FR-026-AC-25 |
+| FR-016-AC-7 (summed-from-parts note) | dropped; nothing is summed from overlapping calls |
 | FR-016-AC-8 (source errors make no single call) | FR-026-AC-3, FR-026-AC-4 and FR-026-AC-5 |
-| FR-016-AC-9 (N+1 calls, 4 at once, 30 s) | FR-026-AC-7, FR-026-AC-9 and FR-026-AC-10 |
-| FR-016-AC-11 (selector to argument mapping) | FR-026-AC-1 |
+| FR-016-AC-9 (N+1 calls, 4 at once, 30 s) | FR-026-AC-24, FR-026-AC-9 and FR-026-AC-25 |
+| FR-016-AC-11 (selector to argument mapping) | FR-026-AC-15 |
 | FR-016-AC-13 (rate limit) | FR-026-AC-6 |
-| FR-016-AC-14 (5 minute hold, 15 minute kept refresh) | FR-025-AC-4 |
+| FR-016-AC-14 (5 minute hold, 15 minute kept refresh) | FR-025-AC-10 and FR-025-AC-11 |
 | FR-016-AC-15 (4 processes across two focuses) | FR-026-AC-9 |
 
 ## Dependencies
