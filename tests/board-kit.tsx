@@ -2,7 +2,7 @@ import { loadProgress } from '../hooks/progressview'
 import type { Progress } from '../hooks/progressview'
 import type { Selector } from '../hooks/board'
 import type { Records } from '../hooks/progress'
-import { FP, fake$, out, roadmapJson, statusJson } from './world'
+import { FP, combine, fake$, out, projectRefs, roadmapJson, statusJson } from './world'
 import type { ProjectSpec, RoadmapSpec, Run, World } from './world'
 
 // What the data-layer tests share: a stand-in for ix-board that answers each call by its arguments, and
@@ -22,7 +22,7 @@ export type Ix = { calls: string[]; live: { now: number; max: number } }
 
 export type Served = {
   roadmap?: RoadmapSpec[] | Answer | (() => Answer)
-  /** `focus status --project <ref>`: a project, or the text it fails with, or a function */
+  /** `focus status --project <ref> ...`: for each ref a project, or the text that fails the whole call, or a function */
   projects?: Record<string, ProjectSpec | string | ((init: Init) => Answer)>
   /** `focus status --initiative <ref>`: its projects, or the text it fails with */
   initiatives?: Record<string, ProjectSpec[] | string | ((init: Init) => Answer)>
@@ -52,8 +52,12 @@ export function ix(w: World, served: Served): Ix {
         return typeof r === 'function' ? r() : r
       }
       if (args[0] === 'focus' && args[2] === '--project') {
-        const p = served.projects?.[args[3]!]
-        return p === undefined ? out('', 4, `project ${args[3]} is not found`) : resolve(p, init)
+        const one = (ref: string): Answer => {
+          const p = served.projects?.[ref]
+          return p === undefined ? out('', 4, `project ${ref} is not found`) : resolve(p, init)
+        }
+        const refs = projectRefs(args)
+        return refs.length === 1 ? one(refs[0]!) : Promise.all(refs.map(one)).then(combine)
       }
       if (args[0] === 'focus' && args[2] === '--initiative') {
         const p = served.initiatives?.[args[3]!]

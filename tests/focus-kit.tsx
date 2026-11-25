@@ -2,7 +2,7 @@ import { expect } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import type { Records } from '../hooks/progress'
-import { FP, out, report, startSession, statusJson } from './world'
+import { FP, combine, out, projectRefs, report, startSession, statusJson } from './world'
 import type { World } from './world'
 
 // What the focus tests share: the pane drawn as lines of text, a stand-in for ix-board, and a lead
@@ -46,7 +46,7 @@ export function lead(w: World, scope: { initiatives?: string[]; projects?: strin
   w.leads.set(LEAD, report(LEAD, summary, ['running'], scope))
 }
 
-/** One `ix-board` stub: `combined` answers every `focus status` call (each is one project's), by its arguments after `focus status`. */
+/** One `ix-board` stub: `combined` answers a `focus status` call of one project, by its arguments after `focus status`; a call for several is made of those. */
 export function board(w: World, answers: { combined: (args: string[], init?: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>> }) {
   const state = { inflight: 0, max: 0 }
   const prior = w.stub.value
@@ -55,7 +55,9 @@ export function board(w: World, answers: { combined: (args: string[], init?: { t
     const args = argv.slice(4)
     state.inflight++
     state.max = Math.max(state.max, state.inflight)
-    return Promise.resolve(answers.combined(args, init)).finally(() => void state.inflight--)
+    const refs = projectRefs(args)
+    const answer = refs.length < 2 ? Promise.resolve(answers.combined(args, init)) : Promise.all(refs.map(ref => answers.combined(['--project', ref], init))).then(combine)
+    return answer.finally(() => void state.inflight--)
   }
   return state
 }
@@ -66,9 +68,9 @@ export async function started($: Parameters<TestBody>[0], w: World): Promise<voi
   await w.clock!.advance(1000)
 }
 
-/** Lets the 15 minutes the board gate holds a read pass, so the next poll asks ix-board again. */
+/** Lets the 30 minutes the board gate holds a read pass, so the next poll asks ix-board again. */
 export async function refresh(w: World): Promise<void> {
-  await w.clock!.advance(16 * MIN)
+  await w.clock!.advance(31 * MIN)
 }
 
 export const pageOf = (name: string, done: number, total: number, inProgress = 0) => out(statusJson([{ name, done, total, inProgress }]))
