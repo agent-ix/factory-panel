@@ -16,7 +16,7 @@ The mod SHALL show the fallback modules local, focus, lead and lanes when neithe
 
 - The mod SHALL NOT choose modules from a role.
 - The mod SHALL NOT ask a role question.
-- The mod SHALL show the host list only where the hosts scope is `all`.
+- The mod SHALL show the host list only where the hosts scope is `all`, which is not the default except where the session cannot be identified ([FR-013](./FR-013-scoping.md)).
 
 ## Acceptance Criteria
 

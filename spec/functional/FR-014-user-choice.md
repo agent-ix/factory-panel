@@ -25,9 +25,10 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 - The mod SHALL reject a value that is not valid for a choice, name the valid values, and leave the choice unchanged.
 - The mod SHALL reject `/factory use` with no argument and name the valid modules.
 - The mod SHALL store a choice in `~/.ix/factory-panel/choices/<key>.json`, using the sanitized key of [FR-011](./FR-011-feature-declaration.md).
-- Where the key's choice file does not exist, the mod SHALL read `default.json` there.
+- Where the key's choice file does not exist, or is ignored because it is not a JSON object or not valid JSON, the mod SHALL read `default.json` there.
 - Where two sessions share one key, the last write to the choice file SHALL win.
-- `/factory reset` SHALL clear the user's choices for the session's key.
+- `/factory reset` SHALL write an empty JSON object to the key's own choice file.
+- `/factory reset` SHALL NOT change `default.json` or any other key's file.
 - `/factory show` SHALL print each feature with its value and the source that decided it, being `user`, `declaration` or `default`.
 - `/factory show` SHALL print the session's key and the third segment of its address verbatim.
 - The help SHALL list each choice command with one example.
@@ -48,6 +49,7 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 | FR-014-AC-9 | `/factory reset` returns each feature to its declaration or default and `/factory show` says so. | Test |
 | FR-014-AC-10 | Choices made for the session `host1:QSL:code` do not change the band of the session `host2:ENG:plan`. | Test |
 | FR-014-AC-11 | `/factory help` lists `use`, `focus`, `teams`, `hosts`, `show` and `reset`, each with an example. | Test |
+| FR-014-AC-14 | Given a malformed key choice file and a `default.json` of choices, the choices of `default.json` apply, and after `/factory reset` the key has none and `default.json` is unchanged. | Test |
 | FR-014-AC-13 | For two sessions with the same key, a choice made in the first and then one in the second leaves the second's choice in effect for both. | Test |
 | FR-014-AC-12 | The plugin registers `/factory` and the aliases of FR-003 and no other command. | Test |
 

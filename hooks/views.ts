@@ -5,7 +5,6 @@ import { PANE_SPEC as FACTORY_PANE, refreshAll } from './factory'
 import { PANE_SPEC as FOCUS_PANE, pollFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, pollRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, pollTeam } from './team'
-import type { Role } from './band/roles'
 import type { Options } from './shared'
 
 // The five detail views. Each is a pane; a band cell, `/factory <view>` and the old per-pane
@@ -25,8 +24,8 @@ export const VIEW_SPECS: Record<ViewId, { id: string; title: string }> = {
 
 export const isViewId = (text: string): text is ViewId => (VIEW_IDS as readonly string[]).includes(text)
 
-/** The view a role looks at first: Focus for a code lead or planner, Factory for everyone else. */
-export const defaultView = (role: Role | undefined): ViewId => (role === 'code-lead' || role === 'planner' || role === undefined ? 'focus' : 'factory')
+/** The view a plain `/factory` opens: Focus when the focus module is shown, Factory otherwise. */
+export const defaultView = (modules: readonly string[]): ViewId => (modules.includes('focus') ? 'focus' : 'factory')
 
 /**
  * Opens one view with the keyboard (Esc closes it) and refreshes its data. In the classic layout

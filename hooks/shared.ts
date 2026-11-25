@@ -6,14 +6,9 @@ import { ACCENT, DOING, READY, TRACK } from './ui/glyphs'
 export type Options = {
   prometheusUrl: string
   grafanaUrl: string
+  /** The teams ix-board may be asked about when the selection names none (herdr workspace labels). */
   teams: string[]
   refreshSeconds: number
-  /** coordinator | code-lead | planner | worker | auto */
-  role: string
-  /** Comma list that replaces the role's band modules; '' keeps the preset. */
-  bandModules: string
-  /** Which focus the band's bar follows: an address or part of a summary. */
-  bandFocus: string
   /** band | status | off: what a classic (non-fullscreen) session shows. */
   inlineView: 'band' | 'status' | 'off'
 }
@@ -27,9 +22,6 @@ export const readOptions = (options: Record<string, unknown>): Options => ({
     .map(t => t.trim())
     .filter(Boolean),
   refreshSeconds: Math.max(5, Number(options.refreshSeconds ?? 15) || 15),
-  role: String(options.role ?? 'auto').trim().toLowerCase(),
-  bandModules: String(options.bandModules ?? '').trim(),
-  bandFocus: String(options.bandFocus ?? '').trim(),
   inlineView: ['status', 'off'].includes(String(options.inlineView)) ? (String(options.inlineView) as 'status' | 'off') : 'band',
 })
 

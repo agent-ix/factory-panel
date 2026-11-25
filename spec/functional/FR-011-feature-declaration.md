@@ -27,6 +27,7 @@ A skill SHALL select features by instructing its agent to write a declaration fi
 - The mod SHALL ignore a key it does not know.
 - The mod SHALL treat a `modules` list with no known module name, an empty list, or a value of the wrong type as not selected.
 - The mod SHALL ignore a file that is not a JSON object, or is not valid JSON.
+- The mod SHALL treat an ignored file as if it did not exist, so that it reads `default.json` where the ignored file was the key's own file.
 - The mod SHALL show one note naming the file and the reason when it ignores a file or a value, in `/factory show` and once in the band line.
 - The mod SHALL NOT repeat the band note on later refreshes of the same file content.
 - The mod SHALL treat a missing `~/.ix/factory-panel` directory as no declaration.

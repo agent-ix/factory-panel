@@ -115,7 +115,7 @@ const run = (stdout: string, exitCode = 0) => ({
   value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-test('the pane draws machines, herdr, relay and board from seeded answers', { options: { teams: 'ENG,ix-relay,web', role: 'coordinator' } }, async ($, on) => {
+test('the pane draws machines, herdr, relay and board from seeded answers', { options: { teams: 'ENG,ix-relay,web' } }, async ($, on) => {
   engine(on)
   on('http.fetch', (_, e) => {
     const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''

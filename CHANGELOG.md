@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- Breaking: the role question, the stored role answer, the `role` setting and `/factory role` are removed. The mod has no notion of role and asks nothing. The `bandModules` and `bandFocus` settings are removed too: `/factory use` and `/factory focus` replace them.
+- The mod reads who the session is from `agent-msg whoami` (never waiting more than five seconds, and never before the first paint) and by default shows this machine, your own focus and your own team's lanes. When it cannot tell who the session is it shows everything and says so.
+- What is shown is chosen per feature (cells, hosts, focus, teams). Order: your choice, then a declaration an agent wrote for the session (`~/.ix/factory-panel/features/<key>.json`), then the automatic view. A skill selects features by telling its agent to write that file; `/factory help` prints a snippet.
+- New `/factory use`, `focus <own|team|name>`, `teams`, `hosts`, `show` and `reset` commands, with choices stored in `~/.ix/factory-panel/choices/<key>.json`.
+- Focus scopes: `own`, `team` (grouped by team) or a focus name matched by exact then partial summary, with the number of matches. Lanes follow the teams list, which defaults to your own team.
+- The Linear rate-limit cache moves to `~/.ix/factory-panel/linear-gate.json`; the old file under `~/.cache` is read once and not written.
+- The focus data shape changes (`focuses-3` adds the lead's status).
+
 ## 0.4.0
 
 - Breaking: `/band` is removed. `/factory` is the one command: `/factory` opens the view for your role, `/factory <view>` opens one, `/factory role` asks the role question again and `/factory help` explains in the words of your layout. Band cell digits switch views while one is open.

@@ -6,6 +6,8 @@ import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { gatedBoard } from './linear'
+import { focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
+import { getSelection, scopeOf, selectionReady } from './selection'
 import type { Options } from './shared'
 
 // The Focus pane: one card per named focus. A focus belongs to a coordinator agent: its
@@ -19,7 +21,7 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const POLL_MS = 2 * 60 * 1000
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
-  shape: 'focuses-2',
+  shape: 'focuses-3',
 })
 const focusMeta = atom(
   { plugin: 'factory-panel', key: 'focusMeta' } as const,
@@ -32,7 +34,8 @@ const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as 
 // ---------------------------------------------------------------- data
 
 type WorkReport = {
-  binding?: { machine?: string; kind?: string; model?: string; address?: string }
+  binding?: { machine?: string; kind?: string; address?: string }
+  agents?: { status?: string }[]
   scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number }
   focus?: { summary?: string; reported_at_ms?: number }
 }
@@ -93,8 +96,8 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport, man
     address: report.binding?.address ?? lead,
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
-    model: report.binding?.model ?? null,
     summary: report.focus?.summary ?? '',
+    status: statusOf(report.agents),
     scope: {
       initiatives: report.scope?.initiatives?.length ?? 0,
       projects: report.scope?.projects?.length ?? 0,
@@ -118,7 +121,11 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport, man
 export async function pollFocus($: EngineInterface, manual = false): Promise<void> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
-    const leads = await listLeads($)
+    // The scope needs to know who this session is before it knows which leads to read.
+    await selectionReady()
+    const scope = scopeOf(getSelection())
+    const teams = focusTeams(scope)
+    const leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
     const reports = await Promise.all(leads.map(async lead => ({ lead, report: await readReport($, lead) })))
     const withFocus = reports.filter(
       (r): r is { lead: string; report: WorkReport } =>
@@ -159,7 +166,7 @@ export function registerFocus(on: On, _options: Options): void {
     const { Box, Text, Button } = els
     const { segmentBar, progressRow, legend } = widgets(els)
     const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
-    const [list, meta, collapsed, showDone] = await Promise.all([
+    const [all, meta, collapsed, showDone] = await Promise.all([
       read($, focuses),
       read($, focusMeta),
       read($, focusCollapsed),
@@ -167,6 +174,10 @@ export function registerFocus(on: On, _options: Options): void {
     ])
     const now = await $.clock.now()
     const width = Math.max(30, e.props.bodyColumns ?? 60)
+    // Only the focuses the selection shows; the team scope groups them under each team.
+    const scope = scopeOf(getSelection())
+    const { shown: list, note } = scopeFocuses(all, scope)
+    const grouped = scope.focus.trim().toLowerCase() === 'team'
 
     const bar = (done: number, inProgress: number, ready: number, total: number, cells: number) =>
       Svg && (
@@ -291,7 +302,7 @@ export function registerFocus(on: On, _options: Options): void {
 
           <Box flexDirection="row" justifyContent="space-between">
             <Text dimColor size="caption">
-              {modelName(f.model) ?? f.kind}
+              {f.kind}
             </Text>
             <Text dimColor size="caption" tabular>
               {[
@@ -328,7 +339,25 @@ export function registerFocus(on: On, _options: Options): void {
           </Text>
         )}
 
-        {list.map(card)}
+        {note !== null && (
+          <Text color="warning" size="caption">
+            {note}
+          </Text>
+        )}
+        {scope.identity === 'unknown' && (
+          <Text dimColor size="caption">
+            Could not tell who this session is, so every focus is shown.
+          </Text>
+        )}
+
+        {list.map((f, i) => (
+          <Box key={f.address} flexDirection="column" gap={1}>
+            {grouped && (i === 0 || teamOf(list[i - 1]!.address).toLowerCase() !== teamOf(f.address).toLowerCase()) && (
+              <Text weight="semibold">{teamOf(f.address)}</Text>
+            )}
+            {card(f)}
+          </Box>
+        ))}
 
         <Box flexDirection="row" justifyContent="flex-end">
           <Text color={meta.error ? 'warning' : 'subtle'} size="caption">
@@ -347,14 +376,3 @@ export function registerFocus(on: On, _options: Options): void {
 
 /** An age without the "ago": 19h, 6m. */
 const age = (at: number, now: number): string => ago(at, now).replace(/ ago$/, '')
-
-/** A model id as people say it: claude-opus-5-5 → Opus 5.5, gpt-6.1-sol → GPT-6.1 Sol. */
-export const modelName = (id: string | null): string | null => {
-  if (!id) return null
-  const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1)
-  const claude = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
-  if (claude) return `${cap(claude[1] ?? '')} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
-  const gpt = /^gpt-([\d.]+)(?:-(.+))?$/.exec(id)
-  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map(cap).join(' ')}` : ''}`
-  return id
-}

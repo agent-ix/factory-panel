@@ -84,9 +84,9 @@ export type FocusView = {
   address: string
   machine: string
   kind: string
-  /** The model, e.g. claude-opus-5-5, once ix-relay reports it in the work binding. */
-  model: string | null
   summary: string
+  /** Derived from the agents of the lead's work report: failed, running, waiting, done or unknown. */
+  status: string
   scope: { initiatives: number; projects: number; tickets: number }
   focusReportedAt: number | null
   /** ms since the epoch when ix-board fetched the tracker data */

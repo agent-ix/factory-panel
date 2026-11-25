@@ -12,7 +12,7 @@ hub:ENG:code  hub  codex  seen 11-21 09:40  pane w1F:pR  -  Herdr w1F:w1F:tG
 `
 
 const WORK = JSON.stringify({
-  binding: { machine: 'hub', pane: 'w1F:p13', kind: 'claude', model: 'claude-opus-5-5', address: 'hub:ENG:arch' },
+  binding: { machine: 'hub', pane: 'w1F:p13', kind: 'claude', session: 'sess-1', process_id: 4242, address: 'hub:ENG:arch' },
   scope: { initiatives: ['00000000-0000-4000-8000-000000000001'], projects: [], tickets: [], reported_at_ms: 1795216041262 },
   focus: { summary: 'Payments v2: finish the ledger and export work', tickets: [], reported_at_ms: 1795214759001 },
   agents: [],
@@ -126,7 +126,7 @@ const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', 
 function engine(
   on: Parameters<TestBody>[1],
   ran: string[][],
-  options: { teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
+  options: { files?: Map<string, string>; teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
 ): void {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   const opened = new Map<string, boolean>()
@@ -145,7 +145,7 @@ function engine(
   on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('clock.now', () => ({ value: Date.UTC(2026, 10, 21, 10, 0) }))
   on('clock.every', () => ({ value: undefined }))
-  const files = new Map<string, string>()
+  const files = options.files ?? new Map<string, string>()
   on('fs.read', (_, e) => {
     const text = files.get(e.path)
     if (text === undefined) throw Object.assign(new Error(`ENOENT: ${e.path}`), { code: 'ENOENT' })
@@ -232,7 +232,8 @@ test('the Focus pane draws a coordinator’s focus, its progress and its open pr
     // The terminal caption is one line; desktop keeps separate pieces.
     expect((await ui.find({ type: 'Text', text: /117.{1,3}124 done/ }))?.text).toBe(surface === 'terminal' ? '117/124 done · 6 in progress · 0 ready' : '117 / 124 done')
     expect((await ui.find({ type: 'Text', text: /6 in progress/ }))?.text).toMatch(/6 in progress/)
-    expect((await ui.find({ type: 'Text', text: 'Opus 5.5' }))?.text).toBe('Opus 5.5')
+    // The real work binding carries no model, so the card shows the harness kind.
+    expect((await ui.find({ type: 'Text', text: 'claude' }))?.text).toBe('claude')
     // Open projects show, most work left first; the finished one hides behind a toggle.
     const names = (await ui.findAll({ type: 'Text', text: /^Payments [a-z ]+$/ })).map(t => t.text)
     expect(names).toEqual(['Payments ledger', 'Payments export'])
@@ -895,10 +896,11 @@ const BAND = {
   view: {},
 } as never
 
-test('the classic-layout band draws the role’s modules as buttons, and a press opens that module’s pane', { options: { role: 'coordinator' } }, async ($, on) => {
+test('the classic-layout band draws the selected modules as buttons, and a press opens that module’s pane', async ($, on) => {
   const ran: string[][] = []
   const opens: string[] = []
-  engine(on, ran, { teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
+  const files = new Map([['/home/test/.ix/factory-panel/features/default.json', JSON.stringify({ modules: ['health'] })]])
+  engine(on, ran, { files, teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: BAND, viewport: MAIN_SCREEN })
   expect((await ui.find({ key: 'health' }))?.text).toBe('hosts —')
