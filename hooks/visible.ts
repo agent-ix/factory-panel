@@ -15,7 +15,7 @@ import { getSelection, refreshSelection } from './selection'
 import { guarded } from './shared'
 import type { Options } from './shared'
 import { pollRetro, pollTeam } from './team'
-import { pollEvents, pollWork } from './workview'
+import { pollEvents, pollTickets, pollWork } from './workview'
 import { VIEW_SPECS } from './views'
 import type { ViewId } from './views'
 
@@ -39,7 +39,7 @@ export const HEARTBEAT_MS = 15 * 1000
 const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   factory: ['selection', 'prometheus', 'herdr', 'relay', 'board'],
   focus: ['selection', 'focus'],
-  work: ['selection', 'focus', 'work', 'events'],
+  work: ['selection', 'focus', 'work', 'events', 'tickets'],
   escalations: ['escalations'],
   relay: ['announcements'],
   team: ['selection', 'team', 'retro', 'roles', 'capacity'],
@@ -57,7 +57,7 @@ const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
   attention: ['escalations'],
   relay: ['relay'],
   team: ['team'],
-  work: ['focus', 'work'],
+  work: ['focus', 'work', 'tickets'],
 }
 
 /**
@@ -83,7 +83,7 @@ async function readScope($: EngineInterface): Promise<boolean> {
   await refreshSelection($, true)
   const now = `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
   // The first refresh only records the scope: the first reads already wait for it.
-  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'retro', 'roles')
+  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'tickets', 'retro', 'roles')
   lastScope = now
   $.ui.invalidate('ui.render')
   return true
@@ -117,6 +117,8 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollWork($)
     case 'events':
       return pollEvents($)
+    case 'tickets':
+      return pollTickets($)
     case 'retro':
       return pollRetro($)
     case 'roles':

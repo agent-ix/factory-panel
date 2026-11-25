@@ -2,10 +2,10 @@
 
 ## 0.9.0
 
-Review events and a work cell, role evaluations, fleet capacity and daily velocity. Team keys, the daily rows and tile coverage need ix-board 0.12.0; roles, and the capacity’s deficit and output, need an ix-board newer than 0.11.0. Until one is installed and its exporter runs, those read `—` or say what they lack.
+Review events and a work cell, role evaluations, fleet capacity and daily velocity. Team keys, the daily rows and tile coverage need ix-board 0.12.0; roles, and the capacity’s deficit and output, need an ix-board newer than 0.11.0. Until one is installed and its exporter runs, those say why they read `—` or what they lack.
 
 - The Work tab's Recent list gains review, spec and gate events: under `a`, each start and finish of a reviewer, spec or gate agent, with its ticket, lead and age, for the leads of the selected teams. Merges stay the default. The events of `agent-msg work events` are now a read of their own every 30 seconds that waits on no lead's work report, so a review shows within a minute of its report.
-- New `work` band cell: `N tickets · M PRs open · K merged 24h`, opening the Work view. An unknown number reads `—`, and a count that may miss some (a lead whose report was never read, a ticket whose PRs ix-board does not name) reads `≥N`. Select it with `/factory use` or a declaration.
+- New `work` band cell, shown by default: `N tickets · M PRs open · K merged 24h`, opening the Work view. It counts the tickets in hand of leads with a report at most 2 hours old, `≥N tickets (r/t leads)` where fewer report than are listed, with the tickets only older reports name apart. An unknown number reads `—` with its reason, and an ix-board answer over 35 minutes old has its age said.
 - `merged 24h`, in the band and the Work widget, counts distinct PRs (a PR linked to two tickets was counted twice) and reads `≥K` where ix-board’s 200-entry cap on activity cuts into the day.
 - A changed focus or teams choice reads the leads' work reports again at once.
 - Leads on other machines are no longer cut off. A lead's work report is given 20 seconds (it was 5, under what an ssh read can take), at most eight are read at once, Focus and Work share the reads, and a Redis, herdr or ssh failure that may pass is tried once more. A lead that cannot be read stays on the Work tab: drawn from its last report and marked old, or listed as not read. Each lead is drawn as it answers, and the first Focus drawing waits 5 seconds at most for them.
@@ -19,9 +19,14 @@ Review events and a work cell, role evaluations, fleet capacity and daily veloci
 - New Capacity section on the Team tab: each host’s busy ratio, ready-buffer deficit and output against its recorded sustainable level, from the `ix_fleet_*` series and one read-only ledger query a minute, with stale samples marked and absent values `unavailable` with their reason. The deficit and output need the ix-board that publishes them (not 0.11.0).
 - A Team tile says `N% covered` where the exporter’s `ix_team_metric_coverage` of its series is below 100%.
 - The health strip waits for the session to know its team before reading, instead of saying `no retro baseline` for 5 minutes where the Team view opened first, and reads again when the teams choice changes. It says when it is still reading and when no team is selected.
-- The Work tab lists the tickets a lead’s focus names beside those of its agents, and the band and widget count them; a lead with no ticket shows its focus summary, and the leads that have reported no work are named in one line.
+- The Work tab lists the tickets a lead’s focus names beside those of its agents, and the band and widget count them; a lead with no ticket shows its focus summary, and the leads that have reported no work are counted in one line that opens to their addresses. Finished tickets are folded under their lead and a report over 2 hours old is marked old.
+- A reported ticket that no focus status names gets its state, title and `[pr]` from one gated `ix-board --json issues` read.
+- The Work tab shows ix-board failures in its warnings and says the age of an old answer; its widget says it is reading, or that the leads could not be read, instead of counting 0.
+- The sessions of a machine share the reads of leads on other machines, at most eight at once over all of them.
 - The Team tab’s tiles, its widget and the band’s team cell follow the selected teams. An exporter id with no team key cannot be matched, so with a team selected it is one closed row that opens to its tiles, and a selected team with no series is named.
-- The selected teams of the health strip and Roles are those of the session’s focus, else the teams choice (a named focus showed only the session’s own team).
+- The selected teams of the tiles, health strip, Roles, widget and band cell are your teams choice or a session’s declaration, else your own team. A team with no retro configuration reads `no retro baseline` under Roles too.
+- An expanded role lists its objective metrics.
+- A Team tile or daily row with no value says why; `Oldest in a stage` reads `—` or `≥` where a stage’s age is not fully measured.
 
 ## 0.8.0
 

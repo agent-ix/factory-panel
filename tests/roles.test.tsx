@@ -124,7 +124,7 @@ test('no score and no trend are said, never 0, and a trend reads by its sign and
   const d = await draw($, w)
   const lines = await d.lines()
   const rowAt = (score: string) => lines.slice(lines.indexOf(score), lines.indexOf(score) + 2)
-  expect(rowAt('no score')).toEqual(['no score', 'trend —'])
+  expect(rowAt('no score')).toEqual(['no score', 'trend — · none in the answer'])
   expect(rowAt('33% · 1/3 passed')).toEqual(['33% · 1/3 passed', '↓ −50 pts'])
   expect(rowAt('99% · 249/250 passed')).toEqual(['99% · 249/250 passed', '↑ <1 pts'])
   expect(rowAt('0% · 0/4 passed')).toEqual(['0% · 0/4 passed', '↓ <1 pts'])
@@ -254,6 +254,50 @@ test('an ix-board with no retro eval says so, fails no source and is asked again
   await d.ui.unmount()
 })
 
+const noConfig = (team: string) => out('', 3, `retro config ${configOf(team)}: cannot read: No such file or directory (os error 2)\n`)
+
+test('a team with no retro configuration reads no retro baseline, fails no source and is held for 30 minutes', async ($, on) => {
+  trace("FR-031-AC-14")
+  const w = await setup($, on, team => noConfig(team))
+  const d = await draw($, w)
+  expect(await d.lines()).toContain('no retro baseline')
+  expect((await d.lines()).join('\n')).not.toMatch(/retro eval:|cannot read/)
+  expect(await failed($)).toEqual([])
+  await w.clock!.advance(29 * MIN)
+  expect(evals(w)).toHaveLength(1)
+  await w.clock!.advance(2 * MIN)
+  expect(evals(w)).toHaveLength(2)
+  await d.ui.unmount()
+})
+
+test('a configuration that is there and cannot be read is a failure', async ($, on) => {
+  trace("FR-031-AC-14", "FR-031-AC-8")
+  const w = await setup($, on, team => out('', 3, `retro config ${configOf(team)}: cannot read: Permission denied (os error 13)\n`))
+  const d = await draw($, w)
+  expect((await d.lines()).join('\n')).toMatch(/retro eval: retro config .*Permission denied/)
+  expect(await failed($)).toHaveLength(1)
+  await d.ui.unmount()
+})
+
+test('an expanded role lists its objective metrics with value and unit, or why there is none, never 0', async ($, on) => {
+  trace("FR-031-AC-15")
+  const objectives = [
+    { id: 'CODE-M01', query: 'github.ticket_start_to_pr_open_median_hours', value: 3.5, status: 'pass', unit: 'hours', evidence_refs: [] },
+    { id: 'CODE-M02', query: 'prom.share', value: null, status: 'unavailable', unit: 'ratio', evidence_refs: [], reason: 'no complete sample' },
+    { id: 'CODE-M03', query: 'retro.prs_open', value: null, status: 'unavailable', unit: 'pull_requests', evidence_refs: [] },
+  ]
+  const w = await setup($, on, () => answer([{ ...CODER, objective_metrics: objectives }]))
+  const d = await draw($, w)
+  expect((await d.lines()).join('\n')).not.toContain('CODE-M01')
+  await d.ui.press({ key: 'role-QSL-coder' })
+  const lines = await d.lines()
+  expect(lines).toContain('objective metrics')
+  expect(lines).toContain('CODE-M01 · 3.5 hours · github.ticket_start_to_pr_open_median_hours')
+  expect(lines).toContain('CODE-M02 · unavailable · no complete sample · prom.share')
+  expect(lines).toContain('CODE-M03 · unavailable · no reason given · retro.prs_open')
+  await d.ui.unmount()
+})
+
 const NO_SETTINGS = 'retro evaluation failed: /home/test/.local/state/team-retro/QSL/eval.json: No such file or directory (os error 2)'
 for (const [why, failing, said] of [
   ['exits non-zero', () => out('', 3, `${NO_SETTINGS}\n`), NO_SETTINGS],
@@ -276,6 +320,17 @@ for (const [why, failing, said] of [
     await d.ui.unmount()
   })
 }
+
+test('an evaluation is given 5 minutes, the rest of the view drawn meanwhile', async ($, on) => {
+  trace("NFR-004-M-7", "FR-031-AC-5")
+  const limits: (number | undefined)[] = []
+  const w = await setup($, on, (_, init, w) => (limits.push(init?.timeoutMs), hangs(w, init)))
+  const d = await draw($, w)
+  expect(limits).toEqual([5 * MIN])
+  expect(await d.lines()).toContain('reading the role evaluation, which can take minutes')
+  expect((await d.lines()).join('\n')).toMatch(/No team metrics yet/)
+  await d.ui.unmount()
+})
 
 const timeouts: (number | undefined)[] = []
 for (const [why, failing] of [

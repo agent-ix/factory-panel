@@ -17,7 +17,22 @@ const LEDGER = 'ix-board --json fleet ledger query host_output_share_of_recorded
 
 /** One busy ratio series: its host, value, the age of its last sample in seconds, and the job that pushed it. */
 type Busy = { host: string; ratio: number | string; age?: number | null; job?: string }
-type Fleet = { busy?: Busy[]; deficit?: [string, number | string][]; level?: [string, number][]; discovery?: [string, string][]; failing?: RegExp }
+type Fleet = {
+  busy?: Busy[]
+  deficit?: [string, number | string][]
+  /** the age in minutes of each host's deficit sample; by default every deficit's sample is 2 minutes old */
+  deficitAge?: [string, number][]
+  deficitWhy?: [string, string][]
+  share?: [string, number | string][]
+  shareAge?: [string, number][]
+  level?: [string, number][]
+  discovery?: [string, string][]
+  failing?: RegExp
+}
+const DEFICIT = 'ix_fleet_ready_buffer_deficit'
+const SHARE = 'ix_fleet_host_output_share_of_recorded_level'
+/** Series whose value is the time of a host's sample, in seconds. */
+const times = (name: string, ages: [string, number][]) => vector(ages.map(([host, ago]) => sample({ __name__: name, host }, NOW / 1000 - ago * 60)))
 
 const vector = (result: unknown[]) => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'success', data: { resultType: 'vector', result } }) } })
 const sample = (metric: Record<string, string>, value: number | string) => ({ metric, value: [NOW / 1000, String(value)] })
@@ -28,7 +43,11 @@ function answer(fleet: Fleet, query: string) {
   const labels = (b: Busy) => ({ host: b.host, job: b.job ?? 'ix-relay-watcher' })
   if (query === 'last_over_time(ix_fleet_host_busy_ratio[1h])') return vector(busy.map(b => sample({ __name__: 'ix_fleet_host_busy_ratio', ...labels(b) }, b.ratio)))
   if (query.includes('timestamp(ix_fleet_host_busy_ratio)')) return vector(busy.flatMap(b => (b.age === null ? [] : [sample(labels(b), b.age ?? 10)])))
-  if (query === 'ix_fleet_ready_buffer_deficit') return vector((fleet.deficit ?? []).map(([host, n]) => sample({ __name__: query, host }, n)))
+  if (query === DEFICIT) return vector((fleet.deficit ?? []).map(([host, n]) => sample({ __name__: query, host }, n)))
+  if (query === `${DEFICIT}_timestamp_seconds`) return times(query, fleet.deficitAge ?? (fleet.deficit ?? []).map(([host]): [string, number] => [host, 2]))
+  if (query === `${DEFICIT}_unavailable == 1`) return vector((fleet.deficitWhy ?? []).map(([host, reason]) => sample({ __name__: `${DEFICIT}_unavailable`, host, reason }, 1)))
+  if (query === SHARE) return vector((fleet.share ?? []).map(([host, n]) => sample({ __name__: query, host }, n)))
+  if (query === `${SHARE}_timestamp_seconds`) return times(query, fleet.shareAge ?? [])
   if (query === 'ix_fleet_capacity_recorded_level') return vector((fleet.level ?? []).map(([host, n]) => sample({ __name__: query, host }, n)))
   if (query === 'ix_fleet_capacity_discovery_state == 1') return vector((fleet.discovery ?? []).map(([host, state]) => sample({ __name__: 'ix_fleet_capacity_discovery_state', host, state }, 1)))
   return vector([])
@@ -89,9 +108,8 @@ test('each host draws its busy ratio, deficit and output against its level, and 
   const d = await draw($, w)
   expect(await d.section()).toEqual([
     'Capacity', 'read 0s ago',
-    'draco', 'Busy', '11%', 'Ready deficit', '3', 'Output / level', '100% of level 4 · 6/h of 6/h tickets+PRs · 2m ago',
-    'luna', 'Busy', '99%', 'Ready deficit', '0', 'Output / level', '33% of level 2 · 1/h of 3/h commits · 2m ago',
-    'The deficit’s sample age is not published.',
+    'draco', 'Busy', '11%', 'Ready deficit', '3 · 2m ago', 'Output / level', '100% of level 4 · 6/h of 6/h tickets+PRs · 2m ago',
+    'luna', 'Busy', '99%', 'Ready deficit', '0 · 2m ago', 'Output / level', '33% of level 2 · 1/h of 3/h commits · 2m ago',
   ])
   await d.ui.unmount()
 })
@@ -117,6 +135,69 @@ test('a busy sample older than 60 seconds is stale, a fresh series wins, and two
   expect(await d.said('wild', 'Busy')).toBe('○ unavailable · sample 1.5 is not between 0 and 1')
   expect(await d.said('nan', 'Busy')).toBe('○ unavailable · sample NaN is not between 0 and 1')
   expect((await d.lines()).filter(l => l === 'moved')).toHaveLength(1)
+  await d.ui.unmount()
+})
+
+test('a deficit older than 10 minutes or of unknown age is marked, and one the exporter withholds gives its reason', async ($, on) => {
+  trace("FR-032-AC-9")
+  const w = await setup($, on, {
+    deficit: [['fresh', 3], ['edge', 1], ['aged', 2], ['blind', 4]],
+    deficitAge: [['fresh', 1], ['edge', 9], ['aged', 11], ['late', 25]],
+    deficitWhy: [['late', 'sample_stale'], ['bare', 'sample_missing']],
+  }, rowsOf([]))
+  const d = await draw($, w)
+  expect(await d.said('fresh', 'Ready deficit')).toBe('3 · 1m ago')
+  expect(await d.said('edge', 'Ready deficit')).toBe('1 · 9m ago')
+  expect(await d.said('aged', 'Ready deficit')).toBe('▲ 2 · stale, 11m old')
+  expect(await d.said('blind', 'Ready deficit')).toBe('▲ 4 · stale, age unknown')
+  // A host only the reason or the sample time names is listed, with no count.
+  expect(await d.said('late', 'Ready deficit')).toBe('○ unavailable · sample_stale · sample 25m old')
+  expect(await d.said('bare', 'Ready deficit')).toBe('○ unavailable · sample_missing')
+  await d.ui.unmount()
+})
+
+test('with only reasons exported each host gives its own, and the section claims no missing source', async ($, on) => {
+  trace("FR-032-AC-9", "FR-032-AC-6")
+  const w = await setup($, on, { deficitWhy: [['draco', 'coverage_incomplete']] }, rowsOf([]))
+  const d = await draw($, w)
+  expect(await d.said('draco', 'Ready deficit')).toBe('○ unavailable · coverage_incomplete')
+  expect((await d.section()).join('\n')).not.toMatch(/Prometheus has no ix_fleet_ready_buffer_deficit/)
+  await d.ui.unmount()
+})
+
+test('a deficit whose sample time cannot be asked is of unknown age', async ($, on) => {
+  trace("FR-032-AC-9")
+  const w = await setup($, on, { ...FULL, failing: /deficit_timestamp/ })
+  const d = await draw($, w)
+  expect(await d.said('draco', 'Ready deficit')).toBe('▲ 3 · stale, age unknown')
+  await d.ui.unmount()
+})
+
+test('a host with no row in this machine’s ledger shows the share Prometheus has, and a ledger row wins over it', async ($, on) => {
+  trace("FR-032-AC-10")
+  const w = await setup($, on, {
+    share: [['draco', 0.5], ['luna', 0.339], ['terra', 1.25], ['titan', 0.8], ['wild', 'NaN']],
+    shareAge: [['draco', 1], ['luna', 3], ['terra', 12], ['quiet', 7]],
+    level: [['luna', 2]],
+  }, rowsOf([row('draco', { share_percent: 70, step_no: 4 })]))
+  const d = await draw($, w)
+  expect(await d.said('draco', 'Output / level')).toBe('70% of the recorded level · 6/h of 6/h tickets+PRs · 2m ago')
+  expect(await d.said('luna', 'Output / level')).toBe('33% of level 2 · from Prometheus · 3m ago')
+  expect(await d.said('terra', 'Output / level')).toBe('▲ 125% of the recorded level · from Prometheus · stale, 12m old')
+  expect(await d.said('titan', 'Output / level')).toBe('▲ 80% of the recorded level · from Prometheus · stale, age unknown')
+  expect(await d.said('wild', 'Output / level')).toBe('○ unavailable · exported share NaN is not a share')
+  expect(await d.said('quiet', 'Output / level')).toBe('○ unavailable · no row in this machine’s ledger')
+  await d.ui.unmount()
+})
+
+test('without a ledger the shares of Prometheus are drawn and the failing command is still a failed source', async ($, on) => {
+  trace("FR-032-AC-10", "FR-032-AC-6")
+  const w = await setup($, on, { share: [['luna', 0.4]], shareAge: [['luna', 1]], busy: [{ host: 'draco', ratio: 0.1 }] }, () => out('', 3, 'fleet ledger: broken\n'))
+  const d = await draw($, w)
+  expect(await d.said('luna', 'Output / level')).toBe('40% of the recorded level · from Prometheus · 1m ago')
+  expect(await d.said('draco', 'Output / level')).toBe('○ unavailable · no share exported for this host')
+  expect((await d.section()).join('\n')).not.toMatch(/fleet ledger: broken/)
+  expect(await failed($)).toEqual([expect.stringContaining('fleet ledger: broken')])
   await d.ui.unmount()
 })
 
@@ -210,7 +291,7 @@ test('with no fleet series each is said once, and the ledger rows are still draw
 for (const [what, failing, label] of [
   ['busy values', /^last_over_time\(ix_fleet_host_busy/, 'Busy'],
   ['busy ages', /timestamp\(ix_fleet_host_busy/, 'Busy'],
-  ['deficit', /ready_buffer_deficit/, 'Ready deficit'],
+  ['deficit', /ready_buffer_deficit$/, 'Ready deficit'],
 ] as [string, RegExp, string][]) {
   test(`a failing query of the ${what} is said once with its error, the rest drawn`, async ($, on) => {
     trace("FR-032-AC-6")

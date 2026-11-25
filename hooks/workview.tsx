@@ -1,15 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { WorkAgent, WorkFeed, WorkLast, WorkLead, WorkMeta } from '../types'
-import { CARD_BG, ago, agoShort, errorText, runJson } from './shared'
+import type { TicketsAnswer, WorkAgent, WorkFeed, WorkLast, WorkLead, WorkMeta } from '../types'
+import { CALL_TIMEOUT_MS, limited } from './board'
+import { focusWasRead } from './focus'
+import { gatedBoard } from './linear'
+import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson } from './shared'
 import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
 import type { LeadRead, WorkReport } from './leads'
 import { focusTeams, statusOf, teamOf } from './band/modules'
-import { track } from './schedule'
+import { markStale, track } from './schedule'
 import { getSelection, scopeOf, selectionReady } from './selection'
-import { sourceFailed, sourceOk } from './sources'
-import { composeWork, foldFeed, isCutWithin, lastOfEvents, mergedSince, readBoards, recentOf, recentRows, ticketIds } from './work'
+import { sourceClear, sourceFailed, sourceOk } from './sources'
+import { boardNotes, composeWork, foldFeed, focusBoards, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf, workCounts } from './work'
 import type { RecentEntry, WorkTicket } from './work'
 import type { Options } from './shared'
 
@@ -25,15 +28,23 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const EVENT_LIMIT = 1000
 const EVENT_PAGES = 5
 const RECENT_ROWS = 10
+/** The tickets no focus names are read again within the gate's interval only where there are new ones, and this long after. */
+const TICKETS_AGAIN_MS = 5 * 60 * 1000
+/** At most this many tickets are asked for at once. */
+const TICKETS_MAX = 100
+/** What `ix-board issues` takes: a ticket identifier; a lead may report other words. */
+const TICKET_ID = /^[A-Za-z][A-Za-z0-9]*-\d+$/
 
 const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
 const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, WorkLast>, { shape: 'workLast-1' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [] } as WorkMeta, { shape: 'workMeta-4' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0 } as WorkMeta, { shape: 'workMeta-5' })
 const EMPTY_FEED: WorkFeed = { events: [], phase: {}, error: null }
 const workFeed = atom({ plugin: 'factory-panel', key: 'workFeed' } as const, EMPTY_FEED, { shape: 'workFeed-1' })
 export const workCollapsed = atom({ plugin: 'factory-panel', key: 'workCollapsed' } as const, [] as string[])
 const workAll = atom({ plugin: 'factory-panel', key: 'workAll' } as const, false)
 const workWarnings = atom({ plugin: 'factory-panel', key: 'workWarnings' } as const, false)
+/** The folded rows that are open: `silent`, and `finished-<address>`. */
+const workOpen = atom({ plugin: 'factory-panel', key: 'workOpen' } as const, [] as string[])
 
 // ---------------------------------------------------------------- data
 
@@ -56,7 +67,8 @@ const focusOf = ({ focus }: WorkReport): WorkLead['focus'] =>
 function leadsOf(addresses: readonly string[], reads: ReadonlyMap<string, LeadRead>, drawn: readonly WorkLead[]): WorkLead[] {
   return addresses.flatMap((address): WorkLead[] => {
     const read = reads.get(address)
-    if (read === undefined) return drawn.filter(l => l.address === address)
+    // A lead being read, here or by another session, keeps what was drawn of it.
+    if (read === undefined || (read.pending === true && read.report === undefined)) return drawn.filter(l => l.address === address)
     if (read.report) return [{ ...leadOf(address, read.report), error: read.error, readAt: read.at }]
     // A report of nothing is a report too: such a lead that stops answering is old, and one never read has no age.
     return read.error === null ? [] : [{ address, status: 'unknown', reportedAt: null, agents: [], focus: null, error: read.error, readAt: read.at }]
@@ -117,9 +129,59 @@ export function pollEvents($: EngineInterface): Promise<boolean> {
 
 /** Forgets the reads under way; the tests start each session from nothing. */
 export function resetWork(): void {
+  lastTickets = ''
   running = null
   runningEvents = null
   eventCursor = STREAM_START
+}
+
+/** The tickets the leads reported at the last read, as one string. */
+let lastTickets = ''
+
+async function runIssues($: EngineInterface, ids: string[]): Promise<TicketsAnswer> {
+  const ran = await $.process.run(['ix-board', '--json', 'issues', ...ids], { timeoutMs: CALL_TIMEOUT_MS })
+  if (ran.exitCode === 2 && ran.stderr.includes("unrecognized subcommand 'issues'")) throw new Error('this ix-board has no `issues` command')
+  if (ran.exitCode !== 0) throw new Error(failureText(ran.stderr, ran.exitCode))
+  if (ran.isStdoutTruncated) throw new Error('the answer was cut at 4 MiB')
+  const answer: unknown = JSON.parse(ran.stdout)
+  return { at: await $.clock.now(), asked: ids, issues: issuesOf(answer), unknown: unknownOf(answer) }
+}
+
+/** Reads the state and PRs of the reported tickets no focus status names; false when that failed. */
+export function pollTickets($: EngineInterface): Promise<boolean> {
+  return track($, 'tickets', async () => {
+    const [meta, leads, boards, isFocusRead] = await Promise.all([read($, workMeta), read($, workLeads), focusBoards($), focusWasRead($)])
+    // Which tickets no focus names is known once the leads and the focus statuses have been read: asked again then.
+    if (meta.at === null || !isFocusRead) {
+      markStale('tickets')
+      return true
+    }
+    const named = new Set(boards.flatMap(b => b.issues.map(i => i.identifier)))
+    const wanted = ticketIds(leads).filter(id => TICKET_ID.test(id) && !named.has(id)).sort().slice(0, TICKETS_MAX)
+    if (wanted.length === 0) {
+      await holdTickets($, () => null)
+      sourceClear('ix-board issues')
+      return true
+    }
+    const teams = focusTeams(scopeOf(getSelection()))
+    const now = await $.clock.now()
+    // One answer for the sessions that read the same teams, in the gate every session shares.
+    const got = await gatedBoard($, `tickets:${teams === null ? '*' : teams.join(',').toLowerCase()}`, () => limited(() => runIssues($, wanted)), {
+      outdated: (answer: TicketsAnswer) => now - answer.at >= TICKETS_AGAIN_MS && wanted.some(id => !answer.asked.includes(id)),
+    })
+    const error = got.backoffUntil !== null ? pausedText(got.backoffUntil, now) : got.error
+    const data = got.data
+    await holdTickets($, held =>
+      data !== null
+        ? { issues: data.issues, activity: null, at: data.at, error, ticketsOnly: true, unknown: data.unknown ?? [] }
+        : held !== null
+          ? { ...held, error }
+          : error === null ? null : { issues: [], activity: null, at: null, error, ticketsOnly: true },
+    )
+    if (error !== null) sourceFailed('ix-board issues', error)
+    else if (data !== null) sourceOk('ix-board issues', now)
+    return error === null
+  })
 }
 
 /** The events are a source of their own: they wait on no lead's report, and where they fail the tickets still show. */
@@ -168,8 +230,12 @@ async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean
     else sourceFailed('agent-msg work', failure)
     const now = await $.clock.now()
     const relayError = failure === null ? null : `no lead could be read, ${failed[0]}`
-    const silent = [...reads.values()].filter(r => r.error === null && !r.report).map(r => r.address).sort((a, b) => a.localeCompare(b))
-    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size, silent }))
+    const silent = [...reads.values()].filter(r => r.error === null && r.report === null).map(r => r.address).sort((a, b) => a.localeCompare(b))
+    const pending = [...reads.values()].filter(r => r.pending === true && r.report === undefined).length
+    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size, silent, pending }))
+    const reported = ticketIds(await read($, workLeads)).sort().join()
+    if (reported !== lastTickets) markStale('tickets')
+    lastTickets = reported
     return failure === null
   } catch (error) {
     await update($, workMeta, m => ({ ...m, busy: false, error: errorText(error), relayError: errorText(error) }))
@@ -230,30 +296,43 @@ export function registerWork(on: On, _options: Options): void {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
-    const [leads, last, meta, feed, boards, collapsed, all, warnOpen] = await Promise.all([read($, workLeads), read($, workLast), read($, workMeta), read($, workFeed), readBoards($), read($, workCollapsed), read($, workAll), read($, workWarnings)])
+    const [leads, last, meta, feed, boards, collapsed, opened, all, warnOpen, isFocusRead] = await Promise.all([read($, workLeads), read($, workLast), read($, workMeta), read($, workFeed), readBoards($), read($, workCollapsed), read($, workOpen), read($, workAll), read($, workWarnings), focusWasRead($)])
     const now = await $.clock.now()
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const view = composeWork(leads, last, boards)
-    const tickets = ticketIds(leads).length
-    // A lead whose report was never read may hold more tickets; one drawn as last read is marked old on its row.
+    const counts = workCounts(leads, boards, now, true, meta.listed)
+    const notes = boardNotes(boards, now)
+    const oldAge = notes.oldAt === null ? null : agoShort(notes.oldAt, now)
+    // A lead whose report was never read may hold more tickets; one drawn as last read, or whose report is old, is marked old on its row.
     const unread = view.leads.filter(l => l.readAt === null).length
-    const old = view.leads.filter(l => l.readAt !== null && l.error !== null).length
+    const old = view.leads.filter(l => l.readAt !== null && (l.error !== null || isOldReport(l.at, now))).length
     const notRead = [unread > 0 ? `${unread} not read` : '', old > 0 ? `${old} old` : ''].filter(Boolean).map(t => ` · ${t}`).join('')
-    const merged = `${isCutWithin(view.cutAt, now, 24) ? '≥' : ''}${mergedSince(view.activity, now, 24)}`
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+    // With no lead drawn and no read ended, nothing is known of them: no number is given.
+    const unknown = view.leads.length > 0 ? null : meta.relayError !== null ? 'The leads could not be read.' : meta.at === null ? 'Reading the leads’ work reports…' : null
 
     if (e.props.placement === 'widget') {
+      const isShort = counts.reporting < counts.listed
+      const tickets = `${isShort ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}${counts.oldTickets > 0 ? ` · +${counts.oldTickets} old` : ''}`
+      const merged = counts.merged === null ? ` · merged 24h unavailable (${counts.mergedWhy})` : ` · ${counts.mergedPartial ? '≥' : ''}${counts.merged} merged 24h`
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{`${view.leads.length} lead${view.leads.length === 1 ? '' : 's'} · ${unread > 0 ? '≥' : ''}${tickets} ticket${tickets === 1 ? '' : 's'}${view.activity === null ? '' : ` · ${merged} merged 24h`}${notRead}`}</Text>
+          <Text weight="semibold">{unknown ?? `${plural(view.leads.length, 'lead')} · ${tickets}${merged}${notRead}${oldAge === null ? '' : ` · ix-board ${oldAge} old`}`}</Text>
         </Box>
       )
     }
 
+    const flip = (key: string) => () => void update($, workOpen, list => (list.includes(key) ? list.filter(k => k !== key) : [...list, key]))
+    const fold = (key: string, label: string) => <Button key={key} plain label={`${opened.includes(key) ? '▾' : '▸'} ${label}`} onPress={flip(key)} />
+
     const leadBlock = (l: (typeof view.leads)[number]) => {
       const isOpen = !collapsed.includes(l.address)
       const isFailed = l.error !== null
-      const m = isFailed ? NOT_READ : (MARKS[l.status] ?? UNKNOWN)
-      const age = l.readAt === null ? 'not read' : isFailed ? `old ${agoShort(l.readAt, now)}` : l.at === null ? '—' : agoShort(l.at, now)
+      const isOld = isOldReport(l.at, now)
+      const m = isFailed ? NOT_READ : isOld ? UNKNOWN : (MARKS[l.status] ?? UNKNOWN)
+      const age = l.readAt === null ? 'not read' : isFailed ? `old ${agoShort(l.readAt, now)}` : l.at === null ? 'no report time' : `${isOld ? 'old ' : ''}${agoShort(l.at, now)}`
+      const ticket = (t: WorkTicket) => <Text key={`${l.address}-${t.id}`} dimColor={isOld} wrap="truncate-end">{ticketLine(t, now, width)}</Text>
+      const done = `finished-${l.address}`
       return (
         <Box key={`lead-${l.address}`} flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
@@ -261,22 +340,28 @@ export function registerWork(on: On, _options: Options): void {
               <Button key={`toggle-${l.address}`} plain label={isOpen ? '▾' : '▸'} onPress={() => void toggleCollapsed($, l.address)} />
               <Text color={m.color}>{m.mark}</Text>
               <Text wrap="truncate-end">{l.address}</Text>
-              {!isOpen && l.readAt !== null && <Text dimColor>{`(${l.tickets.length} ticket${l.tickets.length === 1 ? '' : 's'})`}</Text>}
+              {!isOpen && l.readAt !== null && <Text dimColor>{`(${plural(l.tickets.length, 'ticket')})`}</Text>}
             </Box>
             <Text dimColor size="caption" tabular>{age}</Text>
           </Box>
-          {isOpen && l.tickets.map(t => <Text key={`${l.address}-${t.id}`} wrap="truncate-end">{ticketLine(t, now, width)}</Text>)}
-          {isOpen && l.readAt !== null && l.tickets.length === 0 && <Text dimColor>   no ticket reported</Text>}
+          {isOpen && l.tickets.map(ticket)}
+          {isOpen && l.readAt !== null && l.tickets.length === 0 && l.finished.length === 0 && <Text dimColor>   no ticket reported</Text>}
           {isOpen && l.tickets.length === 0 && l.summary !== '' && <Text dimColor wrap="truncate-end">{`   focus: ${l.summary}`}</Text>}
+          {isOpen && l.finished.length > 0 && <Box flexDirection="row" paddingLeft={3}>{fold(done, `${l.finished.length} finished`)}</Box>}
+          {isOpen && opened.includes(done) && l.finished.map(ticket)}
         </Box>
       )
     }
 
     const rows = recentRows(recentOf(view.activity, feed.events, all, focusTeams(scopeOf(getSelection()))), RECENT_ROWS)
     // Why ix-board's part of Recent is not there; the relay's events show without it.
-    const missing = !view.hasBoard ? 'Waiting for ix-board’s focus status…' : view.activity === null ? 'needs ix-board ≥0.9.0' : null
+    const focuses = boards.filter(b => b.ticketsOnly !== true)
+    const none = focuses.some(b => b.error) ? 'ix-board’s focus status could not be read.' : isFocusRead && focuses.length === 0 ? 'No focus names a project or ticket, so there is no focus status to read merges from.' : 'Waiting for ix-board’s focus status…'
+    const missing = !view.hasBoard ? none : view.activity === null ? 'needs ix-board ≥0.9.0' : null
+    const nothing = oldAge !== null ? 'Nothing merged in that answer.' : all ? 'Nothing happened lately.' : 'Nothing merged lately.'
     const recent = () => (
       <Box flexDirection="column">
+        {oldAge !== null && <Text color="warning" size="caption">{`ix-board’s answer is ${oldAge} old: states, PRs and merges are as of then.`}</Text>}
         {rows.map((row, i) => {
           const m = row.event !== undefined ? STEP_MARKS[row.event.step] : KIND_MARKS[row.activity.kind]
           return (
@@ -287,26 +372,25 @@ export function registerWork(on: On, _options: Options): void {
           )
         })}
         {missing !== null && <Text dimColor>{missing}</Text>}
-        {missing === null && rows.length === 0 && <Text dimColor>{all ? 'Nothing happened lately.' : 'Nothing merged lately.'}</Text>}
+        {missing === null && rows.length === 0 && <Text dimColor>{nothing}</Text>}
       </Box>
     )
 
-    const warnings = [meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · ')))
+    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`)]
+    const reporting = view.leads.length > 0 || meta.at !== null
 
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text weight="semibold" size="heading">Work</Text>
-            <Text dimColor size="caption">{`${view.leads.length} ${view.leads.length === 1 ? 'lead' : 'leads'}${notRead}`}</Text>
+            {reporting && <Text dimColor size="caption">{`${plural(view.leads.length, 'lead')}${notRead}`}</Text>}
           </Box>
-          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($)])} />
+          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($), pollTickets($)])} />
         </Box>
 
         {/* A read that failed says nothing of who has reported. */}
-        {view.leads.length === 0 && (
-          <Text dimColor>{meta.relayError !== null ? 'The leads could not be read.' : meta.busy || meta.at === null ? 'Reading the leads’ work reports…' : 'No lead has reported work.'}</Text>
-        )}
+        {view.leads.length === 0 && <Text dimColor>{unknown ?? (meta.busy ? 'Reading the leads’ work reports…' : 'No lead has reported work.')}</Text>}
 
         {view.leads.length > 0 && (
           <Box flexDirection="column" backgroundColor={CARD_BG}>
@@ -314,8 +398,12 @@ export function registerWork(on: On, _options: Options): void {
           </Box>
         )}
 
-        {meta.silent.length > 0 && (
-          <Text dimColor wrap="wrap">{`${meta.silent.length} ${meta.silent.length === 1 ? 'lead reports' : 'leads report'} no work: ${meta.silent.join(', ')}`}</Text>
+        {(meta.silent.length > 0 || meta.pending > 0) && (
+          <Box flexDirection="column">
+            {meta.silent.length > 0 && <Box flexDirection="row">{fold('silent', `${meta.silent.length} ${meta.silent.length === 1 ? 'lead reports' : 'leads report'} no work`)}</Box>}
+            {meta.silent.length > 0 && opened.includes('silent') && <Text dimColor wrap="wrap">{meta.silent.join(', ')}</Text>}
+            {meta.pending > 0 && <Text dimColor>{`${plural(meta.pending, 'lead')} being read by another session`}</Text>}
+          </Box>
         )}
 
         <Box flexDirection="column">

@@ -44,7 +44,7 @@ const mount = ($: $t, requestId = 'work') => $.ui.mount({ ...PANE, requestId, su
 const lines = async (ui: Awaited<ReturnType<typeof mount>>) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
 test('a lead’s report is given 20 seconds, so a report that takes 10 is read', async ($, on) => {
-  trace("FR-030-AC-1")
+  trace("FR-030-AC-1", "NFR-004-M-2")
   const limits: (number | undefined)[] = []
   const w = leadsWorld(on, [FAR], (address, init) => {
     limits.push(init?.timeoutMs)
@@ -59,7 +59,7 @@ test('a lead’s report is given 20 seconds, so a report that takes 10 is read',
 })
 
 test('at most eight lead reports are read at once, and every lead is read', async ($, on) => {
-  trace("FR-030-AC-2")
+  trace("FR-030-AC-2", "NFR-004-M-3")
   const addresses = Array.from({ length: 30 }, (_, i) => `terra:QSL:lead-${String(i).padStart(2, '0')}`)
   let inFlight = 0
   let most = 0
@@ -168,7 +168,7 @@ test('a lead never read is listed as not read, beside the leads that were', asyn
   expect((await lines(ui)).join('\n')).toMatch(/terra:QSL:code: agent-msg: machine terra is unreachable/)
   await ui.unmount()
   const widget = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, placement: 'widget' } } as never)
-  expect((await widget.findAll({ type: 'Text' })).map(t => t.text).join('')).toBe('2 leads · ≥1 ticket · 1 not read')
+  expect((await widget.findAll({ type: 'Text' })).map(t => t.text).join('')).toBe('2 leads · ≥1 ticket · merged 24h unavailable (no focus status read) · 1 not read')
   await widget.unmount()
 })
 
@@ -249,10 +249,11 @@ test('a lead that had reported nothing and stops answering is old, not never rea
   // Named with those that report nothing, and no row of its own.
   expect(await lines(ui)).not.toContain(FAR)
   isDown = true
-  await w.clock!.advance(MIN)
+  // A lead on another machine that reported nothing is asked again after five minutes.
+  await w.clock!.advance(6 * MIN)
   const drawn = (await lines(ui)).join('\n')
   expect(drawn).toContain(FAR)
-  expect(drawn).toMatch(/old 1m/)
+  expect(drawn).toMatch(/old 6m/)
   expect(drawn).toContain('1 old')
   expect(drawn).not.toMatch(/not read/)
   await ui.unmount()
@@ -312,5 +313,126 @@ test('a lead is drawn as soon as it answers, and review events are read while an
   reported = true
   await w.clock!.advance(46 * SEC)
   expect((await lines(ui)).some(l => /review start +QSL-9001/.test(l))).toBe(true)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- shared between the sessions of a machine
+
+const SHARED = `${FP}/lead-reports.json`
+type Entry = { report?: unknown; at: number | null; error: string | null; triedAt: number | null; claimAt: number | null }
+const seed = (w: World, leads: Record<string, Entry>) => w.files.set(SHARED, JSON.stringify({ leads }))
+const kept = (w: World): Record<string, Entry> => JSON.parse(w.files.get(SHARED) ?? '{"leads":{}}').leads
+const readAgo = (ticket: string, ago: number, over: Partial<Entry> = {}): Entry => ({ report: leadReport(FAR, ticket), at: NOW - ago, error: null, triedAt: NOW - ago, claimAt: null, ...over })
+
+test('a report another session read lately is used without a read, and only leads of other machines are shared', async ($, on) => {
+  trace("FR-030-AC-12")
+  const w = leadsWorld(on, [NEAR, FAR])
+  seed(w, { [FAR]: readAgo('QSL-90', 20 * SEC) })
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect([asked(w, NEAR), asked(w, FAR)]).toEqual([1, 0])
+  expect((await lines(ui)).some(l => /QSL-90/.test(l))).toBe(true)
+  // Once it is no longer fresh this session reads the lead and leaves the report for the others.
+  await w.clock!.advance(2 * MIN)
+  expect(asked(w, FAR)).toBeGreaterThanOrEqual(1)
+  expect((await lines(ui)).some(l => /QSL-2 /.test(l))).toBe(true)
+  expect(Object.keys(kept(w))).toEqual([FAR])
+  expect(kept(w)[FAR]).toMatchObject({ claimAt: null, error: null })
+  expect(JSON.stringify(kept(w)[FAR]!.report)).toContain('QSL-2')
+  await ui.unmount()
+})
+
+test('a lead another session is reading is left to it until its claim is old', async ($, on) => {
+  trace("FR-030-AC-13")
+  const w = leadsWorld(on, [NEAR, FAR])
+  seed(w, { [FAR]: { at: null, error: null, triedAt: null, claimAt: NOW - 5 * SEC } })
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(0)
+  const drawn = await lines(ui)
+  expect(drawn).toContain('1 lead being read by another session')
+  expect(drawn.join('\n')).not.toMatch(/not read|reports? no work/)
+  await w.clock!.advance(2 * MIN)
+  expect(asked(w, FAR)).toBeGreaterThanOrEqual(1)
+  await ui.unmount()
+})
+
+test('no more than eight reads of other machines are claimed at once over all sessions', async ($, on) => {
+  trace("FR-030-AC-14", "NFR-004-M-10")
+  const w = leadsWorld(on, [FAR])
+  const claims = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`luna:QSL:lead-${i}`, { at: null, error: null, triedAt: null, claimAt: NOW }]))
+  seed(w, claims(8))
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(0)
+  await w.clock!.advance(2 * MIN)
+  expect(asked(w, FAR)).toBeGreaterThanOrEqual(1)
+  await ui.unmount()
+})
+
+test('with seven reads claimed the eighth is made', async ($, on) => {
+  trace("FR-030-AC-14", "NFR-004-M-10")
+  const w = leadsWorld(on, [FAR])
+  seed(w, Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`luna:QSL:lead-${i}`, { at: null, error: null, triedAt: null, claimAt: NOW }])))
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(1)
+  await ui.unmount()
+})
+
+test('a lead of another machine that reported nothing is asked again only after five minutes', async ($, on) => {
+  trace("FR-030-AC-15")
+  const w = leadsWorld(on, [NEAR, FAR], () => out('null'))
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(4 * MIN + 30 * SEC)
+  expect(asked(w, FAR)).toBe(1)
+  expect(asked(w, NEAR)).toBeGreaterThanOrEqual(4)
+  await w.clock!.advance(2 * MIN)
+  expect(asked(w, FAR)).toBe(2)
+  await ui.unmount()
+})
+
+test('the refresh key reads a fresh shared report anew', async ($, on) => {
+  trace("FR-030-AC-3", "FR-030-AC-12")
+  const w = leadsWorld(on, [FAR])
+  seed(w, { [FAR]: readAgo('QSL-90', 5 * SEC) })
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(0)
+  await ui.press({ key: 'refresh' })
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(1)
+  await ui.unmount()
+})
+
+test('a read that failed in another session is drawn as old with its error, and is not repeated at once', async ($, on) => {
+  trace("FR-030-AC-12", "FR-030-AC-6")
+  const w = leadsWorld(on, [FAR])
+  seed(w, { [FAR]: readAgo('QSL-90', 10 * MIN, { error: 'agent-msg: machine terra is unreachable', triedAt: NOW - 10 * SEC }) })
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(0)
+  const drawn = await lines(ui)
+  expect(drawn).toContain('1 lead · 1 old')
+  expect(drawn.some(l => /QSL-90/.test(l))).toBe(true)
+  await ui.unmount()
+})
+
+test('where the shared file cannot be written the lead is read all the same', async ($, on) => {
+  trace("FR-030-AC-16")
+  const w = leadsWorld(on, [FAR])
+  w.mvFails.value = true
+  await startSession($)
+  const ui = await mount($)
+  await w.clock!.advance(SEC)
+  expect(asked(w, FAR)).toBe(1)
+  expect((await lines(ui)).some(l => /QSL-1/.test(l))).toBe(true)
   await ui.unmount()
 })

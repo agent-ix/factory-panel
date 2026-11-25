@@ -341,6 +341,29 @@ test('a selected team with no series beside keyed ones of others is only named',
   await d.ui.unmount()
 })
 
+for (const [title, picked] of [
+  ['a teams choice with the default own focus', { teams: ['SWM'] }],
+  ['a teams choice with focus team', { focus: 'team', teams: ['SWM'] }],
+  ['a teams choice with a named focus', { focus: 'Alpha', teams: ['SWM'] }],
+] as [string, Record<string, unknown>][])
+  test(`${title} is the Team view’s selection, in place of the session’s own team`, async ($, on) => {
+    trace("FR-029-AC-36")
+    const w = await setup($, on, { published: THREE, arrange: declaring(picked) })
+    const d = await draw($, w)
+    expect(headings(d.lines, ['QSL', 'SWM', 'AAA'])).toEqual(['SWM'])
+    expect(after(d.lines, 'Ready issues')).toBe('9')
+    await d.ui.unmount()
+  })
+
+for (const focus of ['own', 'team', 'Alpha'])
+  test(`with no teams chosen the focus ${focus} selects the session’s own team`, async ($, on) => {
+    trace("FR-029-AC-36")
+    const w = await setup($, on, { published: THREE, arrange: declaring({ focus }) })
+    const d = await draw($, w)
+    expect(headings(d.lines, ['QSL', 'SWM', 'AAA'])).toEqual(['QSL'])
+    await d.ui.unmount()
+  })
+
 const closures = (n: number, id: string, key?: string) => series('verified_path_closed_24h', [n], { id, key })
 const WIDGET: [string, Series[], string[], string][] = [
   ['the selected team only', [closures(4, 'fsl', 'QSL'), closures(9, 'swm', 'SWM'), closures(7, 'blank')], ['QSL'], '4 closures / 24h'],
@@ -425,6 +448,27 @@ test('exporter ids with one team key make one team: counts as lower bounds, dura
   await d.ui.unmount()
 })
 
+for (const [title, ages, stages, expected] of [
+  ['a stage not measured and no age above zero reads a dash', [0], [1, 0], ['—', '0% covered']],
+  ['a stage not measured and no age at all reads a dash', [], [1, 0], ['—', '0% covered']],
+  ['a stage not measured beside an older one is a lower bound', [3600], [1, 0], ['≥1.0h', '0% covered']],
+  ['stages all measured read exactly', [0], [1, 1], ['0m']],
+] as [string, number[], number[], string[]][]) {
+  test(`the oldest age: ${title}`, async ($, on) => {
+    trace("FR-029-AC-35")
+    const w = await setup($, on, { published: [
+      series('ready_issues', [1]),
+      ...(ages.length === 0 ? [] : [series('stage_oldest_age_seconds', ages)]),
+      ...stages.map((value, i) => coverage(`stage_oldest_age_seconds_s${i}`, value)),
+    ] })
+    const d = await draw($, w)
+    const at = d.lines.indexOf('Oldest in a stage')
+    expect(d.lines.slice(at + 1, at + 1 + expected.length)).toEqual(expected)
+    if (expected.length === 1) expect(d.lines[at + 2]).not.toMatch(/covered/)
+    await d.ui.unmount()
+  })
+}
+
 test('effort and changes requested are the exporter’s own series, derived from nothing else', async ($, on) => {
   trace("FR-029-AC-20")
   const w = await setup($, on, { published: [
@@ -461,7 +505,7 @@ test('the daily rows show the seven days oldest first with today last, and a das
     series('verified_path_closed_24h', [9]),
   ] })
   const d = await draw($, w)
-  expect(d.lines).toContain('Per UTC day · today so far at right · trend is yesterday’s')
+  expect(d.lines).toContain('Per UTC day · today so far at right · trend is yesterday’s · — no current sample')
   expect(row(d.lines, 'Completed').days).toEqual(['1', '0', '—', '5', '—', '2', '7'])
   expect(row(d.lines, 'Merged PRs').days).toEqual(['—', '—', '—', '—', '12', '2', '124'])
   expect(after(d.lines, 'Verified closures · 24h')).toBe('9')
@@ -489,7 +533,7 @@ for (const [name, days, trend] of [
 
 test('a team with two scopes shows each day as at least the larger count, with no trend', async ($, on) => {
   trace("FR-029-AC-27")
-  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['SWM'] }), published: [
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM'] }), published: [
     ...daily('closures_day', { 2: 4, 1: 9 }, { key: 'QSL', scope: 'release' }),
     ...daily('closures_day', { 2: 6, 1: 2, 0: 1 }, { key: 'QSL', scope: 'completion' }),
     ...daily('closures_day', { 2: 1, 1: 5 }, { id: 'swm', key: 'SWM' }),
@@ -512,7 +556,7 @@ test('a team with two scopes shows its 24 hour counts as at least the larger, an
   trace("FR-029-AC-28")
   // One scope's latest closure sample is a step older than the other's: both are current.
   const both = (name: string, release: number, completion: number) => [series(name, [release], { key: 'QSL', scope: 'release' }), series(name, [completion], { key: 'QSL', scope: 'completion', ago: name === 'verified_path_closed_24h' ? 300 : 0 })]
-  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['SWM'] }), published: [
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM'] }), published: [
     ...both('verified_path_closed_24h', 4, 6),
     ...both('pr_merges_per_hour_24h', 0.5, 0.25),
     ...both('review_findings_confirmed_high_24h', 1, 3),
@@ -540,7 +584,7 @@ const CURRENT_COUNTS: [string, string][] = [
 
 test('a team with two scopes shows its current counts as at least the larger, never their sum, and one scope shows them exactly', async ($, on) => {
   trace("FR-029-AC-30")
-  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['SWM', 'TWO'] }), published: [
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM', 'TWO'] }), published: [
     ...CURRENT_COUNTS.flatMap(([, name], i) => [series(name, [i + 1], { key: 'QSL', scope: 'release' }), series(name, [10 + i], { key: 'QSL', scope: 'completion', ago: i % 2 === 0 ? 300 : 0 })]),
     ...CURRENT_COUNTS.map(([, name], i) => series(name, [i], { id: 'swm', key: 'SWM' })),
     // Only one of this team's two scopes reports a count: the other still makes it a bound.
@@ -595,7 +639,7 @@ test('a tile says how much of its population was measured where that is not all 
   const tile = (label: string) => d.lines.slice(d.lines.indexOf(label) + 1, d.lines.indexOf(label) + 3)
   expect(tile('Executing agents')).toEqual(['≥3', '96% covered'])
   expect(tile('Effort per closure')).toEqual(['—', '40% covered'])
-  expect(tile('Oldest in a stage')).toEqual(['1.0h', '50% covered'])
+  expect(tile('Oldest in a stage')).toEqual(['≥1.0h', '50% covered'])
   expect(tile('Changes requested')).toEqual(['—', '75% covered'])
   expect(d.lines.filter(l => l.endsWith('% covered'))).toHaveLength(4)
   await d.ui.unmount()
@@ -604,7 +648,7 @@ test('a tile says how much of its population was measured where that is not all 
 for (const [name, published, text] of [
   ['the closures of all teams', [series('verified_path_closed_24h', [3]), series('verified_path_closed_24h', [4], { id: 'b' })], '7 closures / 24h'],
   ['at least them where a team has none', [series('verified_path_closed_24h', [3]), series('ready_issues', [1], { id: 'b' })], '≥3 closures / 24h'],
-  ['a dash where no team has any', [series('ready_issues', [1])], '— closures / 24h'],
+  ['a dash where no team has any', [series('ready_issues', [1])], '— closures / 24h · no series published'],
 ] as [string, Series[], string][]) {
   test(`the widget reads ${name}`, async ($, on) => {
     trace("FR-029-AC-24")
@@ -615,3 +659,23 @@ for (const [name, published, text] of [
     await ui.unmount()
   })
 }
+
+test('a tile and a daily row with no value say why: no series, no current sample, or an age not measured', async ($, on) => {
+  trace("FR-029-AC-37")
+  const w = await setup($, on, { published: [
+    series('ready_issues', [3], { ago: 600 }),
+    series('stage_oldest_age_seconds', [0]),
+    coverage('stage_oldest_age_seconds_review', 0),
+    ...daily('closures_day', { 1: 4 }, {}),
+  ] })
+  const d = await draw($, w)
+  const tile = (label: string) => d.lines.slice(d.lines.indexOf(label) + 1, d.lines.indexOf(label) + 4)
+  expect(tile('Executing agents').slice(0, 2)).toEqual(['—', 'no series published'])
+  expect(tile('Ready issues')).toContain('no current sample')
+  expect(tile('Oldest in a stage').slice(0, 2)).toEqual(['—', '0% covered'])
+  expect(d.lines.slice(d.lines.indexOf('Oldest in a stage'), d.lines.indexOf('Oldest in a stage') + 5)).toContain('age not measured')
+  // The row with no day at all says why; the caption says what a dash among counts means.
+  expect(d.lines).toContain('Per UTC day · today so far at right · trend is yesterday’s · — no current sample')
+  expect(d.lines[d.lines.indexOf('Merged PRs') + 2]).toBe('no series published')
+  await d.ui.unmount()
+})

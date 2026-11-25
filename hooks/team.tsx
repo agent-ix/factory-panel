@@ -24,7 +24,7 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
-const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-4' })
+const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-5' })
 /** The exporter ids with no team key whose tiles are open. */
 const teamOpen = atom({ plugin: 'factory-panel', key: 'teamOpen' } as const, [] as string[])
 /** Teams whose health strip lists its regressing metrics. */
@@ -44,7 +44,7 @@ const teamMeta = atom(
  * largest of one scope is a lower bound.
  */
 type Combine = 'max' | 'largest'
-type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage' | 'atLeast'> & { series: string; combine: Combine }
+type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage' | 'atLeast' | 'reason'> & { series: string; combine: Combine }
 
 // Velocity and effort, then review quality, then flow and capacity. Each tile is one series of the exporter, derived
 // from nothing else: one it does not publish stays in its row as a tile reading "—", never 0.
@@ -69,6 +69,8 @@ const SPECS: Spec[] = [
 ]
 
 const DAYS = 7
+const NO_SERIES = 'no series published'
+const NO_SAMPLE = 'no current sample'
 /** The daily rows: the exporter's counts of each UTC day, numbered by `days_ago` with 0 for today. */
 const DAILY: { key: keyof TeamView['days']; label: string; series: string }[] = [
   { key: 'closures', label: 'Completed', series: 'ix_team_closures_day' },
@@ -160,7 +162,7 @@ function dailyRow(series: readonly RangeSeries[], isShared: boolean, now: number
     if (!Number.isInteger(ago) || ago < 0 || ago >= DAYS) continue
     counts[DAYS - 1 - ago] = Math.max(counts[DAYS - 1 - ago] ?? 0, value)
   }
-  return { counts, atLeast: isShared }
+  return { counts, atLeast: isShared, reason: series.length === 0 ? NO_SERIES : NO_SAMPLE }
 }
 
 async function readTeam($: EngineInterface, options: Options): Promise<boolean> {
@@ -202,7 +204,14 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
           const name = spec.series.slice('ix_team_'.length)
           // The oldest stage age is measured stage by stage; the tile is only as covered as the least covered of them.
           const covered = measured.filter(({ labels }) => labels.metric === name || (spec.key === 'oldest' && labels.metric?.startsWith(`${name}_`))).map(m => m.value)
-          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value, atLeast: isCount && isShared && value !== null, history: samples.map(([, v]) => v), coverage: covered.length === 0 ? null : Math.min(...covered) }
+          const coverage = covered.length === 0 ? null : Math.min(...covered)
+          // A stage not wholly measured may hold older work than any age shown, so the oldest age is a lower bound; with
+          // a stage not measured at all and no age above zero, no age is known.
+          const isStage = spec.key === 'oldest' && coverage !== null && coverage < 1
+          const shown = isStage && coverage === 0 && !((value ?? 0) > 0) ? null : value
+          // Why there is no value: the exporter publishes none for this team, measured none of it, or has stopped.
+          const reason = shown !== null ? null : own(series).length === 0 ? NO_SERIES : value !== null ? 'age not measured' : NO_SAMPLE
+          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value: shown, atLeast: shown !== null && (isStage || (isCount && isShared)), history: samples.map(([, v]) => v), coverage, reason }
         })
         const days = {} as TeamView['days']
         for (const { day, series } of daily) days[day.key] = dailyRow(own(series), isShared, seconds)
@@ -367,9 +376,10 @@ export function registerTeam(on: On, options: Options): void {
       // one that has; with no reading at all it is unknown, not 0.
       const isBound = known.length < closures.length || known.some(m => m.atLeast) || (shown.length > 0 && missing.length > 0)
       const total = known.length === 0 ? '—' : `${isBound ? '≥' : ''}${Math.round(known.reduce((a, m) => a + m.value, 0))}`
+      const why = known.length > 0 ? '' : ` · ${closures.find(m => m !== undefined && m.reason !== null)?.reason ?? NO_SERIES}`
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{headline.length > 0 ? `${total} closures / 24h` : 'no team metrics'}</Text>
+          <Text weight="semibold">{headline.length > 0 ? `${total} closures / 24h${why}` : 'no team metrics'}</Text>
         </Box>
       )
     }
@@ -396,17 +406,22 @@ export function registerTeam(on: On, options: Options): void {
             />
           )}
         </Box>
+        {m.reason !== null && <Text dimColor size="caption">{m.reason}</Text>}
       </Box>
     )
 
     const dailyRows = (t: TeamView) => (
       <Box key={`${t.team}-daily`} flexDirection="column">
-        <Text dimColor size="caption">Per UTC day · today so far at right · trend is yesterday’s</Text>
+        <Text dimColor size="caption">
+          {`Per UTC day · today so far at right · trend is yesterday’s${DAILY.some(day => t.days[day.key].counts.includes(null)) ? ' · — no current sample' : ''}`}
+        </Text>
         {DAILY.map(day => {
           const { counts, atLeast } = t.days[day.key]
           const trend = dayTrend(t.days[day.key])
           const cells = counts.map(v => (v === null ? '—' : `${atLeast ? '≥' : ''}${v}`))
           const cell = Math.max(4, ...cells.map(c => c.length + 1))
+          // A row with no day at all says why; what a dash among counts means is in the caption.
+          const note = counts.every(v => v === null) ? t.days[day.key].reason : null
           return (
             <Box key={`${t.team}-daily-${day.key}`} flexDirection="row" gap={1}>
               <Box width={10}>
@@ -415,6 +430,7 @@ export function registerTeam(on: On, options: Options): void {
               <Text tabular>{cells.map(c => c.padStart(cell)).join('')}</Text>
               {trend !== null && trend.mark !== '' && <Text color={trend.color}>{trend.mark}</Text>}
               {trend !== null && <Text dimColor>{trend.text}</Text>}
+              {note !== null && <Text dimColor size="caption">{note}</Text>}
             </Box>
           )
         })}

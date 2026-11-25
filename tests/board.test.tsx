@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { compose, selectorArgs, selectorsOfScope } from '../hooks/board'
+import { compose, limited, selectorArgs, selectorsOfScope } from '../hooks/board'
 import type { Refresh, Selector } from '../hooks/board'
 import { PRUNE_MS, STALE_MS, ageOf, mergeInitiatives, mergeRecords, parseFile, parseRecords, prune, readFile, saveFile, saveRecords } from '../hooks/progress'
 import { FP, BAD_MILESTONE, fake$, out, pid, roadmapJson, statusJson, world } from './world'
@@ -673,7 +673,7 @@ test('initiatives cost the roadmap, one call each that the roadmap cannot place,
 })
 
 test('no more than 4 ix-board processes run at once across two focuses', async ($, on) => {
-  trace("FR-026-AC-9", "NFR-004-M-4")
+  trace("FR-026-AC-9", "NFR-004-M-6")
   const w = world(on, true)
   const tickets = (from: string): Selector[] => Array.from({ length: 6 }, (_, i) => ({ kind: 'ticket', ref: `${from}-${i}` }))
   const b = ix(w, { other: () => out(statusJson([project('Touched', 1, 4)])), delay: 1000 })
@@ -685,8 +685,24 @@ test('no more than 4 ix-board processes run at once across two focuses', async (
   expect(b.calls).toHaveLength(12)
 })
 
+test('a read of single tickets waits for one of the 4 ix-board places a refresh holds', async ($, on) => {
+  trace("NFR-004-M-6")
+  const w = world(on, true)
+  const b = ix(w, { other: () => out(statusJson([project('Touched', 1, 4)])), delay: 1000 })
+  const refresh = progress(w, Array.from({ length: 6 }, (_, i): Selector => ({ kind: 'ticket', ref: `QSL-${i}` })))
+  await w.clock!.advance(500)
+  expect(b.live.now).toBe(4)
+  let isStarted = false
+  const single = limited(async () => void (isStarted = true))
+  await w.clock!.advance(100)
+  expect(isStarted).toBe(false)
+  await w.clock!.advance(10_000)
+  await Promise.all([refresh, single])
+  expect(isStarted).toBe(true)
+})
+
 test('a unit unanswered at the call timeout or at the budget fails alone and is not remembered', async ($, on) => {
-  trace("FR-026-AC-25")
+  trace("FR-026-AC-25", "NFR-004-M-8")
   const w = world(on, true)
   ix(w, { projects: { A: project('A', 1, 2) }, other: (_, init) => hang(w)(init) })
   const shown = await progress(w, [proj('A'), { kind: 'ticket', ref: 'QSL-9' }], { advance: 21_000 })
@@ -817,7 +833,7 @@ test('ix-board missing is one ix-board error and no further call in that refresh
 })
 
 test('a call that times out before anything answered is one ix-board error and no further call', async ($, on) => {
-  trace("FR-026-AC-4", "NFR-004-M-3")
+  trace("FR-026-AC-4", "NFR-004-M-4")
   const w = world(on, true)
   const timeouts: (number | undefined)[] = []
   const stuck = (init: { timeoutMs?: number } | undefined) => (timeouts.push(init?.timeoutMs), hang(w)(init))

@@ -16,7 +16,7 @@ relationships:
 
 ## Description
 
-The Team view SHALL show velocity and effort, review quality, flow and capacity and the completed issues and merged PRs of each of the last 7 days for each selected team from the `ix_team_*` series, and the health of the selected teams' departments from their stored retro snapshots.
+The Team view SHALL show velocity and effort, review quality, flow and capacity and the completed issues and merged PRs of each of the last 7 days for each selected team ([Selected teams](#selected-teams)) from the `ix_team_*` series, and the health of the selected teams' departments from their stored retro snapshots.
 
 ## Behavior
 
@@ -28,9 +28,10 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 - Flow and capacity SHALL hold the work remaining, in progress, blocked, ready unmerged PRs, the oldest age in a stage, ready issues and executing agents.
 - A metric for which a team has no series SHALL read `—`, with no history, and SHALL NOT read 0.
 - A tile SHALL show a value only where its series has a sample no older than one 5 minute step. A series that has stopped SHALL read `—` and keep its history.
+- A tile that reads `—` SHALL say why under it: `no series published` where the team has no series of the metric, `no current sample` where its series has stopped, and `age not measured` where no stage age is known.
 - Each value SHALL be the exporter's own series: the mod SHALL derive none from other series where it is absent.
 - A share SHALL be drawn as a percentage.
-- The one-line widget SHALL say the verified closures of 24 hours over all teams, `≥N` where some team has no value or only a lower bound, and `—` where none has a value.
+- The one-line widget SHALL say the verified closures of 24 hours of the teams it reads ([Selected teams](#selected-teams)), `≥N` where one of them has no value or only a lower bound, and where none has a value, `—` with the reason the tile gives.
 
 ### Teams
 
@@ -42,7 +43,11 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 
 ### Selected teams
 
-- The selected teams SHALL be the teams of the session's focus, else those of the teams choice, for the tiles, the retro health and the role evaluations alike.
+- The selected teams SHALL be the same for the tiles, the retro health, the role evaluations, the widget and the band's team cell.
+- Where the teams are chosen, by the user's teams choice or else a session declaration ([FR-012](./FR-012-selection-precedence.md)), the selected teams SHALL be those, whatever the focus is: `own`, `team` or a name.
+- Where no teams are chosen, the selected teams SHALL be the session's own team, for the focus `own`, `team` and a named focus alike; the teams of a named focus's definition SHALL NOT select any.
+- Where no teams are chosen and `agent-msg whoami` fails, no team is selected.
+- The leads the Work and Focus views read follow the focus, not this rule.
 - A team with a key that is not among the selected teams SHALL NOT be drawn. The selected teams SHALL be drawn in the order of the selection.
 - With no team selected, every team SHALL be drawn, those with a key first.
 - An exporter id with no team key cannot be matched to a selected team. Where a team is selected, each SHALL be drawn after the selected teams as one closed row, its id, `exporter id, no team key` and `N of M metrics have a value`, which opens and closes its tiles.
@@ -63,6 +68,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 - A day of the `Completed` row counts Linear transitions into a completed state of the issues of the exporter's scope. It is not the `Verified closures · 24h` tile, which counts the verified closures on the configured gate path over the trailing 24 hours, and the two SHALL NOT be expected to agree.
 - A day of the `Merged PRs` row counts PRs of the scope's repositories by GitHub's merge time.
 - The mod SHALL draw only current samples, as for the tiles. A day with none SHALL read `—` and never 0.
+- A row with no day at all SHALL say `no series published` or `no current sample`, and where a row has a `—` the caption of the rows SHALL say that it marks a day with no current sample.
 - Where a team has several scopes each day SHALL be drawn as `≥N`, as [above](#teams-with-several-scopes).
 - Each row SHALL say how yesterday, the newest whole day, compares with the average of the earlier whole days that have a value: `↑`, `↓` or `=` with that average. Today, a part day, SHALL take no part.
 - Where yesterday has no value, or the counts are lower bounds, the row SHALL claim no trend, and where no earlier day has a value it SHALL say there is none to compare.
@@ -71,6 +77,8 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 
 - Where the current `ix_team_metric_coverage` of a tile's series, whose `metric` label is the series name without `ix_team_`, is below 1, the tile SHALL say `N% covered` beside its value, N rounded down, whether or not it has a value.
 - The coverage of `Oldest in a stage` SHALL be the lowest over the stages (`stage_oldest_age_seconds_<stage>`), and a tile over several scopes SHALL show the lowest of them.
+- Where that coverage is below 1, the oldest age SHALL be drawn as a lower bound (`≥`), since work of unknown age may be older.
+- Where that coverage is 0 and no age above zero is published, the tile SHALL read `—` and SHALL NOT read 0: the exporter publishes 0 for an empty stage and no age for a stage whose active work has no known start.
 - A tile whose series has no current coverage sample SHALL say nothing of coverage.
 
 ### Retro health
@@ -97,7 +105,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-5 | The strip expands to the regressing metrics. | Test |
 | FR-029-AC-6 | A team whose retro config cannot be read (exit 3) reads `no retro baseline` with no warning. | Test |
 | FR-029-AC-9 | A retro delta that fails otherwise, or prints text that is not JSON, reads `retro unavailable` and shows a warning icon with the error. | Test |
-| FR-029-AC-7 | The retro delta is read with the team's config path, for the focus's teams only, and never more than once in 5 minutes. | Test |
+| FR-029-AC-7 | The retro delta is read with the team's config path, for the selected teams only, and never more than once in 5 minutes. | Test |
 | FR-029-AC-8 | In a real session the Team view shows the new tiles and the QSL health strip. | Demonstration |
 | FR-029-AC-10 | A metric is drawn in the class its `class` field names, whatever its id, and a class the mod has not heard of is drawn by its name, in the order the answer names the classes. | Test |
 | FR-029-AC-11 | A delta with no `class` on any metric reads `needs ix-board ≥0.11.0`, with no mark, no regressing button and no warning. | Test |
@@ -113,7 +121,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-21 | A series whose last sample is older than one step reads `—` while its history is drawn. | Test |
 | FR-029-AC-22 | The `Completed` and `Merged PRs` rows show the days `days_ago` 6 to 0 left to right, `—` for a day with no current sample, from the two daily series and no other. | Test |
 | FR-029-AC-23 | The rows say `↑`, `↓` or `=` for yesterday against the average of the earlier days with values, ignore today, claim no trend with no yesterday, and say there is nothing to compare with no earlier day. | Test |
-| FR-029-AC-24 | The widget reads the closures of all teams, `≥N` where a team has none or only a lower bound, and `—` where none has. | Test |
+| FR-029-AC-24 | The widget reads the closures of the teams it reads, `≥N` where one of them has none or only a lower bound, and `—` with the reason where none has. | Test |
 | FR-029-AC-26 | A tile says `N% covered` for a current coverage below 1, with or without a value, taking the lowest over stages and scopes, and nothing for 1 or no sample. | Test |
 | FR-029-AC-27 | A team with two scopes shows each day as `≥` the larger count with no trend, and a team with one scope shows exact counts. | Test |
 | FR-029-AC-28 | A team with two scopes shows verified closures, merges per hour and confirmed findings as `≥` the larger, on the tiles, in the widget and in the band's team cell; one scope shows them exactly. | Test |
@@ -123,6 +131,9 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-32 | With a team selected, an exporter id with no key is one closed row with the count of metrics that have a value, which opens to its tiles and closes again. | Test |
 | FR-029-AC-33 | A selected team with no series is named, with why an exporter id with no key cannot be told apart. | Test |
 | FR-029-AC-34 | The widget and the band team cell read the selected teams' series, a lower bound where one of them has none, and the keyless ids where no selected team has any. | Test |
+| FR-029-AC-35 | With a stage coverage of 0 and no age above zero the oldest age reads `—`; with a stage coverage below 1 and an age it reads `≥`; with every stage covered it reads exactly. | Test |
+| FR-029-AC-36 | A teams choice or declaration selects the Team view's teams under the focus `own`, `team` and a name; with none chosen each of those selects the session's own team. | Test |
+| FR-029-AC-37 | A tile and a daily row with no value say why: no series published, no current sample, or an age not measured. | Test |
 | FR-029-AC-25 | Against the factory's Prometheus the Team view shows the values and days Prometheus answers. | Demonstration |
 
 ## Dependencies

@@ -191,6 +191,12 @@ export async function readForCommand($: EngineInterface, changed: boolean): Prom
   if (reading !== null) await Promise.race([reading, after($, COMMAND_WAIT_MS)])
 }
 
+/** Whether a read of the focuses has ended, well or not: the focus statuses it asked for are then held. */
+export async function focusWasRead($: EngineInterface): Promise<boolean> {
+  const meta = await read($, focusMeta)
+  return meta.at !== null || meta.error !== null
+}
+
 /** Forgets the refresh state of an earlier session; the tests start each session from nothing. */
 export function resetFocus(): void {
   resetBoard()
@@ -240,6 +246,8 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
         againManual ||= manual
       }
       const reports = [...answered]
+      // A lead another session is reading says nothing yet, so this read says nothing about what is absent.
+      if (reports.some(r => r.pending === true)) listed = false
       const failedReads = reports.flatMap(r => (r.error === null ? [] : [{ lead: r.address, error: r.error }]))
       // A failure is shown for the leads the scope is about: those inside the team filter, those whose address is
       // the name typed, and, when every lead is read, any lead if all of them failed (one with no live agent is normal there).
@@ -305,9 +313,10 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
       entries.map(async e => {
         if (e.selectors.length === 0) return
         const loaded = await loadProgress($, e.selectors, manual, endsAt, failed)
+        // Another session is reading and has left nothing yet: this focus has not answered.
+        await holdBoard($, progressKeyOf(e.selectors), loaded?.board ?? { board: null, at: null, error: null })
         if (loaded === null) return
         const { progress } = loaded
-        if (loaded.board !== null) await holdBoard($, progressKeyOf(e.selectors), loaded.board)
         await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
       }),
     )

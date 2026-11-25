@@ -212,10 +212,12 @@ export type TeamMetric = {
   history: number[]
   /** the share of its population the exporter measured, 0 to 1; null where it does not say */
   coverage: number | null
+  /** why there is no `value`; null where there is one */
+  reason: string | null
 }
 
 /** The counts of 7 UTC days, oldest first and today last; null for a day with no sample. `atLeast` marks lower bounds. */
-export type DailyRow = { counts: (number | null)[]; atLeast: boolean }
+export type DailyRow = { counts: (number | null)[]; atLeast: boolean; /** why a day has no count */ reason: string }
 
 export type TeamView = {
   /** the Linear team key, else the exporter's team id */
@@ -244,7 +246,10 @@ export type RoleRule = { id: string; status: string; query: string; value: numbe
  * One role of an evaluation: the rules passed of those scored, and `trend`, the change from the window before over the
  * `matched` rules scored in both; `matched` is null where the answer does not say.
  */
-export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; matched: number | null; rules: RoleRule[] }
+export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; matched: number | null; rules: RoleRule[]; objectives: RoleObjective[] }
+
+/** One objective metric of a role; a null `value` has no measurement, and `reason` says why. */
+export type RoleObjective = { id: string; query: string; value: number | null; unit: string; reason: string | null }
 
 /** What the mod keeps of `ix-board retro eval --json`: the window (ms since the epoch) and its roles. */
 export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
@@ -266,16 +271,21 @@ export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; m
 export type WorkPr = { url: string; repo: string; number: number | null; status: string; draft: boolean }
 
 /** A ticket of the focus status: started, or closed lately. `prs` is null where ix-board is too old to say. */
-export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null }
+export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null; /** when the answer naming it was read */ at?: number | null }
 
 /** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
 export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
 
 /**
- * What one focus status answer says of tickets; `activity` is null where ix-board has no such field. `cutAt` is set
- * where ix-board cut the activity at its cap: entries older than this time (ms since the epoch) are missing.
+ * What one answer of ix-board says of tickets; `activity` is null where ix-board has no such field. `cutAt` is set
+ * where ix-board cut the activity at its cap: entries older than this time (ms since the epoch) are missing. Of an
+ * answer held for the views, `at` is when it was read, null where none ever was, and `error` why the latest read
+ * failed. `ticketsOnly` marks the read of single tickets, which says nothing of what was merged.
  */
-export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number }
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[] }
+
+/** The gated `ix-board issues` answer: the tickets asked for, those answered, and when. */
+export type TicketsAnswer = { at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
 
 export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
 
@@ -293,9 +303,10 @@ export type WorkLast = { role: string; status: string; at: number }
 
 /**
  * `relayError` is why the last read of the leads gave nothing new: no list of leads, or no report of any lead.
- * `listed` counts the leads that read asked, and `silent` names those that answered with no report.
+ * `listed` counts the leads that read asked, `silent` names those that answered with no report, and `pending` counts
+ * those another session was reading.
  */
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[] }
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number }
 
 /** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
 export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }
@@ -352,7 +363,9 @@ declare module 'claude-code' {
       workMeta: Shaped<WorkMeta>
       workFeed: Shaped<WorkFeed>
       workBoards: Shaped<Record<string, WorkBoard>>
+      workTickets: Shaped<WorkBoard | null>
       workCollapsed: string[]
+      workOpen: string[]
       workAll: boolean
       workWarnings: boolean
     }

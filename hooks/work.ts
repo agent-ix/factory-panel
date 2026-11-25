@@ -7,15 +7,38 @@ import type { WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLast,
 // ix-board's focus status says of the tickets and of what was merged lately.
 
 /** The ticket and activity facts of every focus status answer, by progress key; hooks/progressview.ts fills it. */
-const workBoards = atom({ plugin: 'factory-panel', key: 'workBoards' } as const, {} as Record<string, WorkBoard>, { shape: 'workBoards-1' })
+const workBoards = atom({ plugin: 'factory-panel', key: 'workBoards' } as const, {} as Record<string, WorkBoard>, { shape: 'workBoards-2' })
+/** What `ix-board issues` says of the reported tickets no focus status names; hooks/workview.tsx fills it. */
+const workTickets = atom({ plugin: 'factory-panel', key: 'workTickets' } as const, null as WorkBoard | null, { shape: 'workTickets-1' })
 
-export async function readBoards($: EngineInterface): Promise<WorkBoard[]> {
+/** The focus status answers held. */
+export async function focusBoards($: EngineInterface): Promise<WorkBoard[]> {
   return Object.values(await read($, workBoards))
 }
 
-/** Holds the answer of one focus's progress read. */
-export async function holdBoard($: EngineInterface, key: string, board: WorkBoard): Promise<void> {
-  await update($, workBoards, held => ({ ...held, [key]: board }))
+/** Every answer held: those of the focuses, then the read of single tickets. */
+export async function readBoards($: EngineInterface): Promise<WorkBoard[]> {
+  const tickets = await read($, workTickets)
+  return [...(await focusBoards($)), ...(tickets === null ? [] : [tickets])]
+}
+
+export async function holdTickets($: EngineInterface, change: (held: WorkBoard | null) => WorkBoard | null): Promise<void> {
+  await update($, workTickets, change)
+}
+
+/** What one progress read of a focus said: its answer where it has one, when that was read, and why it failed. */
+export type BoardRead = { board: WorkBoard | null; at: number | null; error: string | null }
+
+/**
+ * Holds what a focus's progress read said. A read with no answer keeps the one held, with its age, and says why; a
+ * focus that never answered is held too, so that its merges are known to be missing.
+ */
+export async function holdBoard($: EngineInterface, key: string, got: BoardRead): Promise<void> {
+  await update($, workBoards, held => {
+    const prior = held[key]
+    const next: WorkBoard = got.board !== null ? { ...got.board, at: got.at, error: got.error } : prior !== undefined ? { ...prior, error: got.error ?? prior.error ?? null } : { issues: [], activity: null, at: null, error: got.error }
+    return { ...held, [key]: next }
+  })
 }
 
 /** Drops the answers of focuses that are no longer shown. */
@@ -98,13 +121,26 @@ export function boardOf(answer: unknown): WorkBoard {
   return { issues: [...issues.values()], activity, ...(isCut && oldest !== undefined ? { cutAt: oldest } : {}) }
 }
 
-/** The union of several answers: a ticket once (with its PRs where any answer has them), activity once, newest first. */
+/** An answer read longer ago than this is old: the gate asks again after 30 minutes. */
+export const BOARD_OLD_MS = 35 * 60 * 1000
+/** A lead's report older than this says what it did, not what it does. */
+export const REPORT_OLD_MS = 2 * 60 * 60 * 1000
+
+export const isOldAt = (at: number | null | undefined, now: number): boolean => at !== null && at !== undefined && now - at > BOARD_OLD_MS
+export const isOldReport = (reportedAt: number | null, now: number): boolean => reportedAt !== null && now - reportedAt > REPORT_OLD_MS
+
+/**
+ * The union of several answers: a ticket once, from the newest answer that has its PRs, with that answer's time;
+ * activity once, newest first.
+ */
 export function mergeBoards(boards: readonly WorkBoard[]): WorkBoard {
   const issues = new Map<string, WorkIssue>()
-  for (const b of boards)
+  // An answer with no time of its own is one just read.
+  const newestFirst = [...boards].sort((a, b) => (b.at ?? Infinity) - (a.at ?? Infinity))
+  for (const b of newestFirst)
     for (const i of b.issues) {
       const had = issues.get(i.identifier)
-      if (had === undefined || (had.prs === null && i.prs !== null)) issues.set(i.identifier, i)
+      if (had === undefined || (had.prs === null && i.prs !== null)) issues.set(i.identifier, b.at === undefined ? i : { ...i, at: b.at })
     }
   const withActivity = boards.filter(b => b.activity !== null)
   const seen = new Set<string>()
@@ -115,6 +151,24 @@ export function mergeBoards(boards: readonly WorkBoard[]): WorkBoard {
   // One cut answer leaves the union short from its own cut on back.
   const cuts = boards.flatMap(b => b.cutAt ?? [])
   return { issues: [...issues.values()], activity, ...(cuts.length === 0 ? {} : { cutAt: Math.max(...cuts) }) }
+}
+
+/** The identifiers an `ix-board --json issues` answer says Linear has no record of. */
+export function unknownOf(answer: unknown): string[] {
+  const top = obj(answer)
+  const missing = (obj(top?.result) ?? top)?.missing
+  return Array.isArray(missing) ? missing.flatMap(v => str(v) || []) : []
+}
+
+/** The tickets of one `ix-board --json issues` answer. A ticket whose attachments are cut short says nothing of its PRs. */
+export function issuesOf(answer: unknown): WorkIssue[] {
+  const top = obj(answer)
+  const body = obj(top?.result) ?? top
+  if (!Array.isArray(body?.issues)) throw new Error('the answer is not a list of issues')
+  return list(body.issues).flatMap(v => {
+    const o = obj(v)
+    return o === null ? [] : (issueOf({ ...o, state: str(o.state_name) || str(o.state), prs: o.attachments_complete === false ? null : o.pull_requests }) ?? [])
+  })
 }
 
 // ---------------------------------------------------------------- composing the view
@@ -128,7 +182,25 @@ export type WorkTicket = {
   lastAction: { what: string; at: number } | null
 }
 
-export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[]; summary: string; error: string | null; readAt: number | null }
+/** `tickets` are those in hand, `finished` those whose agents have all finished. */
+export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[]; finished: WorkTicket[]; summary: string; error: string | null; readAt: number | null }
+
+/** A focus status that has answered: the read of single tickets and a focus never answered are not one. */
+const isAnswer = (b: WorkBoard): boolean => b.ticketsOnly !== true && b.at !== null
+
+/**
+ * What ix-board's held answers lack: `oldAt` is when the oldest old focus status was read, `isShort` true where a
+ * focus never answered or its merges are of an old answer, and `errors` why the latest reads failed.
+ */
+export function boardNotes(boards: readonly WorkBoard[], now: number): { oldAt: number | null; isShort: boolean; errors: string[] } {
+  const old = boards.filter(b => isOldAt(b.at, now)).map(b => b.at!)
+  const focuses = boards.filter(b => b.ticketsOnly !== true)
+  return {
+    oldAt: old.length === 0 ? null : Math.min(...old),
+    isShort: focuses.some(b => b.at === null || b.activity === null || isOldAt(b.at, now)),
+    errors: [...new Set(boards.flatMap(b => (b.error ? [b.error] : [])))],
+  }
+}
 
 export type WorkView = {
   leads: WorkLeadView[]
@@ -144,11 +216,20 @@ const has = (role: string, word: string): boolean => role.toLowerCase().includes
 
 const isOpenPr = (p: WorkPr): boolean => p.status === 'open' || p.status === 'draft'
 
-/** The distinct tickets one lead has in hand: those its agents report and those its focus names. */
+/** The distinct tickets one lead reports: those of its agents and those its focus names. */
 const ticketsOf = (lead: WorkLead): string[] => [...new Set([...lead.agents.map(a => a.ticket), ...(lead.focus?.tickets ?? [])].filter(t => t !== ''))]
 
-/** The distinct tickets of all the leads. */
+/** A ticket every agent of which has finished, and that the lead's focus does not name, is no longer in hand. */
+function isFinished(lead: WorkLead, id: string): boolean {
+  const agents = lead.agents.filter(a => a.ticket === id)
+  return agents.length > 0 && agents.every(a => a.status === 'done' || a.status === 'canceled') && !(lead.focus?.tickets ?? []).includes(id)
+}
+
+/** The distinct tickets of all the leads, finished ones among them. */
 export const ticketIds = (leads: readonly WorkLead[]): string[] => [...new Set(leads.flatMap(ticketsOf))]
+
+/** The distinct tickets the leads have in hand. */
+export const activeIds = (leads: readonly WorkLead[]): string[] => [...new Set(leads.flatMap(l => ticketsOf(l).filter(id => !isFinished(l, id))))]
 
 const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): string[] => {
   // A finished agent keeps no badge: only those still running or waiting count.
@@ -170,6 +251,13 @@ const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): stri
 export function composeWork(leads: readonly WorkLead[], last: Record<string, WorkLast>, boards: readonly WorkBoard[]): WorkView {
   const board = mergeBoards(boards)
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
+  const unknown = new Set(boards.flatMap(b => b.unknown ?? []))
+  const isUnread = boards.some(b => b.ticketsOnly === true && b.at === null)
+  /** The state drawn for a ticket: Linear's, or why there is none where ix-board has answered that. */
+  const stateOf = (id: string, issue: WorkIssue | undefined): string | null => {
+    if (issue !== undefined) return issue.state === '' ? null : issue.state
+    return unknown.has(id) ? 'not in Linear' : isUnread ? 'state not read' : null
+  }
   const views = leads.map((lead): WorkLeadView => {
     const tickets = ticketsOf(lead).map((id): WorkTicket => {
       const agents = lead.agents.filter(a => a.ticket === id)
@@ -180,13 +268,14 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
       const said = lead.focus?.tickets.includes(id) ? lead.focus.at : null
       const named = said === null ? null : { what: 'focus', at: said }
       const action = event !== undefined ? { what: `${event.role} ${event.status}`, at: event.at } : newest === null ? named : { what: `${newest.role} ${newest.status}`, at: newest.reportedAt! }
-      return { id, title: issue?.title ?? '', state: issue === undefined || issue.state === '' ? null : issue.state, badges: badgesOf(agents, issue), lastAction: action }
+      return { id, title: issue?.title ?? '', state: stateOf(id, issue), badges: badgesOf(agents, issue), lastAction: action }
     })
     tickets.sort((a, b) => (b.lastAction?.at ?? 0) - (a.lastAction?.at ?? 0) || a.id.localeCompare(b.id))
-    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
+    const finished = tickets.filter(t => isFinished(lead, t.id))
+    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets: tickets.filter(t => !finished.includes(t)), finished, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
   })
   views.sort((a, b) => a.address.localeCompare(b.address))
-  return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.length > 0 }
+  return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.some(isAnswer) }
 }
 
 /** The latest agent transition per (lead, ticket) of an `agent-msg work events` page, merged into `into`. */
@@ -279,36 +368,60 @@ export function recentOf(activity: readonly WorkActivity[] | null, events: reado
   return rows.sort((a, b) => b.at - a.at)
 }
 
-/** The three numbers of the band's work cell; null is unknown. */
+/** The numbers of the band's work cell; null is unknown. */
 export type WorkCounts = {
+  /** why `prsOpen` and `merged` are unknown; null where they are known */
+  prsWhy: string | null
+  mergedWhy: string | null
+  /** the tickets in hand of the leads with a current report */
   tickets: number | null
+  /** the tickets in hand of the leads whose report is old and that no current report holds */
+  oldTickets: number
+  /** the leads with a current report, of `listed` */
+  reporting: number
+  listed: number
+  /** the open PRs of `tickets` */
   prsOpen: number | null
-  /** true where some listed ticket's PRs are unknown, so `prsOpen` is a lower bound */
+  /** true where some of those tickets' PRs are unknown, so `prsOpen` is a lower bound */
   prsPartial: boolean
   merged: number | null
-  /** true where ix-board cut its activity inside the last 24 hours, so `merged` is a lower bound */
+  /** true where merges may be missing from `merged`, so it is a lower bound */
   mergedPartial: boolean
+  /** when the oldest old answer behind the PRs or merges was read */
+  oldAt: number | null
 }
 
 /**
- * Tickets the leads report, the open or draft PRs of those tickets and the merges of the last 24 hours. With
- * `leadsRead` false the leads held say nothing of now. A PR count is unknown where no listed ticket has its PRs said.
+ * Tickets the leads have in hand, the open or draft PRs of those tickets and the merges of the last 24 hours. A lead
+ * whose report is older than REPORT_OLD_MS says nothing of now. With `leadsRead` false nothing is known of the leads.
+ * A PR count is unknown where no ticket has its PRs said.
  */
-export function workCounts(leads: readonly WorkLead[], boards: readonly WorkBoard[], now: number, leadsRead: boolean): WorkCounts {
+export function workCounts(leads: readonly WorkLead[], boards: readonly WorkBoard[], now: number, leadsRead: boolean, listed = leads.length): WorkCounts {
   const board = mergeBoards(boards)
+  const notes = boardNotes(boards, now)
   const merged = board.activity === null ? null : mergedSince(board.activity, now, 24)
-  const mergedPartial = merged !== null && isCutWithin(board.cutAt, now, 24)
-  if (!leadsRead) return { tickets: null, prsOpen: null, prsPartial: false, merged, mergedPartial }
-  const ids = ticketIds(leads)
+  const mergedPartial = merged !== null && (isCutWithin(board.cutAt, now, 24) || notes.isShort)
+  const mergedOld = merged === null ? null : boardNotes(boards.filter(b => b.ticketsOnly !== true), now).oldAt
+  const current = leads.filter(l => l.readAt !== null && !isOldReport(l.reportedAt, now))
+  const base = { reporting: current.length, listed: Math.max(listed, current.length), merged, mergedPartial }
+  const focuses = boards.filter(b => b.ticketsOnly !== true)
+  const unread = (some: readonly WorkBoard[]): string => (some.some(b => b.error) ? 'ix-board could not be read' : 'ix-board not read yet')
+  const mergedWhy = merged !== null ? null : focuses.length === 0 ? 'no focus status read' : focuses.every(b => b.at === null) ? unread(focuses) : 'merges need ix-board ≥0.9.0'
+  if (!leadsRead) return { ...base, tickets: null, oldTickets: 0, prsOpen: null, prsPartial: false, oldAt: mergedOld, prsWhy: 'leads not read', mergedWhy }
+  const ids = activeIds(current)
+  const oldTickets = activeIds(leads.filter(l => isOldReport(l.reportedAt, now))).filter(id => !ids.includes(id)).length
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
   const known = ids.flatMap(id => {
-    const prs = byId.get(id)?.prs
-    return prs === undefined || prs === null ? [] : [prs]
+    const issue = byId.get(id)
+    return issue === undefined || issue.prs === null ? [] : [issue]
   })
-  const open = new Set(known.flat().filter(isOpenPr).map(p => p.url || `${p.repo}#${p.number}`))
-  // With no ticket listed there is no PR to count, once a focus status has been read.
-  const isSaid = known.length > 0 || (ids.length === 0 && boards.length > 0)
-  return { tickets: ids.length, prsOpen: isSaid ? open.size : null, prsPartial: isSaid && known.length < ids.length, merged, mergedPartial }
+  const open = new Set(known.flatMap(i => i.prs!).filter(isOpenPr).map(p => p.url || `${p.repo}#${p.number}`))
+  // With no ticket in hand there is no PR to count, once ix-board has answered.
+  const isSaid = known.length > 0 || (ids.length === 0 && boards.some(isAnswer))
+  const prsOld = known.flatMap(i => (isOldAt(i.at, now) ? [i.at!] : []))
+  const ages = [...(mergedOld === null ? [] : [mergedOld]), ...prsOld]
+  const prsWhy = isSaid ? null : boards.length === 0 ? 'no focus status read' : boards.every(b => b.at === null) ? unread(boards) : 'ix-board names no PRs of these tickets'
+  return { ...base, tickets: ids.length, oldTickets, prsOpen: isSaid ? open.size : null, prsPartial: isSaid && known.length < ids.length, oldAt: ages.length === 0 ? null : Math.min(...ages), prsWhy, mergedWhy }
 }
 
 /** Whether activity of the last `hours` was left out by the cut. */

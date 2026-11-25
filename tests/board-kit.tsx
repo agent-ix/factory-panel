@@ -27,6 +27,8 @@ export type Served = {
   projects?: Record<string, ProjectSpec | string | ((init: Init) => Answer)>
   /** `focus status --initiative <ref>`: its projects, or the text it fails with */
   initiatives?: Record<string, ProjectSpec[] | string | ((init: Init) => Answer)>
+  /** `issues <ids>`, the read of single tickets; by default ix-board knows none of them */
+  issues?: (ids: string[]) => Answer
   /** any other call: `--milestone`, `--issue` */
   other?: (args: string[], init: Init) => Answer
   /** how long every answer takes, on the moving clock */
@@ -64,6 +66,10 @@ export function ix(w: World, served: Served): Ix {
         const p = served.initiatives?.[args[3]!]
         return p === undefined ? out('', 4, `initiative ${args[3]} is not found`) : resolve(p, init)
       }
+      if (args[0] === 'issues') {
+        const ids = args.slice(1)
+        return served.issues?.(ids) ?? out(JSON.stringify({ complete: true, missing: [], issues: [] }))
+      }
       return served.other?.(args, init) ?? out('', 1, 'not stubbed')
     }
     const run = async (): Promise<Run> => {
@@ -87,7 +93,7 @@ export async function progress(w: World, selectors: Selector[], opts: { manual?:
   const run = loadProgress(fake$(w) as never, selectors, opts.manual ?? false, endsAt, failed)
   if (opts.advance !== undefined) await w.clock!.advance(opts.advance)
   const loaded = await run
-  return { progress: loaded?.progress ?? null, board: loaded?.board ?? null, failed }
+  return { progress: loaded?.progress ?? null, board: loaded?.board.board ?? null, failed }
 }
 
 export const seed = (w: World, records: Record<string, unknown>) => void w.files.set(PROGRESS, JSON.stringify(records))

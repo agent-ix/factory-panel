@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-The mod SHALL show the fallback modules local, focus, lead and lanes when neither the user nor a declaration selects modules. This requirement supersedes the 0.4.0 role presets and is the one statement of the fallback set.
+The mod SHALL show the fallback modules local, focus, lead, lanes and work, in that order, when neither the user nor a declaration selects modules. This requirement supersedes the 0.4.0 role presets and is the one statement of the fallback set.
 
 ## Behavior
 
@@ -22,7 +22,7 @@ The mod SHALL show the fallback modules local, focus, lead and lanes when neithe
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-002-AC-1 | With nothing selected the band shows local, focus, lead and lanes. | Test |
+| FR-002-AC-1 | With nothing selected the band shows local, focus, lead, lanes and, once the relay’s leads have been read, work. | Test |
 | FR-002-AC-2 | With nothing selected the band shows no host list. | Test |
 | FR-002-AC-3 | With hosts `all` selected the band names each machine. | Test |
 | FR-002-AC-4 | No role question and no role preset table exist in `hooks/`: `grep -rn "PRESETS" hooks/` finds nothing and `/factory role` is not a command. | Inspection |
@@ -30,4 +30,4 @@ The mod SHALL show the fallback modules local, focus, lead and lanes when neithe
 ## Dependencies
 
 - **Upstream**: [US-001](../usecase/US-001-glance.md)
-- **See also**: [FR-010](FR-010-features.md), [FR-012](FR-012-selection-precedence.md)
+- **See also**: [FR-009](FR-009-band-cells.md), [FR-010](FR-010-features.md), [FR-012](FR-012-selection-precedence.md), [FR-030](FR-030-lead-report-reads.md)

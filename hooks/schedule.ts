@@ -17,6 +17,7 @@ export type SourceId =
   | 'team'
   | 'work'
   | 'events'
+  | 'tickets'
   | 'retro'
   | 'roles'
   | 'capacity'
@@ -52,7 +53,7 @@ export const intervalOf = (id: SourceId): number => {
     // The stored retro snapshots change when a retro runs: every few minutes is often enough.
     case 'retro':
       return 5 * MINUTE
-    // 'roles' among them: a look at the shared gate, which runs the evaluation itself far less often.
+    // 'roles' and 'tickets' among them: a look at the shared gate, which runs ix-board itself far less often.
     default:
       return MINUTE
   }

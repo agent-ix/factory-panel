@@ -32,6 +32,20 @@ The mod SHALL read the work reports of the leads once for the views that draw th
 - A lead asked less than 30 seconds ago SHALL be answered from that read, except where the refresh key or a choice command asks, which read anew.
 - A call of `agent-msg who`, `work show` or `work events` that fails because Redis answers `Resource temporarily unavailable`, or because herdr or ssh did not answer for another machine (`herdr call timed out`, `ConnectionAborted`, `Connection closed by`), SHALL be made once more at once.
 
+### Shared by the sessions of a machine
+
+Every session that draws a view reads the leads, and a lead on another machine is reached through ssh, so the sessions of a machine SHALL share those reads.
+
+- The reads of leads whose machine is not this one (`hostname -s`) SHALL be shared through `~/.ix/factory-panel/lead-reports.json`, written whole. A lead of this machine SHALL NOT be written there.
+- Before reading such a lead a session SHALL claim it in the file, and read the file again to see that the claim is its own. A claimed lead SHALL NOT be read by another session, with the refresh key or without, until the claim ends or is 45 seconds old.
+- At most 8 claims SHALL stand at once over all sessions. A lead not claimed for that reason SHALL be asked at a later read.
+- A report, or a failure, that any session read less than 50 seconds ago SHALL answer a view without a read.
+- A lead on another machine that answered it has reported nothing SHALL be read again only after 5 minutes.
+- The refresh key and a choice command SHALL read such a lead anew.
+- A lead another session is reading, of which neither the file nor the session holds a read, SHALL be drawn neither as not read with an error nor as reporting nothing; the views SHALL say how many are being read.
+- Where the file cannot be written, the session SHALL read the lead itself.
+- An entry nobody has asked for in 24 hours SHALL be dropped.
+
 ### The first drawing
 
 - The first read of a choice SHALL draw the focuses after at most 5 seconds from the reports in by then, saying nothing of the leads still being read.
@@ -46,7 +60,7 @@ The mod SHALL read the work reports of the leads once for the views that draw th
 - Where `agent-msg who` fails, the leads drawn SHALL stay, marked old.
 - Where the read of the leads failed and none is drawn, the Work view SHALL say the leads could not be read, and not that none has reported.
 - A lead that `agent-msg who` no longer lists SHALL be forgotten with its report.
-- The last good reports SHALL be kept in memory only.
+- The last good reports of the leads of this machine SHALL be kept in memory only.
 
 ## Acceptance Criteria
 
@@ -63,6 +77,11 @@ The mod SHALL read the work reports of the leads once for the views that draw th
 | FR-030-AC-9 | In a real session every reachable lead of the selected teams is read, those on other machines among them. | Demonstration |
 | FR-030-AC-10 | Where the leads were never listed, the Work view says they could not be read and shows one warning. | Test |
 | FR-030-AC-11 | With one lead taking 15 seconds, the Focus view draws the others within 6 seconds with no warning, and the slow one when it answers, each asked once. | Test |
+| FR-030-AC-12 | A report or failure another session read lately is drawn with no read; only leads of other machines are written to the shared file. | Test |
+| FR-030-AC-13 | A lead another session has claimed is not read, is counted as being read, and is read once the claim is old. | Test |
+| FR-030-AC-14 | With 8 claims standing no further lead of another machine is read; with 7, one is. | Test |
+| FR-030-AC-15 | A lead of another machine with no report is read again only after 5 minutes. | Test |
+| FR-030-AC-16 | Where the shared file cannot be written the lead is read and drawn. | Test |
 
 ## Dependencies
 

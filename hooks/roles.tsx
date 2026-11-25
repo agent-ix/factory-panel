@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface } from 'claude-code'
 
-import type { RoleReport, RoleRule, RoleScore, RolesView } from '../types'
+import type { RoleObjective, RoleReport, RoleRule, RoleScore, RolesView } from '../types'
 import { CARD_BG, ago, errorText, failureText, pausedText } from './shared'
 import { BOARD_INTERVAL_MS, UNKEPT_TTL_MS, gatedBoard } from './linear'
 import { track } from './schedule'
@@ -12,7 +12,7 @@ import { sourceFailed, sourceOk } from './sources'
 // The Team view's Roles section: each role's score from `ix-board retro eval`, and what it was not scored on. An
 // evaluation reads Linear and GitHub over two windows, so it runs through the gate every session shares.
 
-const roles = atom({ plugin: 'factory-panel', key: 'roles' } as const, [] as RolesView[], { shape: 'roles-1' })
+const roles = atom({ plugin: 'factory-panel', key: 'roles' } as const, [] as RolesView[], { shape: 'roles-2' })
 /** The roles whose rules are listed, as `team/role`. */
 const rolesOpen = atom({ plugin: 'factory-panel', key: 'rolesOpen' } as const, [] as string[])
 
@@ -32,11 +32,15 @@ const SLOW_FAILURE_MS = 10_000
 const READING = 'reading the role evaluation, which can take minutes'
 const ELSEWHERE = 'another session is reading it'
 const NO_COMMAND = 'this ix-board has no `retro eval` command'
+/** What the retro health says of a team with no retro configuration. */
+const NO_BASELINE = 'no retro baseline'
+/** ix-board's exit code for what it refuses, a configuration it cannot read among others. */
+const REFUSED_EXIT = 3
 const NO_ROLE = 'the evaluation names no role'
 const NOT_A_REPORT = 'the answer is not a retro eval report'
 
-/** What the gate keeps of a run; a null report is an ix-board with no such command. */
-type Answer = { report: RoleReport | null }
+/** What the gate keeps of a run; a null report is a team with no configuration, or an ix-board with no such command. */
+type Answer = { report: RoleReport | null; unconfigured?: true }
 
 type Raw = Record<string, unknown>
 const record = (v: unknown): Raw | null => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Raw) : null)
@@ -70,6 +74,7 @@ export function parseEval(answer: string): RoleReport {
     reason: text(r.reason),
     rubric: text(r.rubric_id),
   })
+  const objective = (r: Raw): RoleObjective => ({ id: need(text(r.id)), query: text(r.query) ?? '', value: number(r.value), unit: text(r.unit) ?? '', reason: text(r.reason) })
   const role = (r: Raw): RoleScore => {
     const score = need(record(r.score))
     return {
@@ -80,6 +85,8 @@ export function parseEval(answer: string): RoleReport {
       trend: number(r.trend),
       matched: number(r.trend_matched_rules),
       rules: list(r.rules).map(rule),
+      // An answer from before objective metrics has none.
+      objectives: r.objective_metrics === undefined ? [] : list(r.objective_metrics).map(objective),
     }
   }
   return { startMs: need(number(window.start_ms)), endMs: need(number(window.end_ms)), roles: list(doc.roles).map(role) }
@@ -89,6 +96,8 @@ async function runEval($: EngineInterface, config: string): Promise<Answer> {
   const ran = await $.process.run(['ix-board', '--json', 'retro', 'eval', '--config', config, '--since', '24h'], { timeoutMs: EVAL_TIMEOUT_MS })
   // An ix-board from before the command refuses its name; nothing was read.
   if (ran.exitCode === 2 && ran.stderr.includes("unrecognized subcommand 'eval'")) return { report: null }
+  // A team with no configuration has no retro; that is no failure, and ix-board has read nothing.
+  if (ran.exitCode === REFUSED_EXIT && ran.stderr.includes(`retro config ${config}: cannot read: No such file`)) return { report: null, unconfigured: true }
   if (ran.exitCode !== 0) throw new Error(failureText(ran.stderr, ran.exitCode))
   if (ran.isStdoutTruncated) throw new Error('the answer was cut at 4 MiB')
   return { report: parseEval(ran.stdout) }
@@ -97,7 +106,7 @@ async function runEval($: EngineInterface, config: string): Promise<Answer> {
 async function readTeamRoles($: EngineInterface, dir: string, team: string): Promise<{ view: RolesView; error: string | null; isAnswered: boolean }> {
   const got = await gatedBoard($, `eval:${team}`, () => runEval($, `${dir}/${team}/config.json`), {
     // A missing command costs nothing to ask again, and an upgrade should show soon.
-    keep: a => a.report !== null,
+    keep: a => a.report !== null || a.unconfigured === true,
     errorHoldMs: ranMs => (ranMs < SLOW_FAILURE_MS ? UNKEPT_TTL_MS : BOARD_INTERVAL_MS),
     claimMs: EVAL_CLAIM_MS,
   })
@@ -106,6 +115,7 @@ async function readTeamRoles($: EngineInterface, dir: string, team: string): Pro
   if (got.backoffUntil !== null) return done(pausedText(got.backoffUntil, await $.clock.now()))
   if (got.error !== null) return done(`retro eval: ${got.error}`, true)
   if (got.data === null) return done(ELSEWHERE)
+  if (got.data.unconfigured === true) return done(NO_BASELINE)
   if (report === null) return done(NO_COMMAND)
   return done(report.roles.length === 0 ? NO_ROLE : null)
 }
@@ -146,6 +156,8 @@ const FAILED: Mark = { mark: '●', color: 'error' }
 const PARTLY: Mark = { mark: '●', color: 'warning' }
 const SOUND: Mark = { mark: '●', color: 'success' }
 const UNSCORED: Mark = { mark: '○', color: 'inactive' }
+/** An objective metric with a value: a measurement, which passes or fails nothing. */
+const MEASURED: Mark = { mark: '·', color: 'subtle' }
 
 /** The statuses of a rule the mod knows, with how one that is not scored is drawn and named. */
 const NOT_SCORED: Record<string, Mark & { words: string }> = {
@@ -167,7 +179,7 @@ const scoreText = (r: RoleScore): string => (r.passRate === null ? 'no score' : 
 /** The answer's trend, with the number of rules it compares: those scored in both windows. */
 function trendOf({ trend, matched }: RoleScore): { text: string; color: string } {
   if (matched === 0) return { text: 'trend — · no rule scored in both windows', color: 'subtle' }
-  if (trend === null) return { text: 'trend —', color: 'subtle' }
+  if (trend === null) return { text: 'trend — · none in the answer', color: 'subtle' }
   const over = matched === null ? '' : ` over ${matched} ${matched === 1 ? 'rule' : 'rules'}`
   if (trend === 0) return { text: `= no change${over}`, color: 'subtle' }
   const points = Math.abs(trend) * 100
@@ -213,6 +225,11 @@ export async function drawRoles($: EngineInterface, { Box, Text, Button }: Pick<
     </Box>
   )
 
+  const objective = (x: RoleObjective): string => {
+    const measured = x.value === null ? `unavailable · ${x.reason ?? 'no reason given'}` : `${amount(x.value)}${x.unit === '' ? '' : ` ${x.unit}`}`
+    return [x.id, measured, x.query].filter(part => part !== '').join(' · ')
+  }
+
   const roleRows = (team: string, r: RoleScore) => {
     const id = `${team}/${r.role}`
     const isOpen = open.includes(id)
@@ -233,6 +250,8 @@ export async function drawRoles($: EngineInterface, { Box, Text, Button }: Pick<
         {isOpen && failing.map(x => line(`${id}/${x.id}`, FAILED, failedText(x)))}
         {isOpen && failing.length === 0 && r.evaluated > 0 && <Text dimColor size="caption">no failing rule</Text>}
         {isOpen && unscored.map(x => line(`${id}/${x.id}`, NOT_SCORED[x.status] ?? UNSCORED, unscoredText(x)))}
+        {isOpen && r.objectives.length > 0 && <Text dimColor size="caption">objective metrics</Text>}
+        {isOpen && r.objectives.map(x => line(`${id}/objective-${x.id}`, x.value === null ? UNSCORED : MEASURED, objective(x)))}
       </Box>
     )
   }

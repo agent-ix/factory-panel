@@ -47,6 +47,16 @@ const release = (): void => {
   else next()
 }
 
+/** Runs `run`, which starts one ix-board process, when one of the CONCURRENCY places is free. */
+export async function limited<T>(run: () => Promise<T>): Promise<T> {
+  await acquire()
+  try {
+    return await run()
+  } finally {
+    release()
+  }
+}
+
 /** Forgets what an earlier session learned. */
 export function resetBoard(): void {
   learned.clear()

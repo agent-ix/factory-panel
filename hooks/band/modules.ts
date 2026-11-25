@@ -1,4 +1,5 @@
 import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead } from '../../types'
+import { agoShort } from '../shared'
 import { cellBar, loadColor, tempColor, usd } from '../ui/glyphs'
 import { workCounts } from '../work'
 
@@ -273,14 +274,20 @@ const work = (s: Snapshot): Cell | null => {
   const old = known.filter(l => l.error !== null).length
   // With no report in hand, now or from an earlier read, nothing is known of the tickets.
   const isKnown = known.length > 0 || (unread === 0 && w.relayError === null)
-  const { tickets, prsOpen, prsPartial, merged, mergedPartial } = workCounts(known, w.boards, s.now, isKnown)
+  const c = workCounts(w.leads, w.boards, s.now, isKnown, w.listed)
   const dash = (n: number | null, isAtLeast = false) => (n === null ? '—' : `${isAtLeast ? '≥' : ''}${n}`)
-  // A lead whose report was never read may hold more tickets and PRs.
-  const isShort = unread > 0
+  // Each dash of the cell says why, a reason two share once.
+  const why = [...new Set([c.prsWhy, c.mergedWhy].filter(r => r !== null))]
+  // A lead that was never read, reports nothing or reports old work may hold more tickets and PRs than are counted.
+  const isShort = c.reporting < c.listed
+  const of = c.tickets !== null && isShort ? ` (${c.reporting}/${c.listed} leads)` : ''
   const parts: Part[] = [
-    { text: `${dash(tickets, isShort)} ${tickets === 1 ? 'ticket' : 'tickets'}`, tone: tickets === null ? 'inactive' : undefined },
-    { text: ` · ${dash(prsOpen, isShort || prsPartial)} ${prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
-    { text: ` · ${dash(merged, mergedPartial)} merged 24h`, dim: true },
+    { text: `${dash(c.tickets, isShort)} ${c.tickets === 1 ? 'ticket' : 'tickets'}`, tone: c.tickets === null ? 'inactive' : undefined },
+    { text: `${of}${c.oldTickets > 0 ? ` · +${c.oldTickets} old` : ''}`, dim: true },
+    { text: ` · ${dash(c.prsOpen, isShort || c.prsPartial)} ${c.prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
+    { text: ` · ${dash(c.merged, c.mergedPartial)} merged 24h`, dim: true },
+    { text: c.oldAt === null ? '' : ` · ix-board ${agoShort(c.oldAt, s.now)} old`, tone: 'warning' },
+    { text: why.length === 0 ? '' : ` (${why.join('; ')})`, dim: true },
   ]
   // The merges and PRs are ix-board's: where it fails, the focus's own warning says why.
   const board = scoped(s).flatMap(f => f.warnings).find(x => x.kind === 'source')?.text
@@ -291,8 +298,11 @@ const work = (s: Snapshot): Cell | null => {
   return { id: 'work', pane: 'work', parts, alert }
 }
 
-/** The teams the Team view and the team cell read: those of the session's focus, else the teams choice. None: every team. */
-export const selectedTeams = (scope: Scope): string[] => focusTeams(scope) ?? [...scope.teams]
+/**
+ * The teams the Team view and the team cell read: those the user or a declaration chose, whatever the focus; where none
+ * is chosen, those of the session's focus, else its own team. None: every team.
+ */
+export const selectedTeams = (scope: Scope): string[] => (scope.teamsSelected ? [...scope.teams] : (focusTeams(scope) ?? [...scope.teams]))
 
 /**
  * The team views a selection reads: `shown`, those keyed with a selected team, in the selection's order; `unmatched`,

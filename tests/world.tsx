@@ -163,6 +163,8 @@ export function answerRun(w: World, argv: readonly string[], init: Init): Run | 
   }
   if (line === 'agent-msg doctor --json') return w.relayFails.value ? out('', 1, 'redis down') : out(JSON.stringify({ ok: true, checks: [] }))
   if (line.startsWith('ix-board --json agents')) return out(JSON.stringify({ agents: w.boardAgents }))
+  // Unless a test says otherwise, ix-board knows none of the single tickets asked for.
+  if (line.startsWith('ix-board --json issues ')) return out(JSON.stringify({ complete: true, missing: [], issues: [] }))
   return out('', 1, `not stubbed: ${line}`)
 }
 
@@ -198,11 +200,13 @@ export function fake$(w: World) {
  * A work report in the shape `agent-msg work show` prints (relay-core WorkReport): a focus summary and
  * no tracker scope, so no ix-board read follows, and one agent for each status given.
  */
+/** When the fixture reports were made: five minutes before the test clock starts, so they are current. */
+export const REPORTED_AT = Date.UTC(2026, 10, 24, 11, 55)
 export const report = (address: string, summary: string, agentStatuses: string[] = ['running'], scope: { initiatives?: string[]; projects?: string[]; tickets?: string[] } | null = null) => ({
   binding: { machine: address.split(':')[0], pane: 'w1:p1', session: 'sess-1', process_id: 4242, kind: 'codex', address },
-  scope: scope === null ? null : { initiatives: [], projects: [], tickets: [], ...scope, reported_at_ms: 1795216041262 },
-  focus: { summary, tickets: [], reported_at_ms: 1795214759001 },
-  agents: agentStatuses.map((status, i) => ({ agent_id: `a${i}`, name: `agent ${i}`, ticket: 'QSL-1', role: 'coder', status, pane: null, session: null, reported_at_ms: 1795214759001 })),
+  scope: scope === null ? null : { initiatives: [], projects: [], tickets: [], ...scope, reported_at_ms: REPORTED_AT + 60_000 },
+  focus: { summary, tickets: [], reported_at_ms: REPORTED_AT },
+  agents: agentStatuses.map((status, i) => ({ agent_id: `a${i}`, name: `agent ${i}`, ticket: 'QSL-1', role: 'coder', status, pane: null, session: null, reported_at_ms: REPORTED_AT })),
 })
 
 /** What `agent-msg whoami` prints for a lead: the address, the source of the location, then the models. */

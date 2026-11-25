@@ -88,6 +88,8 @@ async function draw($: $t, surface: 'terminal' | 'desktop' = 'terminal', placeme
     d.text = d.lines.join('\n')
   }
   await (d as Drawn & { redraw: () => Promise<void> }).redraw()
+  // The folded finished tickets are opened, so that every ticket of a lead is on screen.
+  for (const b of d.buttons.filter(b => b.key.startsWith('finished-') && b.label.startsWith('▸'))) await d.press(b.key)
   return d
 }
 const m = (re: RegExp) => new RegExp(re.source, 'm')
@@ -137,9 +139,14 @@ test('the leads of the selected teams that report nothing are named, and one tha
     w.leads.set('terra:QSL:gone', undefined)
   })
   const d = await draw($)
-  expect(d.lines).toContain('2 leads report no work: luna:QSL:code, terra:QSL:minder')
+  // Only their number is on screen until it is opened.
+  expect(d.buttons.find(b => b.key === 'silent')?.label).toBe('▸ 2 leads report no work')
+  expect(d.text).not.toContain('luna:QSL:code')
+  await d.press('silent')
+  expect(d.lines).toContain('luna:QSL:code, terra:QSL:minder')
   expect(d.lines).toContain('terra:QSL:gone')
-  expect(d.lines).not.toContain('luna:QSL:code')
+  await d.press('silent')
+  expect(d.text).not.toContain('luna:QSL:code')
   await d.unmount()
 })
 
@@ -151,7 +158,9 @@ test('one lead that reports nothing is named where no lead reported work', async
   })
   const d = await draw($)
   expect(d.lines).toContain('No lead has reported work.')
-  expect(d.lines).toContain(`1 lead reports no work: ${LEAD}`)
+  expect(d.buttons.find(b => b.key === 'silent')?.label).toBe('▸ 1 lead reports no work')
+  await d.press('silent')
+  expect(d.lines).toContain(LEAD)
   await d.unmount()
 })
 
@@ -204,12 +213,119 @@ test('a lead collapses to its ticket count and expands again, and ticket rows fi
   for (const l of d.lines.filter(l => /^ {3}QSL-/.test(l))) expect(l.length).toBeLessThanOrEqual(60)
   expect(d.buttons.filter(b => b.key.startsWith('toggle-')).map(b => b.label)).toEqual(['▾', '▾'])
   await d.press(`toggle-${LEAD}`)
-  expect(d.text).toMatch(m(/^\(3 tickets\)$/))
+  expect(d.text).toMatch(m(/^\(2 tickets\)$/))
   expect(ticketRow(d, 'QSL-1240')).toBe('')
   await d.press(`toggle-${LEAD}`)
   expect(ticketRow(d, 'QSL-1240')).not.toBe('')
   await d.unmount()
   expect(ticketLine({ id: 'QSL-1', title: 'x'.repeat(200), state: 'Coding', badges: ['[pr]', '[review×2]'], lastAction: { what: 'coder running', at: NOW - 4 * MIN } }, NOW, 60).length).toBeLessThanOrEqual(60)
+})
+
+// ---------------------------------------------------------------- FR-028 old and finished work
+
+test('finished tickets are folded under their lead and a report over two hours old is marked old', async ($, on) => {
+  trace("FR-028-AC-22", "FR-028-AC-27")
+  await setup($, on, rich(), events(), true, w => {
+    w.leads.set(IDLE, { ...report(IDLE, 'idle', ['waiting']), focus: { summary: 'idle', tickets: [], reported_at_ms: NOW - 13 * 60 * MIN }, scope: null, agents: [agent('c1', 'QSL-2', 'coder', 'waiting', 13 * 60)] })
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  const label = async (key: string) => ((await ui.find({ key }))?.props as { label?: string } | undefined)?.label
+  expect(await label(`finished-${LEAD}`)).toBe('▸ 1 finished')
+  expect((await texts()).some(l => l.trim().startsWith('QSL-1251'))).toBe(false)
+  // The old lead has the hollow mark and says its report is old.
+  expect(await texts()).toEqual(expect.arrayContaining(['◌', 'old 13h', '2 leads · 1 old']))
+  await ui.press({ key: `finished-${LEAD}` })
+  expect((await texts()).some(l => l.trim().startsWith('QSL-1251'))).toBe(true)
+  await ui.unmount()
+  const widget = await draw($, 'terminal', 'widget')
+  // The old lead's ticket is counted apart.
+  expect(widget.text).toBe('2 leads · ≥2 tickets · +1 old · 2 merged 24h · 1 old')
+  await widget.unmount()
+})
+
+test('the widget says it is reading, or that the leads could not be read, and counts nothing', async ($, on) => {
+  trace("FR-030-AC-10", "FR-028-AC-23")
+  const w = world(on, true)
+  let release: (() => void) | undefined
+  const held = new Promise<void>(resolve => (release = resolve))
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === 'agent-msg who' ? held.then(() => out('', 1, 'redis down')) : prior?.(argv, init))
+  await startSession($)
+  const d = await draw($, 'terminal', 'widget')
+  expect(d.text).toBe('Reading the leads’ work reports…')
+  await d.unmount()
+  release!()
+  await w.clock!.advance(1000)
+  const failed = await draw($, 'terminal', 'widget')
+  expect(failed.text).toBe('The leads could not be read.')
+  await failed.unmount()
+})
+
+// ---------------------------------------------------------------- FR-028 the tickets no focus status names
+
+const single = (identifier: string, state: string, prs: unknown[], complete = true) => ({ id: `id-${identifier}`, identifier, title: `single ${identifier}`, state: 'x', state_name: state, state_type: 'started', attachments_complete: complete, pull_requests: prs })
+
+test('a ticket no focus status names gets its state, title and [pr] from one read of ix-board', async ($, on) => {
+  trace("FR-028-AC-24")
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('a', 'QSL-1240', 'coder', 'running', 9), agent('b', 'QSL-7', 'coder', 'running', 9), agent('c', 'QSL-8', 'coder', 'running', 9), agent('d', 'not a ticket', 'coder', 'running', 9)] })
+  const board = ix(w, { projects: { Alpha: () => out(rich()) }, issues: () => out(JSON.stringify({ complete: true, missing: [], issues: [single('QSL-7', 'Specify', [pr('open', 77)]), single('QSL-8', 'Specced', [pr('open', 88)], false)] })) })
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(60_000)
+  const rows = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(rows.find(l => l.trim().startsWith('QSL-7 '))).toMatch(/QSL-7 Specify single .*\[pr\]/)
+  // Where the attachments are cut short nothing is said of its PRs.
+  expect(rows.find(l => l.trim().startsWith('QSL-8 '))).toMatch(/QSL-8 Specced single /)
+  expect(rows.find(l => l.trim().startsWith('QSL-8 '))).not.toMatch(/\[pr\]/)
+  // Asked once, of the identifiers no focus status names and no other word.
+  expect(board.calls.filter(c => c.startsWith('issues'))).toEqual(['issues QSL-7 QSL-8'])
+  await ui.unmount()
+})
+
+test('the tickets read is shared and made again only after five minutes where there is a new ticket, else after thirty', async ($, on) => {
+  trace("FR-028-AC-25")
+  const w = world(on, true)
+  const lead = (...ids: string[]) => ({ ...report(LEAD, 'FSL alpha', ['running']), agents: ids.map((id, i) => agent(`a${i}`, id, 'coder', 'running', 1)) })
+  w.leads.set(LEAD, lead('QSL-7'))
+  const board = ix(w, {})
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const calls = () => board.calls.filter(c => c.startsWith('issues'))
+  await w.clock!.advance(MIN)
+  expect(calls()).toEqual(['issues QSL-7'])
+  await w.clock!.advance(3 * MIN)
+  expect(calls()).toHaveLength(1)
+  w.leads.set(LEAD, lead('QSL-7', 'QSL-9'))
+  await w.clock!.advance(4 * MIN)
+  expect(calls()).toEqual(['issues QSL-7', 'issues QSL-7 QSL-9'])
+  await w.clock!.advance(20 * MIN)
+  expect(calls()).toHaveLength(2)
+  await w.clock!.advance(15 * MIN)
+  expect(calls()).toHaveLength(3)
+  await ui.unmount()
+})
+
+test('an ix-board that cannot read the tickets is a warning on the Work tab, and an old answer says its age', async ($, on) => {
+  trace("FR-028-AC-26")
+  let fails = false
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('a', 'QSL-1240', 'coder', 'running', 9)] })
+  ix(w, { projects: { Alpha: () => (fails ? out('', 1, 'ix-board broke') : out(rich())) } })
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  await w.clock!.advance(MIN)
+  expect((await texts()).some(l => /old: states, PRs and merges/.test(l))).toBe(false)
+  fails = true
+  await w.clock!.advance(40 * MIN)
+  await ui.press({ key: 'warnings-toggle' })
+  const lines = await texts()
+  expect(lines.join('\n')).toMatch(/ix-board: .*ix-board broke/)
+  expect(lines.some(l => /^ix-board’s answer is \d+m old: states, PRs and merges are as of then\.$/.test(l))).toBe(true)
+  expect(lines).not.toContain('Nothing merged lately.')
+  await ui.unmount()
 })
 
 // ---------------------------------------------------------------- FR-028 Recent
@@ -241,7 +357,7 @@ test('an ix-board without activity and PRs shows the tickets without a PR badge 
   await d.unmount()
 })
 
-test('the stale result wrapper is read as the object inside, and the Work tab makes no ix-board call of its own', async ($, on) => {
+test('the stale result wrapper is read as the object inside, and ix-board is asked once for the tickets no focus status names', async ($, on) => {
   trace("FR-028-AC-7")
   const wrapped = JSON.stringify({ result: JSON.parse(rich()) })
   const w = await setup($, on, wrapped)
@@ -249,7 +365,7 @@ test('the stale result wrapper is read as the object inside, and the Work tab ma
   expect(ticketRow(d, 'QSL-1240')).toMatch(/\[pr\]/)
   expect(d.lines.some(l => /filament-mltl#412/.test(l))).toBe(true)
   await d.unmount()
-  expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual(['ix-board --json focus status --project Alpha'])
+  expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual(['ix-board --json focus status --project Alpha', 'ix-board --json issues QSL-2 QSL-3 QSL-4'])
 })
 
 test('where the events cannot be read the tickets show with the age of the latest report and the footer warns once', async ($, on) => {
@@ -267,7 +383,8 @@ test('the widget says how many leads, tickets and merges of the last 24 hours', 
   trace("FR-028-AC-9")
   await setup($, on, rich())
   const d = await draw($, 'terminal', 'widget')
-  expect(d.text).toBe('2 leads · 6 tickets · 2 merged 24h')
+  // Five in hand: the one whose only agent is done is not counted.
+  expect(d.text).toBe('2 leads · 5 tickets · 2 merged 24h')
   await d.unmount()
 })
 
@@ -322,6 +439,8 @@ test('the next read asks only for what came after the last cursor and keeps the 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(2 * MIN)
   expect(eventCalls(w).map(l => l.split(' --after ')[1]).slice(0, 2)).toEqual(['0-0', 'c1'])
+  // QSL-1251, whose only agent is done, is among the finished.
+  await ui.press({ key: `finished-${LEAD}` })
   const rows = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
   expect(rows.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/reviewer \d+m$/)
   expect(rows.find(l => l.trim().startsWith('QSL-1251'))).toMatch(/spec-author \d+m$/)
@@ -472,7 +591,7 @@ test('the widget marks the merges as a lower bound where ix-board cut its activi
   const cut = rich({ activity: Array.from({ length: 200 }, (_, i) => act('merged', `QSL-${i}`, 't', i + 1, i)) })
   await setup($, on, cut)
   const d = await draw($, 'terminal', 'widget')
-  expect(d.text).toBe('2 leads · 6 tickets · ≥200 merged 24h')
+  expect(d.text).toBe('2 leads · 5 tickets · ≥200 merged 24h')
   await d.unmount()
 })
 
@@ -488,7 +607,7 @@ test('the band marks the counts as lower bounds where one lead’s report cannot
   const ui = await drawBand($, CLASSIC)
   await w.clock!.advance(20_000)
   const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
-  expect(text).toMatch(/≥1 ticket · — PRs open · — merged 24h/)
+  expect(text).toMatch(/≥1 ticket \(1\/2 leads\) · — PRs open · — merged 24h/)
   expect(text).toMatch(/agent-msg work: 1 of 2 leads not read/)
   await ui.unmount()
 })
@@ -596,3 +715,36 @@ for (const [title, entry, backoff] of [
     await ui.unmount()
   })
 }
+
+// ---------------------------------------------------------------- FR-028 what is missing says why
+
+test('a ticket Linear has no record of, or that ix-board could not be asked for, says so in place of a state', async ($, on) => {
+  trace("FR-028-AC-28")
+  let fails = true
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [agent('a', 'QSL-404', 'coder', 'running', 1)] })
+  ix(w, { issues: ids => (fails ? out('', 1, 'ix-board broke') : out(JSON.stringify({ complete: false, missing: ids, issues: [] }))) })
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const row = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').find(l => l.trim().startsWith('QSL-404'))
+  await w.clock!.advance(MIN)
+  expect(await row()).toMatch(/QSL-404 state not read +coder running/)
+  fails = false
+  await w.clock!.advance(40 * MIN)
+  expect(await row()).toMatch(/QSL-404 not in Linear +coder running/)
+  await ui.unmount()
+})
+
+test('where no focus names tracker work, Recent says there is no focus status to read merges from', async ($, on) => {
+  trace("FR-028-AC-29")
+  const w = world(on, true)
+  w.leads.set(LEAD, report(LEAD, 'FSL alpha', ['running']))
+  ix(w, {})
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(lines).toContain('No focus names a project or ticket, so there is no focus status to read merges from.')
+  expect(lines.join('\n')).not.toMatch(/Waiting for ix-board|Nothing merged/)
+  await ui.unmount()
+})

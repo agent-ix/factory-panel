@@ -80,7 +80,7 @@ test('agent-msg work failing is shown while the progress of a named focus is dra
 })
 
 test('Prometheus that does not answer leaves the Focus pane and the lanes drawn and the Factory view says why', async ($, on) => {
-  trace("FR-018-AC-3", "NFR-004-M-2")
+  trace("FR-018-AC-3", "NFR-004-M-5")
   const w = world(on, true)
   lead(w, null, 'Release train summary')
   w.boardAgents.push({ team: 'QSL', agent: LEAD, herdr_status: 'working', machine: 'draco' })
