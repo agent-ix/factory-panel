@@ -16,7 +16,7 @@ export type Part = { text: string; tone?: Tone; dim?: boolean; bold?: boolean }
 /** One module's cell: its text parts, the pane whose full view a press opens, and a detail line when it is not well. */
 export type Cell = { id: ModuleId; pane: string; parts: Part[]; alert?: string }
 
-/** What the selection narrows the band to; see FR-013. `teams` empty means every team. */
+/** What the selection narrows the band to. `teams` empty means every team. */
 export type Scope = {
   hosts: 'all' | 'local'
   /** `own`, `team` or a focus name. */
@@ -24,6 +24,8 @@ export type Scope = {
   teams: readonly string[]
   /** The session's own team; null when the relay did not say. */
   ownTeam: string | null
+  /** The session's own address; null when the relay did not say. */
+  ownAddress?: string | null
   /** True when the user or a declaration named the teams, so one that matches nothing is worth saying. */
   teamsSelected: boolean
   identity: 'pending' | 'detected' | 'unknown'
@@ -91,12 +93,30 @@ export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: 
     if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
     return { shown, note: null }
   }
+  // A focus name the poll already resolved (a definition, a lead address or a summary) is shown as it found it.
+  const resolved = all.filter(f => f.via !== null && f.via !== undefined)
+  if (resolved.length > 0) return { shown: resolved, note: resolved.length > 1 ? `${resolved.length} focuses matched "${want}"` : null }
   // A focus name: a session that could not be identified is first held to the teams it was given.
   const pool = scope.identity === 'detected' ? [...all] : all.filter(inTeams)
   const exact = pool.filter(f => same(f.summary, want))
   const shown = exact.length > 0 ? exact : pool.filter(f => f.summary.toLowerCase().includes(lower))
   const note = shown.length === 0 ? `no focus matches "${want}"` : shown.length > 1 ? `${shown.length} focuses matched "${want}"` : null
   return { shown, note }
+}
+
+/** The one line that says why these focuses are shown; null while the session is still being identified. */
+export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
+  // The session's own entry: an entry at the session's own address.
+  const ownEntryExists = scope.ownAddress != null && focuses.some(f => f.via == null && same(f.address, scope.ownAddress!))
+  const name = scope.focus.trim()
+  const lower = name.toLowerCase()
+  const keyword = lower === 'own' || lower === 'team'
+  if (!keyword && name !== '') return `your choice: ${name}`
+  if (scope.identity === 'unknown') return 'could not tell who this session is, showing every focus'
+  if (scope.identity === 'pending') return null
+  if (lower === 'own' && ownEntryExists) return 'own focus'
+  if (lower === 'team') return 'team focuses'
+  return 'no focus reported, showing the whole team'
 }
 
 const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope).shown
@@ -163,7 +183,7 @@ const focus = (s: Snapshot): Cell | null => {
   const parts: Part[] = [
     { text: `${fit(label, 18)} `, bold: true },
     { text: cellBar(share, 8), tone: 'claude' },
-    { text: share === null ? ' —' : ` ${Math.round(share * 100)}%` },
+    { text: share === null ? ' —' : f.partial ? ` ~${Math.min(99, Math.round(share * 100))}%` : ` ${Math.round(share * 100)}%` },
   ]
   const count = scoped(s).length
   if (count > 1) parts.push({ text: ` +${count - 1}`, dim: true })
@@ -194,7 +214,7 @@ const MARKS: Record<string, { mark: string; tone: Tone }> = {
 
 const lead = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
-  if (f === undefined) return null
+  if (f === undefined || f.via === 'definition') return null
   const agent = s.board.agents.find(a => a.agent === f.address)
   const status = agent?.status ?? f.status
   const { mark, tone } = MARKS[status] ?? { mark: '○', tone: 'inactive' as Tone }

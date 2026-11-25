@@ -72,3 +72,13 @@ test('every command and setting the README names is registered by the plugin', (
   const named = [...section.matchAll(/^\| `([A-Za-z]+)` \|/gm)].map(m => m[1]!)
   assert.deepEqual([...named].sort(), Object.keys(manifest.userConfig).sort())
 })
+
+test('the only agent-msg focuses subcommands the mod runs are list and show', () => {
+  trace("FR-020-AC-11")
+  const subcommands = hooks.flatMap(h => [...h.text.matchAll(/'agent-msg',\s*'focuses',\s*'([a-z-]+)'/g)].map(m => m[1]!))
+  assert.ok(subcommands.length >= 2, 'found no agent-msg focuses calls to check')
+  assert.deepEqual([...new Set(subcommands)].sort(), ['list', 'show'])
+  // No other spelling of the command (a joined string, a template) is run either.
+  const loose = hooks.flatMap(h => [...h.text.matchAll(/agent-msg focuses ([a-z-]+)/g)].map(m => m[1]!))
+  for (const word of loose) assert.ok(['list', 'show'].includes(word), `a call or text names agent-msg focuses ${word}`)
+})

@@ -77,7 +77,17 @@ export type FocusProject = {
   done: number
   total: number
   inProgress: number
+  ready: number
+  /** ms since the epoch of the success this progress comes from; null when it was just read in a combined call */
+  at: number | null
+  /** True when this is a recorded value of an earlier success, because the refresh of the selector failed. */
+  old: boolean
+  /** The error of the failed refresh an old row sits beside. */
+  error: string | null
 }
+
+/** A selector whose refresh failed and for which no record exists. */
+export type FocusFailure = { name: string; error: string }
 
 export type FocusView = {
   /** The coordinator's herdr address, e.g. hub:TEAM:arch; the focus's name until named focuses land. */
@@ -94,9 +104,23 @@ export type FocusView = {
   projects: FocusProject[]
   ready: number
   error: string | null
+  /** The name shown in place of the address: a named focus definition's name. */
+  title: string | null
+  /** How the focus was found when the choice is a name: a definition, a lead address or a lead summary. */
+  via: 'definition' | 'lead' | 'summary' | null
+  /** Selectors that failed with no record. */
+  failures: FocusFailure[]
+  /** `F fresh, O old, X failed`; null when there was nothing to count. */
+  counts: { fresh: number; old: number; failed: number } | null
+  partial: boolean
+  /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, summed from parts. */
+  notes: string[]
 }
 
-export type FocusMeta = { at: number | null; busy: boolean; error: string | null }
+/** A source's error, shown on the pane and in `/factory show`. */
+export type SourceError = { source: string; text: string }
+
+export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[] }
 
 // ---------------------------------------------------------------- Escalations and Relay panes
 

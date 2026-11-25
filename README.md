@@ -41,7 +41,7 @@ The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focu
 | Command | Effect |
 | --- | --- |
 | `/factory use queue,lanes` | Show these cells, in this order |
-| `/factory focus team` | Show the leads of your teams, grouped by team. `own` shows your own focus. Any other text, such as `/factory focus Release Train`, shows the focus whose summary equals it ignoring case, else those that contain it, and says how many matched |
+| `/factory focus team` | Show the leads of your teams, grouped by team. `own` shows your own focus. Any other text is a name, resolved as described under Name resolution below |
 | `/factory teams QSL,ENG` | The teams whose leads and lanes show. A team that matches nothing is kept and the band says so |
 | `/factory hosts all` | `all` shows every machine (and puts the host list first), `local` only this one |
 | `/factory show` | Prints each feature, its value and whether it came from you, a declaration or the default, with the session key |
@@ -51,7 +51,30 @@ Your choices are kept in `~/.ix/factory-panel/choices/<key>.json`. The key is th
 
 A skill selects cells for its agent by telling it to write `~/.ix/factory-panel/features/<key>.json` for its own key. The file is a JSON object with the optional keys `modules`, `hosts`, `focus` and `teams`. Writing it replaces everything an earlier write selected, and the mod re-reads it on every refresh. `/factory help` prints a snippet to paste into a skill. A file that is not a JSON object, or a value of the wrong kind, is ignored with one note naming the file and the reason. The mod never writes a declaration.
 
-All of the mod's own files are under `~/.ix/factory-panel/`: the choices, the declarations it reads and the Linear rate-limit cache.
+The first line of the Focus pane, and a line of `/factory show`, says why these focuses are shown: `your choice: <name>`, `could not tell who this session is, showing every focus`, `own focus`, `team focuses` or `no focus reported, showing the whole team`. A name that matches nothing adds the line `no focus matches "<name>"`.
+
+### Name resolution
+
+`/factory focus <name>` looks the name up in this order and stops at the first step that matches:
+
+1. The keywords `own` and `team`.
+2. A named focus definition. The mod reads them with `agent-msg focuses list --json` and then `agent-msg focuses show <focus_id> --json` for the match, and never creates, changes or archives one. A definition matches by its name or its `focus_id`, ignoring case, when it is active and belongs to your team (every team when the relay cannot tell who you are). Its progress is computed over its `include` members. Exclusions are not applied, and the pane says so. A definition that selects nothing, or whose selection cannot be read, is named with that reason and shows no progress. Two definitions with the same name are both shown, with the count. A row `list` marks unavailable matches by its `focus_id` only and shows the reason.
+3. A lead address, as `host:team:segment` or `team:segment`, ignoring case. A `team:segment` that matches leads on several hosts shows every match, with the count.
+4. A lead's focus summary: the summary equal to the name ignoring case, else those that contain it.
+
+The lookup runs again on every refresh while your choice is a name, so a definition whose members change is followed. If `agent-msg focuses` fails, times out (after 5 seconds) or prints something that is not JSON, the pane shows its error and carries on with steps 3 and 4. No named focus needs to exist.
+
+### When a source fails
+
+Each source keeps to its own part of the view. ix-board is first asked once about every initiative, project, milestone and ticket of the focus (15 seconds). If that call fails because of one of them, such as a ticket that references a milestone that is not available, it is asked again for each one alone (at most four at a time, 5 seconds each, 30 seconds in all), so the others still draw. An ix-board that is missing, times out or refuses your credentials shows one error and no more calls.
+
+The aggregate line reads `F fresh, O old, X failed`. An old selector shows its last good progress with its age (`old 5m`, and `stale` past 30 minutes) beside the error. A selector that failed with no earlier value shows its error alone. Where any are old or failed the aggregate is marked partial and is never drawn as complete. When the combined call failed and every single call worked, the pane adds `summed from parts; overlapping selectors may count twice`. A lead whose work report has no initiatives, projects or tickets says `no selectors`.
+
+A refresh that lost a selector, or fell back to single calls, is shown marked as an earlier outcome for 5 minutes without asking ix-board again, then asked again; the refresh key always asks at once. At most four single-selector ix-board processes run at once across every focus, and the 30 second budget counts from the first ix-board call. A Linear rate limit is one ix-board error with no single calls. When every call fails and no selector has a record, the focus-level record of the last good aggregate for the same selectors is shown, marked old.
+
+The last good progress is kept in `~/.ix/factory-panel/progress.json`, shared by the sessions on the machine, and a record is dropped when no refresh has shown it for 24 hours. Errors of the other sources (`agent-msg work`, `agent-msg focuses`, Prometheus) are shown on the card of the module that uses them, and `/factory show` lists every failing source with its error and the age of its last success. A failing source never blocks another or the first paint.
+
+All of the mod's own files are under `~/.ix/factory-panel/`: the choices, the declarations it reads, the last good progress and the Linear rate-limit cache.
 
 ## Advanced settings
 

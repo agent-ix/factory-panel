@@ -230,7 +230,7 @@ test('the Focus pane draws a coordinator’s focus, its progress and its open pr
     // 117 of 124 leaves done across the three projects.
     expect((await ui.find({ type: 'Text', text: /^94%$/ }))?.text).toBe('94%')
     // The terminal caption is one line; desktop keeps separate pieces.
-    expect((await ui.find({ type: 'Text', text: /117.{1,3}124 done/ }))?.text).toBe(surface === 'terminal' ? '117/124 done · 6 in progress · 0 ready' : '117 / 124 done')
+    expect((await ui.find({ type: 'Text', text: /117.{1,3}124 done/ }))?.text).toBe(surface === 'terminal' ? '117/124 done · 6 in progress · 0 ready · 1 fresh, 0 old, 0 failed' : '117 / 124 done')
     expect((await ui.find({ type: 'Text', text: /6 in progress/ }))?.text).toMatch(/6 in progress/)
     // The real work binding carries no model, so the card shows the harness kind.
     expect((await ui.find({ type: 'Text', text: 'claude' }))?.text).toBe('claude')

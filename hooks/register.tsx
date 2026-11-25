@@ -2,7 +2,7 @@ import type { EngineInterface, Register, RenderViewport } from 'claude-code'
 
 import { PANE_SPEC as ESCALATIONS_PANE, registerEscalations, startEscalations } from './escalations'
 import { PANE_SPEC as FACTORY_PANE, pollBoard, registerFactory, startFactory } from './factory'
-import { PANE_SPEC as FOCUS_PANE, pollFocus, registerFocus, startFocus } from './focus'
+import { PANE_SPEC as FOCUS_PANE, pollFocus, registerFocus, resetFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { resolveEndpoints } from './endpoints'
@@ -61,6 +61,7 @@ export const register: Register = (on, rawOptions) => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     resetSelection()
+    resetFocus()
     lastScope = undefined
     // The band paints from the fallback at once; who the session is, what a skill declared and
     // what the user chose follow when `agent-msg whoami` and the files answer (never waited for).
