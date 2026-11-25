@@ -46,17 +46,16 @@ export function lead(w: World, scope: { initiatives?: string[]; projects?: strin
   w.leads.set(LEAD, report(LEAD, summary, ['running'], scope))
 }
 
-/** One `ix-board` stub: `combined` answers the call over every selector, `single` the call for one. */
-export function board(w: World, answers: { combined: (args: string[], init?: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>>; single?: (args: string[], init: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>> }) {
+/** One `ix-board` stub: `combined` answers every `focus status` call (each is one project's), by its arguments after `focus status`. */
+export function board(w: World, answers: { combined: (args: string[], init?: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>> }) {
   const state = { inflight: 0, max: 0 }
   const prior = w.stub.value
   w.stub.value = (argv, init) => {
     if (argv[0] !== 'ix-board' || argv[2] !== 'focus') return prior?.(argv, init)
     const args = argv.slice(4)
-    const run = args.length > 2 ? answers.combined : (answers.single ?? answers.combined)
     state.inflight++
     state.max = Math.max(state.max, state.inflight)
-    return Promise.resolve(run(args, init)).finally(() => void state.inflight--)
+    return Promise.resolve(answers.combined(args, init)).finally(() => void state.inflight--)
   }
   return state
 }

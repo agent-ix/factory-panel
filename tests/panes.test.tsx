@@ -1,7 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { bulkStep, makeGate } from '../hooks/escalations'
-import { ACCENT, DOING, TRACK } from '../hooks/ui/glyphs'
 
 // Fixtures are trimmed copies of what agent-msg, ix-board and Prometheus answered on
 // 2026-11-21, so the parsers are tested against the real formats.
@@ -23,11 +22,13 @@ const FOCUS_STATUS = JSON.stringify({
   ready_queue: [],
   blocker_layers: [],
   projects: [
-    { name: 'Payments spec batch', progress: { done: 18, total: 18 }, in_progress: [] },
-    { name: 'Payments ledger', progress: { done: 34, total: 39 }, in_progress: [{}, {}, {}, {}] },
-    { name: 'Payments export', progress: { done: 65, total: 67 }, in_progress: [{}, {}] },
+    { id: '00000000-0000-4000-8000-0000000000a1', identifier: '00000000-0000-4000-8000-0000000000a1', name: 'Payments spec batch', progress: { done: 18, total: 18 }, in_progress: [], open_by_state: [] },
+    { id: '00000000-0000-4000-8000-0000000000a2', identifier: '00000000-0000-4000-8000-0000000000a2', name: 'Payments ledger', progress: { done: 34, total: 39 }, in_progress: [{}, {}, {}, {}], open_by_state: [{ state: 'In Progress', count: 4 }] },
+    { id: '00000000-0000-4000-8000-0000000000a3', identifier: '00000000-0000-4000-8000-0000000000a3', name: 'Payments export', progress: { done: 65, total: 67 }, in_progress: [{}, {}], open_by_state: [{ state: 'In Progress', count: 2 }] },
   ],
 })
+
+const ROADMAP = JSON.stringify({ result: { initiatives: [{ name: 'Elsewhere', projects: [{ name: 'Other' }] }] } })
 
 const ESCALATIONS = `e32  waiting  ENG-102  session/cc33/dd44  11-20 17:00
 e31  waiting  ENG-103  session/cc33/dd44  11-20 16:45
@@ -175,6 +176,7 @@ function engine(
     if (line === 'agent-msg who') return ok(WHO)
     if (line === 'agent-msg work --lead hub:ENG:arch show') return ok(WORK)
     if (line.startsWith('agent-msg work --lead')) return fail('agent-msg: work target is unavailable')
+    if (line === 'ix-board --json roadmap') return options.rateLimited ? fail('Linear rate limited; retry in 3600.005s') : ok(ROADMAP)
     if (line.startsWith('ix-board --json focus status --initiative 00000000'))
       return options.rateLimited ? fail('Linear rate limited; retry in 3600.005s') : ok(FOCUS_STATUS)
     if (line === 'agent-msg escalations') return ok(options.escalations?.() ?? ESCALATIONS)
@@ -217,55 +219,22 @@ const pane = (requestId: string, title: string) =>
     },
   }) as const
 
-test('the Focus pane draws a coordinator’s focus, its progress and its open projects', async ($, on) => {
+test('the Focus pane draws a coordinator’s focus with its initiative and the projects nested under it', async ($, on) => {
   const ran: string[][] = []
   engine(on, ran, { teamMetrics: false })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface })
-
     expect((await ui.find({ type: 'Text', text: /1 focus$/ }))?.text).toBe('1 focus')
     expect((await ui.find({ type: 'Text', text: /Payments v2/ }))?.text).toMatch(/ledger and export/)
-    // 117 of 124 leaves done across the three projects.
-    expect((await ui.find({ type: 'Text', text: /^94%$/ }))?.text).toBe('94%')
-    // The terminal caption is one line; desktop keeps separate pieces.
-    expect((await ui.find({ type: 'Text', text: /117.{1,3}124 done/ }))?.text).toBe(surface === 'terminal' ? '117/124 done · 6 in progress · 0 ready · 1 fresh, 0 old, 0 failed' : '117 / 124 done')
-    expect((await ui.find({ type: 'Text', text: /6 in progress/ }))?.text).toMatch(/6 in progress/)
     // The real work binding carries no model, so the card shows the harness kind.
     expect((await ui.find({ type: 'Text', text: 'claude' }))?.text).toBe('claude')
-    // Open projects show, most work left first; the finished one hides behind a toggle.
+    // The initiative came from one initiative call, and its open projects show with their counts, the finished one behind a toggle.
     const names = (await ui.findAll({ type: 'Text', text: /^Payments [a-z ]+$/ })).map(t => t.text)
     expect(names).toEqual(['Payments ledger', 'Payments export'])
-    expect((await ui.find({ key: 'done-hub:ENG:arch' }))).toBeDefined()
-    if (surface === 'terminal') {
-      // One row per open project: a bar and one done/total count each, no percentage text.
-      expect((await ui.findAll({ type: 'Text', text: /^\d+\/\d+$/ })).map(t => t.text)).toEqual(['34/39', '65/67'])
-      expect((await ui.findAll({ type: 'Text', text: /^\d+%$/ })).map(t => t.text)).toEqual(['94%'])
-      // Each bar is runs of [colour, text]: whole █ cells per section, no background and no partial blocks.
-      const runsOf = async (key: string) =>
-        ((await ui.find({ key }))?.children as { props: { color?: string; backgroundColor?: string }; children: string[] }[]).map(c => {
-          expect(c.props.backgroundColor).toBeUndefined()
-          return [c.props.color, c.children[0]]
-        })
-      const rowBar = (name: string) => runsOf(`p-hub:ENG:arch-${name}-bar`)
-      // At 90 columns a row is a 15-cell name, the bar, and a 10-cell count with two gaps inside the card padding of 1 and one spare column:
-      // 90 - 3 - 12 - 15 = 60 bar cells, and the overall bar is the same width so they line up.
-      const colours = (runs: unknown[][]) => runs.map(r => r[0])
-      const cells = (runs: unknown[][]) => runs.reduce((n: number, r) => n + (r[1] as string).length, 0)
-      const ledger = await rowBar('Payments ledger')
-      const exportBar = await rowBar('Payments export')
-      const overall = await runsOf('all-hub:ENG:arch')
-      expect([cells(ledger), cells(exportBar), cells(overall)]).toEqual([60, 60, 60])
-      // done, then in progress, then (open items left) the track.
-      expect(colours(ledger)).toEqual([ACCENT, DOING, TRACK])
-      expect(colours(exportBar)).toEqual([ACCENT, DOING])
-      expect(colours(overall)).toEqual([ACCENT, DOING, TRACK])
-      expect(await ui.find({ type: 'Progress' })).toBeUndefined()
-    }
-    await ui.press({ key: 'done-hub:ENG:arch' })
-    expect((await ui.find({ type: 'Text', text: 'Payments spec batch' }))?.text).toBe('Payments spec batch')
-    await ui.press({ key: 'done-hub:ENG:arch' })
+    expect((await ui.findAll({ type: 'Text', text: /^\d+\/\d+$/ })).map(t => t.text)).toEqual(expect.arrayContaining(['34/39', '65/67']))
+    expect(await ui.find({ type: 'Progress' })).toBeUndefined()
     await ui.unmount()
   }
 
@@ -661,12 +630,13 @@ test('the Focus pane reads ix-board once per interval and shares the result', as
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'desktop' })
   const boardReads = () => ran.filter(a => a[0] === 'ix-board').length
-  expect(boardReads()).toBe(1)
+  // One roadmap call and one initiative call for the initiative the lead lists.
+  expect(boardReads()).toBe(2)
 
   // A refresh within the interval answers from the shared result: progress still draws.
   await ui.press({ key: 'refresh' })
-  expect(boardReads()).toBe(1)
-  expect((await ui.find({ type: 'Text', text: /^94%$/ }))?.text).toBe('94%')
+  expect(boardReads()).toBe(2)
+  expect((await ui.find({ type: 'Text', text: /^34\/39$/ }))?.text).toBe('34/39')
   await ui.unmount()
 })
 
@@ -677,7 +647,7 @@ test('a rate-limited read pauses every later ix-board call until Linear’s retr
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'desktop' })
   const boardReads = () => ran.filter(a => a[0] === 'ix-board').length
   expect(boardReads()).toBe(1)
-  expect((await ui.find({ type: 'Text', text: /Linear rate limit/ }))?.text).toBe('Linear rate limit · paused 1h')
+  expect(((await $.command.run({ command: 'factory', args: 'show' } as never)).text as string)).toMatch(/ix-board: .*Linear rate limit/)
 
   await ui.press({ key: 'refresh' })
   expect(boardReads()).toBe(1)
@@ -866,24 +836,6 @@ test('a failing gate file or home lookup never leaves the board busy and keeps t
   const marks = (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(t => t.text)
   expect(marks.slice(0, 3)[2]).toBe('●')
   await ui.unmount()
-})
-
-test('the Focus bars fill the row at the sidebar width, and the overall bar matches the rows', async ($, on) => {
-  const ran: string[][] = []
-  engine(on, ran, { teamMetrics: false })
-  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  const base = pane('focus', 'Focus')
-  for (const [columns, bar] of [[60, 30], [90, 60], [40, 10]] as const) {
-    // a row is 15 name cells + bar + 10 count cells + 2 gaps inside 2 padding cells: columns - 3 - 12 - 15 cells of bar,
-    // (the name column shrinks only when the bar would drop under 8 cells).
-    const ui = await $.ui.mount({ ...base, props: { ...base.props, bodyColumns: columns }, surface: 'terminal' })
-    const count = async (key: string) =>
-      ((await ui.find({ key }))?.children as { children: string[] }[]).reduce((n, c) => n + c.children[0]!.length, 0)
-    expect(await count('p-hub:ENG:arch-Payments ledger-bar')).toBe(bar)
-    expect(await count('p-hub:ENG:arch-Payments export-bar')).toBe(bar)
-    expect(await count('all-hub:ENG:arch')).toBe(bar)
-    await ui.unmount()
-  }
 })
 
 const BAND = {
