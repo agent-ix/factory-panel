@@ -6,6 +6,7 @@ import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
 import { ACCENT, dots } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
+import { drawCapacity, pollCapacity } from './capacity'
 import { drawRoles, retroTeams } from './roles'
 import { home, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
@@ -13,7 +14,8 @@ import { sourceFailed, sourceOk } from './sources'
 // The Team pane: coder velocity, review quality and flow per team, from the same ix_team_* series as
 // Grafana's "Team flow and effort" dashboard, each tile with six hours of history and how much of its population was
 // measured, the completed issues and merged PRs of each of the last seven days, and above them the health of each
-// selected team's departments from its stored retro snapshots and its role evaluations (hooks/roles.tsx).
+// selected team's departments from its stored retro snapshots and its role evaluations (hooks/roles.tsx). Between
+// those and the teams stands the fleet's capacity by host (hooks/capacity.tsx).
 
 const PANE = 'team'
 const TITLE = 'Team'
@@ -448,13 +450,14 @@ export function registerTeam(on: On, options: Options): void {
           </Box>
           <Box flexDirection="row" gap={1} alignItems="center">
             <Link href={dashboard} label="Grafana" />
-            <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollTeam($, options)} />
+            <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollTeam($, options), pollCapacity($, options)])} />
           </Box>
         </Box>
 
         {health.map(healthStrip)}
         {health.length === 0 && <Text dimColor size="caption">{rmeta.at === null && rmeta.error === null ? 'Health: reading retro snapshots…' : 'Health: no team selected'}</Text>}
         {await drawRoles($, els)}
+        {await drawCapacity($, els)}
 
         {list.length === 0 && (
           <Box flexDirection="column" padding={1} backgroundColor={CARD_BG}>

@@ -1,6 +1,7 @@
 import type { EngineInterface, RenderSurface } from 'claude-code'
 
 import type { ModuleId } from './band/modules'
+import { pollCapacity } from './capacity'
 import { originOf } from './endpoints'
 import { pollEscalations } from './escalations'
 import { pollBoard, pollDoctor, pollHerdr, pollPrometheus } from './factory'
@@ -41,7 +42,7 @@ const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   work: ['selection', 'focus', 'work', 'events'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['selection', 'team', 'retro', 'roles'],
+  team: ['selection', 'team', 'retro', 'roles', 'capacity'],
 }
 
 const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
@@ -61,11 +62,11 @@ const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
 
 /**
  * The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams, and the Team widget
- * no roles.
+ * no roles and no capacity.
  */
 export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[] => {
   if (!isWidget) return PANE_SOURCES[view]
-  return view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view].filter(s => s !== 'roles')
+  return view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view].filter(s => s !== 'roles' && s !== 'capacity')
 }
 
 /**
@@ -120,6 +121,8 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollRetro($)
     case 'roles':
       return pollRoles($)
+    case 'capacity':
+      return pollCapacity($, options)
     // The identity lookup is part of the selection's refresh.
     case 'whoami':
       return Promise.resolve()
@@ -150,7 +153,7 @@ function dueNow(options: Options, sources: readonly SourceId[], now: number): So
   // A view can be drawn before session start has found the metrics address. Nothing is asked of an
   // unknown address, so it counts as no read; the redraw that ends session start asks.
   const isFound = originOf(options.prometheusUrl) !== undefined
-  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team')) && isDue(id, now))
+  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity')) && isDue(id, now))
 }
 
 async function readDue($: EngineInterface, options: Options, surface: Surface, sources: readonly SourceId[], seat: Seat): Promise<void> {

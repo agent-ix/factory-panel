@@ -19,6 +19,7 @@ export type SourceId =
   | 'events'
   | 'retro'
   | 'roles'
+  | 'capacity'
 
 const MINUTE = 60 * 1000
 /** The longest a failing or slow source is left alone, unless its own interval is longer. */

@@ -3,9 +3,9 @@
 // draw each one's error on the card of the module that uses it. The ix-board progress records live in
 // progress.json instead, so only their errors are held here.
 
-export type SourceName = 'ix-board' | 'agent-msg work' | 'agent-msg focuses' | 'prometheus' | 'ix-board retro' | 'ix-board retro eval'
+export type SourceName = 'ix-board' | 'agent-msg work' | 'agent-msg focuses' | 'prometheus' | 'ix-board retro' | 'ix-board retro eval' | 'ix-board fleet ledger'
 
-export const SOURCE_NAMES: readonly SourceName[] = ['ix-board', 'agent-msg work', 'agent-msg focuses', 'prometheus', 'ix-board retro', 'ix-board retro eval']
+export const SOURCE_NAMES: readonly SourceName[] = ['ix-board', 'agent-msg work', 'agent-msg focuses', 'prometheus', 'ix-board retro', 'ix-board retro eval', 'ix-board fleet ledger']
 
 type State = { error: string | null; okAt: number | null }
 

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface } from 'claude-code'
 
 import type { RoleReport, RoleRule, RoleScore, RolesView } from '../types'
-import { CARD_BG, ago, errorText, pausedText } from './shared'
+import { CARD_BG, ago, errorText, failureText, pausedText } from './shared'
 import { BOARD_INTERVAL_MS, UNKEPT_TTL_MS, gatedBoard } from './linear'
 import { track } from './schedule'
 import { focusTeams } from './band/modules'
@@ -31,7 +31,6 @@ const EVAL_TIMEOUT_MS = 5 * 60 * 1000
 const EVAL_CLAIM_MS = 6 * 60 * 1000
 /** A run that failed after this long has spent its reads, so it is not soon made again. */
 const SLOW_FAILURE_MS = 10_000
-const MAX_MESSAGE = 200
 
 const READING = 'reading the role evaluation, which can take minutes'
 const ELSEWHERE = 'another session is reading it'
@@ -86,13 +85,6 @@ export function parseEval(answer: string): RoleReport {
     }
   }
   return { startMs: need(number(window.start_ms)), endMs: need(number(window.end_ms)), roles: list(doc.roles).map(role) }
-}
-
-/** What ix-board said as it failed: its `error:` line where it leads with one, else its last line. */
-function failureText(stderr: string, exitCode: number): string {
-  const lines = stderr.split('\n').map(l => l.trim()).filter(l => l !== '')
-  const said = (lines[0]?.startsWith('error:') ? lines[0] : lines[lines.length - 1]) ?? `ix-board exited ${exitCode}`
-  return said.length > MAX_MESSAGE ? `${said.slice(0, MAX_MESSAGE - 1)}…` : said
 }
 
 async function runEval($: EngineInterface, config: string): Promise<Answer> {

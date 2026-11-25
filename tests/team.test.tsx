@@ -138,7 +138,7 @@ test('the retro strip draws a mark per class: red for a regressing class, amber 
 })
 
 /** The class names of a drawn health strip, in the order drawn: each follows its mark. */
-const drawnClasses = (lines: string[]) => lines.filter((_, i) => /^[●○]$/.test(lines[i - 1] ?? ''))
+const drawnClasses = (lines: string[]) => lines.slice(0, lines.indexOf('Capacity')).filter((_, i) => /^[●○]$/.test(lines[i - 1] ?? ''))
 
 test('a metric is drawn in the class its class field names, in the order the answer names the classes', async ($, on) => {
   trace("FR-029-AC-10")

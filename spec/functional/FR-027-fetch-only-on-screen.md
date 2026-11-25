@@ -56,7 +56,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | Work pane | selection, focus, `agent-msg work` reports, `agent-msg work events` |
 | Escalations pane | `agent-msg escalations` and `escalation show` |
 | Message pane | `agent-msg log` and `agent-msg who` |
-| Team pane | selection, Prometheus team series, `ix-board retro delta`, `ix-board retro eval` |
+| Team pane | selection, Prometheus team series, `ix-board retro delta`, `ix-board retro eval`, fleet capacity (Prometheus fleet series and `ix-board fleet ledger query`) |
 | Team widget | selection, Prometheus team series, `ix-board retro delta` |
 | Band cells `health`, `local`, `agents`, `spend` | Prometheus machines |
 | Band cells `focus`, `queue` | focus |
@@ -76,7 +76,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 |--------|--------------------------|
 | selection (declaration and choice files), Prometheus machines | `refreshSeconds` |
 | `herdr api snapshot`, `agent-msg doctor` | 60 seconds, or `refreshSeconds` where that is longer |
-| `ix-board agents`, escalations, relay broadcasts, team series, work reports | 60 seconds |
+| `ix-board agents`, escalations, relay broadcasts, team series, work reports, fleet capacity | 60 seconds |
 | work events | 30 seconds |
 | focus | 2 minutes |
 | `ix-board retro delta` | 5 minutes |

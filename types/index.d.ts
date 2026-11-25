@@ -249,6 +249,14 @@ export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
 /** A team's Roles section: its latest evaluation, and what to say about it or its absence. */
 export type RolesView = { team: string; report: RoleReport | null; note: string | null; isError: boolean }
 
+export type CapacityMetric = 'busy' | 'deficit' | 'output'
+
+/** One host's figure: its words, or why it is unavailable; `sampleAt` (ms since the epoch) where its sample says when. */
+export type CapacityCell = { metric: CapacityMetric; state: 'ok' | 'stale' | 'unavailable'; text: string; sampleAt: number | null }
+
+/** The fleet's capacity as read at `at`: each host's figures, and the metrics a whole source gives nothing of. */
+export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; missing: { metric: CapacityMetric; reason: string }[]; at: number }
+
 // ---------------------------------------------------------------- Work pane
 
 /** A pull request of a ticket, as ix-board's focus status lists it. */
@@ -331,6 +339,7 @@ declare module 'claude-code' {
       retroWarn: boolean
       roles: Shaped<RolesView[]>
       rolesOpen: string[]
+      capacity: Shaped<CapacityView | null>
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, WorkLast>>
       workMeta: Shaped<WorkMeta>
