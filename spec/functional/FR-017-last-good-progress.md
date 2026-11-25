@@ -59,6 +59,11 @@ The mod SHALL keep the last successful progress of each selector and show it, ma
 | FR-017-AC-13 | Given a focus-level record from 5 minutes ago and no per-selector record, and a combined call that fails with every single call failing, the pane shows the aggregate marked old with age 5 minutes and the errors, not an empty card. | Test |
 | FR-017-AC-14 | Given a focus-level record for the selectors A and B and a focus whose scope is now A and C, with every call failing, the pane shows no stand-in, and the old record's `seen_ms` is not changed. | Test |
 
+
+## Superseded in 0.7.0
+
+[FR-025](./FR-025-per-project-last-good.md) keys records by project and drops the focus-level record: the `focus:` key, its stand-in rule and acceptance criteria FR-017-AC-12, AC-13 and AC-14 no longer apply, and an initiative is a roll-up of project records. Every other rule of this requirement remains.
+
 ## Dependencies
 
 - **Upstream**: [US-011](../usecase/US-011-focus-survives-bad-data.md)

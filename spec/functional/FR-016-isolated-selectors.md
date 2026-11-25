@@ -76,6 +76,11 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 | FR-016-AC-14 | Given a refresh in which one selector failed, polls during the next 5 minutes make no ix-board call and the pane marks the outcome as earlier, the first poll after 5 minutes asks again, a manual refresh asks at once, and a refresh answered by the combined call is kept for 15 minutes. | Test |
 | FR-016-AC-15 | Given two focuses each with selectors and failing combined calls, no more than 4 single-selector ix-board processes run at once across both. | Test |
 
+
+## Superseded in 0.7.0
+
+[FR-021](./FR-021-per-project-progress.md) supersedes the combined call, the per-selector retry and the summed-from-parts note of this requirement, and [FR-022](./FR-022-initiative-rollup-and-honest-totals.md) supersedes the `F fresh, O old, X failed` aggregate line with `X of Y projects`. A selector is now a project, and an initiative selector expands to its projects first. The source-error classification, the 4-at-once and 5 second bounds, the 30 second budget, the single refresh at a time, the 5 minute hold and the rule that a partial total is never drawn complete remain. Acceptance criteria FR-016-AC-1, AC-2, AC-3, AC-4, AC-5, AC-7 and AC-11 are replaced by those of FR-021 and FR-022.
+
 ## Dependencies
 
 - **Upstream**: [US-011](../usecase/US-011-focus-survives-bad-data.md)
