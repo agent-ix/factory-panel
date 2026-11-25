@@ -13,6 +13,7 @@ import type { Resolved } from './namedfocus'
 import { STALE_MS } from './progress'
 import { setSelectorErrors, sourceClear, sourceFailed, sourceOk } from './sources'
 import { focusDetail } from './showfocus'
+import { track } from './schedule'
 import { focusBanner, focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
 import { getSelection, scopeOf, selectionReady } from './selection'
 import type { Selection } from './selection'
@@ -26,7 +27,6 @@ import type { Options } from './shared'
 const PANE = 'focus'
 const TITLE = 'Focus'
 export const PANE_SPEC = { id: PANE, title: TITLE }
-const POLL_MS = 2 * 60 * 1000
 /** an agent-msg call is given up on after this long. */
 const WORK_TIMEOUT_MS = 5_000
 export const NO_SELECTORS = 'no selectors'
@@ -154,7 +154,8 @@ export function pollFocus($: EngineInterface, manual = false): Promise<void> {
       do {
         again = false
         againManual = false
-        await refreshFocus($, asManual)
+        const how = asManual
+        await track($, 'focus', () => refreshFocus($, how))
         asManual = againManual
       } while (again)
     } finally {
@@ -172,7 +173,8 @@ export function resetFocus(): void {
   againManual = false
 }
 
-async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> {
+/** One refresh of every focus; false when the relay could not be read (ix-board's reads have their own gate). */
+async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolean> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     // The scope needs to know who this session is before it knows which leads to read.
@@ -263,8 +265,10 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> 
     setSelectorErrors(failed)
     const now = await $.clock.now()
     await update($, focusMeta, () => ({ at: now, busy: false, error: null, errors }))
+    return errors.length === 0
   } catch (error) {
     await update($, focusMeta, m => ({ ...m, busy: false, error: errorText(error) }))
+    return false
   }
 }
 
@@ -284,11 +288,9 @@ async function toggleShowDone($: EngineInterface): Promise<void> {
 
 // ---------------------------------------------------------------- pane
 
-/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
+/** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
 export async function startFocus($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'focuses', description: 'Same as /factory focus' })
-  void pollFocus($)
-  $.clock.every(POLL_MS, () => pollFocus($))
 }
 
 export function registerFocus(on: On, _options: Options): void {

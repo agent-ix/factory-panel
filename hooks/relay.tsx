@@ -4,6 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { Announcement, RelayMeta } from '../types'
 import { CARD_BG, ago, errorText, runText } from './shared'
 import type { Options } from './shared'
+import { track } from './schedule'
 
 // The Relay pane: the broadcast channel through `agent-msg`. Escalations have their own pane.
 // A send takes a second press to confirm, and reports what the relay answered.
@@ -11,7 +12,6 @@ import type { Options } from './shared'
 const PANE = 'relay'
 const TITLE = 'Relay'
 export const PANE_SPEC = { id: PANE, title: TITLE }
-const POLL_MS = 60 * 1000
 
 const announcements = atom({ plugin: 'factory-panel', key: 'announcements' } as const, [] as Announcement[], {
   shape: 'announcements-1',
@@ -41,7 +41,12 @@ export function parseAnnouncements(text: string): Announcement[] {
 
 // ---------------------------------------------------------------- polling
 
-export async function pollRelay($: EngineInterface): Promise<void> {
+/** Reads the broadcasts and the leads; false when either failed. */
+export function pollRelay($: EngineInterface): Promise<boolean> {
+  return track($, 'announcements', () => readRelay($))
+}
+
+async function readRelay($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   const failed: string[] = []
   const read1 = (what: string, argv: string[], timeoutMs: number) =>
@@ -63,6 +68,7 @@ export async function pollRelay($: EngineInterface): Promise<void> {
     await update($, relayLeads, () => [...new Set(leads)].sort())
   }
   await update($, relayMeta, m => ({ ...m, at: failed.length === 0 ? now : m.at, error: failed[0] ?? null }))
+  return failed.length === 0
 }
 
 // ---------------------------------------------------------------- actions
@@ -113,11 +119,9 @@ async function cancelArmed($: EngineInterface): Promise<void> {
 
 // ---------------------------------------------------------------- pane
 
-/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
+/** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
 export async function startRelay($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'relay', description: 'Same as /factory relay' })
-  void pollRelay($)
-  $.clock.every(POLL_MS, () => pollRelay($))
 }
 
 export function registerRelay(on: On, _options: Options): void {

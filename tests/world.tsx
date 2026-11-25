@@ -64,6 +64,9 @@ export type World = {
   fetch: { value: ((url: string) => unknown) | undefined }
 }
 
+/** The five panes, each shown and placed. */
+export const SHOWN = ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true }))
+
 export function world(on: On, withClock = false): World {
   resetSelection()
   resetSources()
@@ -75,7 +78,8 @@ export function world(on: On, withClock = false): World {
     w.opens.push({ id: e.id, focus: e.focus, closeOnEscape: e.closeOnEscape, rows: e.rows })
     return { value: { isPlaced: true } }
   })
-  on('ui.panes', () => ({ value: (w.listed.value ?? []) as never }))
+  // Unless a test lists its own, the host shows whichever view a test mounts.
+  on('ui.panes', () => ({ value: (w.listed.value ?? SHOWN) as never }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.close', (_, e) => (w.closes.push(e.id), { value: undefined }))
   on('ui.status', (_, e) => {
@@ -87,6 +91,8 @@ export function world(on: On, withClock = false): World {
   if (!withClock) {
     on('clock.now', () => ({ value: Date.UTC(2026, 10, 24, 12, 0) }))
     on('clock.every', () => ({ value: undefined }))
+    // The short wait between a view's first drawing and its read passes at once.
+    on('clock.after', () => ({ value: undefined }))
   }
   on('store.get', (_, e) => ({ value: w.store.get(e.key) }))
   on('store.set', (_, e) => {

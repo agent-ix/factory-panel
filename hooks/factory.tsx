@@ -16,6 +16,7 @@ import { ACCENT, tempColor, usd } from './ui/glyphs'
 import { widgets } from './ui/widgets'
 import { gatedBoard } from './linear'
 import { sourceFailed, sourceOk } from './sources'
+import { intervalOf, track } from './schedule'
 import { getSelection, selectionReady } from './selection'
 import type { Options, Sample } from './shared'
 
@@ -108,7 +109,12 @@ const QUERIES = {
     'or node_thermal_temperature_celsius{sensor=~"PMU tdie.*"})',
 }
 
-async function pollPrometheus($: EngineInterface, options: Options): Promise<void> {
+/** Reads the machines from Prometheus; false when it failed. */
+export function pollPrometheus($: EngineInterface, options: Options): Promise<boolean> {
+  return track($, 'prometheus', () => readPrometheus($, options))
+}
+
+async function readPrometheus($: EngineInterface, options: Options): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const [lastSeen, leads, panes, spend, cpu, mem, temp] = await Promise.all([
@@ -165,9 +171,11 @@ async function pollPrometheus($: EngineInterface, options: Options): Promise<voi
       nodeMetricsSeen: cpu.length > 0 || mem.length > 0 || temp.length > 0,
     }))
     sourceOk('prometheus', now)
+    return true
   } catch (error) {
     sourceFailed('prometheus', errorText(error))
     await update($, freshness, f => ({ ...f, prometheusError: errorText(error) }))
+    return false
   }
 }
 
@@ -188,7 +196,12 @@ type HerdrSnapshot = {
   }
 }
 
-async function pollHerdr($: EngineInterface): Promise<void> {
+/** Reads the herdr snapshot; false when it failed. */
+export function pollHerdr($: EngineInterface): Promise<boolean> {
+  return track($, 'herdr', () => readHerdr($))
+}
+
+async function readHerdr($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const ran = await $.process.run(['herdr', 'api', 'snapshot'], { timeoutMs: 10_000 })
@@ -209,13 +222,20 @@ async function pollHerdr($: EngineInterface): Promise<void> {
     agents.sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3))
     await update($, herdr, () => ({ running: true, version: snapshot?.version ?? '', agents }))
     await update($, freshness, f => ({ ...f, herdrAt: now, herdrError: null }))
+    return true
   } catch (error) {
     await update($, herdr, h => ({ ...h, running: false }))
     await update($, freshness, f => ({ ...f, herdrError: errorText(error) }))
+    return false
   }
 }
 
-async function pollRelay($: EngineInterface): Promise<void> {
+/** Reads `agent-msg doctor`; false when it failed. A doctor that reports ill health is a read that answered. */
+export function pollDoctor($: EngineInterface): Promise<boolean> {
+  return track($, 'relay', () => readDoctor($))
+}
+
+async function readDoctor($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const ran = await $.process.run(['agent-msg', 'doctor', '--json'], { timeoutMs: 30_000 })
@@ -246,8 +266,10 @@ async function pollRelay($: EngineInterface): Promise<void> {
       checks: checks.map(c => ({ ...c, message: c.message.slice(0, 160) })),
     }))
     await update($, freshness, f => ({ ...f, relayAt: now, relayError: null }))
+    return true
   } catch (error) {
     await update($, freshness, f => ({ ...f, relayError: errorText(error) }))
+    return false
   }
 }
 
@@ -275,10 +297,15 @@ const boardTeams = (options: Options): string[] => {
   return picked.length > 0 ? picked : options.teams
 }
 
-export async function pollBoard($: EngineInterface, options: Options): Promise<void> {
+/** Reads the agents of the teams in scope; false when ix-board failed. */
+export function pollBoard($: EngineInterface, options: Options): Promise<boolean> {
+  return track($, 'board', () => readBoardState($, options))
+}
+
+async function readBoardState($: EngineInterface, options: Options): Promise<boolean> {
   await selectionReady()
   const teams = boardTeams(options)
-  if (teams.length === 0) return
+  if (teams.length === 0) return true
   await update($, freshness, f => ({ ...f, boardBusy: true }))
   try {
     const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams))
@@ -290,6 +317,7 @@ export async function pollBoard($: EngineInterface, options: Options): Promise<v
         : (read.error ?? (notes.length > 0 ? notes.join(' · ').slice(0, 200) : null))
     await update($, board, b => ({ teams, agents: read.data?.agents ?? b.agents, error }))
     await update($, freshness, f => ({ ...f, boardAt: read.at }))
+    return read.error === null
   } finally {
     await update($, freshness, f => ({ ...f, boardBusy: false }))
   }
@@ -390,30 +418,30 @@ const staleness = (f: Freshness, now: number): number | null => {
   return ats.length === 0 ? null : now - Math.min(...ats)
 }
 
+/** True while no value is older than three of its own read intervals. */
+const isCurrent = (f: Freshness, now: number): boolean =>
+  ([['prometheus', f.prometheusAt], ['herdr', f.herdrAt], ['relay', f.relayAt]] as const).every(
+    ([id, at]) => at === null || now - at < intervalOf(id) * 3,
+  )
+
 // ---------------------------------------------------------------- register
 
+/** The Factory view's `r`: reads its three sources now, whenever each was last read. */
 export async function refreshAll($: EngineInterface, options: Options): Promise<void> {
-  await Promise.all([pollPrometheus($, options), pollHerdr($), pollRelay($)])
+  await Promise.all([pollPrometheus($, options), pollHerdr($), pollDoctor($)])
 }
 
 async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {
   await update($, detail, d => (d === which ? 'none' : which))
 }
 
-/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
-export async function startFactory($: EngineInterface, options: Options): Promise<void> {
+/** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
+export async function startFactory($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({
     name: 'factory',
     description: 'Open more detail, and choose what the band shows. /factory help says how',
     argumentHint: 'help | focus | escalations | relay | team | use | teams | hosts | show | reset',
   })
-
-  void refreshAll($, options)
-  void pollBoard($, options)
-  $.clock.every(options.refreshSeconds * 1000, () => refreshAll($, options))
-  // The gate holds each ix-board read to once per BOARD_INTERVAL_MS across sessions; this only asks.
-  $.clock.every(60 * 1000, () => pollBoard($, options))
-
 }
 
 export function registerFactory(on: On, options: Options): void {
@@ -447,7 +475,7 @@ export function registerFactory(on: On, options: Options): void {
     // A shortened Prometheus error keeps its full text for the open detail.
     const promFull = f.prometheusError !== null && shortError('prometheus', f.prometheusError) !== f.prometheusError ? f.prometheusError : null
     const stale = staleness(f, now)
-    const isFresh = stale !== null && stale < options.refreshSeconds * 3000 && errors.length === 0
+    const isFresh = stale !== null && isCurrent(f, now) && errors.length === 0
     const statusColor = (status: string) =>
       status === 'working' ? 'claude' : status === 'idle' ? 'warning' : 'inactive'
     const statusMark = (status: string) =>

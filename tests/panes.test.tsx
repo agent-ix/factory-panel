@@ -123,6 +123,9 @@ const TEAM_RANGE = JSON.stringify({
 })
 const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', result: [] } })
 
+const shownViews = (placed: ReadonlyMap<string, boolean> = new Map()) =>
+  ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: placed.get(id) ?? true }))
+
 /** Stands in for the engine and the host: every command and fetch the mod makes is answered here. */
 function engine(
   on: Parameters<TestBody>[1],
@@ -136,7 +139,8 @@ function engine(
     opened.set(e.id, result.isPlaced)
     return { value: result }
   })
-  on('ui.panes', () => ({ value: options.panes?.() ?? [...opened].map(([id, isPlaced]) => ({ id, title: id, isPlaced })) }))
+  // Unless a test says otherwise the host shows whichever view a test mounts.
+  on('ui.panes', () => ({ value: (options.panes?.() ?? shownViews(opened)) as never }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', (_, e) => {
     options.status?.(e.text)
@@ -146,6 +150,8 @@ function engine(
   on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('clock.now', () => ({ value: Date.UTC(2026, 10, 21, 10, 0) }))
   on('clock.every', () => ({ value: undefined }))
+  // The short wait between a view's first drawing and its read passes at once.
+  on('clock.after', () => ({ value: undefined }))
   const files = options.files ?? new Map<string, string>()
   on('fs.read', (_, e) => {
     const text = files.get(e.path)
@@ -806,7 +812,8 @@ test('the Team pane draws each tile’s six-hour series as braille dots on the t
 test('a failing gate file or home lookup never leaves the board busy and keeps the fetched agents', { options: { teams: 'ENG' } }, async ($, on) => {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: shownViews() as never }))
+  on('clock.after', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))

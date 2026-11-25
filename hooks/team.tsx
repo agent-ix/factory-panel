@@ -5,6 +5,7 @@ import type { TeamMeta, TeamMetric, TeamView } from '../types'
 import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
 import { ACCENT, dots } from './ui/glyphs'
 import type { Options } from './shared'
+import { track } from './schedule'
 
 // The Team pane: coder velocity and quality per team, from the same ix_team_* series as
 // Grafana's "Team flow and effort" dashboard, each tile with six hours of history.
@@ -12,7 +13,6 @@ import type { Options } from './shared'
 const PANE = 'team'
 const TITLE = 'Team'
 export const PANE_SPEC = { id: PANE, title: TITLE }
-const POLL_MS = 60 * 1000
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
@@ -37,7 +37,12 @@ const SPECS: Spec[] = [
   { key: 'agents', label: 'Executing agents', unit: 'count', better: 'up', query: 'sum by (team_id) (ix_team_executing_agents)' },
 ]
 
-export async function pollTeam($: EngineInterface, options: Options): Promise<void> {
+/** Reads the team series from Prometheus; false when it failed. */
+export function pollTeam($: EngineInterface, options: Options): Promise<boolean> {
+  return track($, 'team', () => readTeam($, options))
+}
+
+async function readTeam($: EngineInterface, options: Options): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const results = await Promise.all(
@@ -68,8 +73,10 @@ export async function pollTeam($: EngineInterface, options: Options): Promise<vo
       .sort((a, b) => a.team.localeCompare(b.team))
     await update($, teams, () => views)
     await update($, teamMeta, () => ({ at: now, error: null }))
+    return true
   } catch (error) {
     await update($, teamMeta, m => ({ ...m, error: errorText(error) }))
+    return false
   }
 }
 
@@ -92,11 +99,9 @@ const trendInk = (m: TeamMetric): string => {
   return rising === (m.better === 'up') ? INK.calm : INK.warning
 }
 
-/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
-export async function startTeam($: EngineInterface, options: Options): Promise<void> {
+/** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
+export async function startTeam($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'team', description: 'Same as /factory team' })
-  void pollTeam($, options)
-  $.clock.every(POLL_MS, () => pollTeam($, options))
 }
 
 export function registerTeam(on: On, options: Options): void {

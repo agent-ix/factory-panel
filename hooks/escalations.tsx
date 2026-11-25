@@ -4,6 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { Escalation, EscalationFilter, EscalationStatus, RelayMeta } from '../types'
 import { CARD_BG, CARD_BG_OPEN, ago, errorText, runJson, runText } from './shared'
 import type { Options } from './shared'
+import { track } from './schedule'
 import { ACCENT, DOING } from './ui/glyphs'
 
 // The Escalations pane: the operator's inbox of escalations from the leads, through `agent-msg`.
@@ -14,7 +15,6 @@ import { ACCENT, DOING } from './ui/glyphs'
 const PANE = 'escalations'
 const TITLE = 'Escalations'
 export const PANE_SPEC = { id: PANE, title: TITLE }
-const POLL_MS = 60 * 1000
 /** Rows drawn at once; bulk actions still cover the rest. */
 const MAX_ROWS = 50
 
@@ -140,7 +140,12 @@ function viewOf(all: readonly Escalation[], hidden: readonly string[], filter: E
 
 // ---------------------------------------------------------------- polling
 
-export async function pollEscalations($: EngineInterface): Promise<void> {
+/** Reads the escalations; false when the list could not be read. */
+export function pollEscalations($: EngineInterface): Promise<boolean> {
+  return track($, 'escalations', () => readEscalations($))
+}
+
+async function readEscalations($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   const started = ++tick
   try {
@@ -170,8 +175,10 @@ export async function pollEscalations($: EngineInterface): Promise<void> {
     for (const [id, at] of markedAt) if (at < started && merged.some(x => x.id === id && x.status === 'resolved')) markedAt.delete(id)
     await settleHidden($, merged)
     await update($, escalationMeta, m => ({ ...m, at: now, error: null }))
+    return true
   } catch (error) {
     await update($, escalationMeta, m => ({ ...m, error: errorText(error) }))
+    return false
   }
 }
 
@@ -552,12 +559,10 @@ function filedAgo(filed: string, now: number): string {
   return ago(at.getTime(), now)
 }
 
-/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
+/** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
 export async function startEscalations($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({ name: 'escalations', description: 'Same as /factory escalations' })
   await loadHidden($)
-  void pollEscalations($)
-  $.clock.every(POLL_MS, () => pollEscalations($))
 }
 
 export function registerEscalations(on: On, _options: Options): void {
