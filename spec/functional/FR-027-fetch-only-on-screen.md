@@ -9,6 +9,8 @@ relationships:
     type: implements
   - target: "ix://agent-ix/factory-panel/FR-009"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-025"
+    type: traces_to
   - target: "ix://agent-ix/factory-panel/NFR-004"
     type: traces_to
 ---
@@ -65,7 +67,7 @@ The mod SHALL read a source only while something on screen draws its data.
 - A source that fails, or answers more slowly than its limit, SHALL be next read after twice its interval, doubling with each further failure to at most 5 minutes, or its interval where that is longer, and SHALL return to its interval after a read that answers in time. The limits are 2.5 seconds for Prometheus, 5 seconds for herdr, escalations and relay broadcasts, and 10 seconds for `agent-msg doctor`.
 - While `agent-msg whoami` has not said who the session is, the mod SHALL ask it again with the same doubling, from `refreshSeconds` to 5 minutes; a command SHALL ask at once.
 - A changed focus or teams value SHALL make the focus and `ix-board agents` reads due at the next drawing.
-- The Linear-backed reads of `ix-board` stay held by their own gate ([FR-016](./FR-016-isolated-selectors.md)); this requirement only decides when the mod asks.
+- The Linear-backed reads of `ix-board` stay held by their own 30 minute gate ([FR-025](./FR-025-per-project-last-good.md)); this requirement only decides when the mod asks.
 - The mod SHALL raise no toast or notification from a read.
 
 ## Constraints
@@ -98,4 +100,4 @@ The mod SHALL read a source only while something on screen draws its data.
 ## Dependencies
 
 - **Upstream**: [US-001](../usecase/US-001-glance.md), [US-002](../usecase/US-002-open-more.md)
-- **See also**: [FR-004](FR-004-detail-view.md), [FR-009](FR-009-band-cells.md), [FR-016](FR-016-isolated-selectors.md), [NFR-004](../non-functional/NFR-004-selection-never-blocks.md)
+- **See also**: [FR-004](FR-004-detail-view.md), [FR-009](FR-009-band-cells.md), [FR-016](FR-016-isolated-selectors.md), [FR-025](FR-025-per-project-last-good.md), [NFR-004](../non-functional/NFR-004-selection-never-blocks.md)
