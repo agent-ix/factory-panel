@@ -40,10 +40,13 @@ const focusView = (address: string, summary: string, over: Partial<FocusView> = 
   title: null,
   via: null,
   notes: [],
+  selectors: [],
+  tickets: [],
+  isUnreadable: false,
   ...over,
 })
 const machine = (name: string) => ({ name, lastSeenSecs: 5, leads: 1, panesWorking: 1, panesIdle: 0, panesDone: 0, cpuPct: 10, memPct: 10, tempC: null, spend24hUsd: 3 })
-const scope = (over: Partial<Scope> = {}): Scope => ({ hosts: 'local', focus: 'own', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected', ...over })
+const scope = (over: Partial<Scope> = {}): Scope => ({ hosts: 'local', focus: 'all', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected', ...over })
 
 /** A world whose own lead (draco:QSL:code) has a focus and a lane, so every fallback cell has something to say. */
 function fullWorld(w: World): void {
@@ -374,11 +377,11 @@ test('a user choice of modules beats a declaration of other modules', async () =
 test('a user choice of modules and a declared focus scope show the user modules at the declared scope', async () => {
   trace("FR-012-AC-2")
   const w = world(() => undefined as never)
-  feature(w, { modules: ['relay'], focus: 'team' })
+  feature(w, { modules: ['relay'], focus: 'Release Train' })
   choice(w, { modules: ['queue'] })
   const sel = await refresh(w)
   expect(sel.modules).toEqual({ value: ['queue'], source: 'user' })
-  expect(sel.focus).toEqual({ value: 'team', source: 'declaration' })
+  expect(sel.focus).toEqual({ value: 'Release Train', source: 'declaration' })
 })
 
 test('a declaration naming teams ENG shows lanes for ENG although the session is QSL', async ($, on) => {
@@ -434,18 +437,19 @@ test('a user choice of teams or hosts beats a declaration naming other values', 
 
 const leads = [focusView('host1:QSL:code', 'QSL layer 4'), focusView('host2:ENG:code', 'Payments v2'), focusView('host3:SWM:code', 'Release train two')]
 
-test('focus own shows only the entry of the session team', () => {
+test('with the default teams only the entry of the session team is shown', () => {
   trace("FR-013-AC-1")
   const own = scopeFocuses(leads, scope())
   expect(own.shown.map(f => f.address)).toEqual(['host1:QSL:code'])
 })
 
-test('focus team groups the lead entries under each listed team', async ($, on) => {
+test('several selected teams group the lead entries under each, and all teams shows every entry', async ($, on) => {
   trace("FR-013-AC-2")
-  expect(scopeFocuses(leads, scope({ focus: 'team', teams: ['QSL', 'ENG'] })).shown.map(f => f.address)).toEqual(['host1:QSL:code', 'host2:ENG:code'])
+  expect(scopeFocuses(leads, scope({ teams: ['ENG', 'QSL'] })).shown.map(f => f.address)).toEqual(['host2:ENG:code', 'host1:QSL:code'])
+  expect(scopeFocuses(leads, scope({ teams: [] })).shown).toHaveLength(3)
   const w = world(on)
   for (const f of leads) w.leads.set(f.address, report(f.address, f.summary))
-  feature(w, { focus: 'team', teams: ['QSL', 'ENG'] })
+  feature(w, { teams: ['QSL', 'ENG'] })
   await startSession($)
   await settle()
   const ui = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'Pane', requestId: 'focus', props: { title: 'Focus', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never })
@@ -457,19 +461,22 @@ test('focus team groups the lead entries under each listed team', async ($, on) 
 
 test('a focus name equal to one summary ignoring case shows exactly that focus', () => {
   trace("FR-013-AC-4")
-  const r = scopeFocuses([...leads, focusView('host4:OPS:code', 'Payments v2 follow-up')], scope({ focus: 'PAYMENTS V2' }))
+  const all = [...leads, focusView('host4:OPS:code', 'Payments v2 follow-up')]
+  const r = scopeFocuses(all, scope({ focus: 'PAYMENTS V2', teams: [] }))
   expect(r.shown.map(f => f.address)).toEqual(['host2:ENG:code'])
   expect(r.note).toBeNull()
+  // A name never widens the teams.
+  expect(scopeFocuses(all, scope({ focus: 'PAYMENTS V2' })).shown).toEqual([])
 })
 
 test('a focus name contained in two summaries and equal to neither shows both and says two matched', () => {
   trace("FR-013-AC-5")
-  const r = scopeFocuses(leads, scope({ focus: 'two' }))
+  const r = scopeFocuses(leads, scope({ focus: 'two', teams: [] }))
   expect(r.shown).toHaveLength(1)
-  const two = scopeFocuses([...leads, focusView('host4:OPS:code', 'Layer two')], scope({ focus: 'two' }))
+  const two = scopeFocuses([...leads, focusView('host4:OPS:code', 'Layer two')], scope({ focus: 'two', teams: [] }))
   expect(two.shown.map(f => f.address)).toEqual(['host3:SWM:code', 'host4:OPS:code'])
   expect(two.note).toBe('2 focuses matched "two"')
-  expect(scopeNotes({ ...snapshotOf(), focuses: [...leads, focusView('host4:OPS:code', 'Layer two')], scope: scope({ focus: 'two' }) })).toContain('2 focuses matched "two"')
+  expect(scopeNotes({ ...snapshotOf(), focuses: [...leads, focusView('host4:OPS:code', 'Layer two')], scope: scope({ focus: 'two', teams: [] }) })).toContain('2 focuses matched "two"')
 })
 
 test('a focus name that matches no summary shows no focus and says nothing matched', () => {
@@ -481,12 +488,26 @@ test('a focus name that matches no summary shows no focus and says nothing match
   expect(scopeNotes({ ...snapshotOf(), focuses: leads, scope: scope({ focus: 'zzz' }) })).toContain('no focus matches "zzz"')
 })
 
-test('the focus value team wins over a focus summary that contains team', () => {
-  trace("FR-013-AC-7")
-  const withTeam = [...leads, focusView('host4:OPS:code', 'The team report')]
-  const r = scopeFocuses(withTeam, scope({ focus: 'Team', teams: ['QSL'] }))
-  expect(r.shown.map(f => f.address)).toEqual(['host1:QSL:code'])
-  expect(r.note).toBeNull()
+test('a focus of own or team, stored or declared, is all, and teams naming all is every team', async () => {
+  trace("FR-013-AC-7", "FR-013-AC-11")
+  for (const stored of ['own', 'Team', 'ALL']) {
+    const w = world(() => undefined as never)
+    choice(w, { focus: stored, teams: ['QSL', 'All'] })
+    const sel = await refresh(w)
+    expect(sel.focus).toEqual({ value: 'all', source: 'user' })
+    expect(sel.teams).toEqual({ value: [], source: 'user' })
+  }
+})
+
+test('/factory teams all and /factory focus all clear each choice and leave the other', async () => {
+  trace("FR-014-AC-19")
+  const w = world(() => undefined as never)
+  await run(w, 'focus Beta')
+  await run(w, 'teams QSL,ENG')
+  expect(await run(w, 'teams all')).toMatch(/teams +every team +\[user\]/)
+  expect(written(w, 'choices')).toEqual({ focus: 'Beta', teams: ['all'] })
+  expect(await run(w, 'focus own')).toMatch(/focus +all +\[user\]/)
+  expect(written(w, 'choices')).toEqual({ focus: 'all', teams: ['all'] })
 })
 
 test('when whoami fails with no teams selection everything shows and the band says it could not tell who the session is', async ($, on) => {
@@ -538,12 +559,12 @@ test('/factory use replaces the modules, a later use replaces them again, and a 
 test('focus, teams and hosts each change the named scope and no other', async () => {
   trace("FR-014-AC-2")
   const w = world(() => undefined as never)
-  await run(w, 'focus team')
-  expect(written(w, 'choices')).toEqual({ focus: 'team' })
+  await run(w, 'focus Release Train')
+  expect(written(w, 'choices')).toEqual({ focus: 'Release Train' })
   await run(w, 'teams QSL')
-  expect(written(w, 'choices')).toEqual({ focus: 'team', teams: ['QSL'] })
+  expect(written(w, 'choices')).toEqual({ focus: 'Release Train', teams: ['QSL'] })
   await run(w, 'hosts all')
-  expect(written(w, 'choices')).toEqual({ focus: 'team', teams: ['QSL'], hosts: 'all' })
+  expect(written(w, 'choices')).toEqual({ focus: 'Release Train', teams: ['QSL'], hosts: 'all' })
 })
 
 test('/factory focus with a name that has spaces sets the whole name', async () => {
@@ -620,7 +641,7 @@ test('/factory show prints each feature with its value and where it came from', 
   const text = await run(w, 'show')
   expect(text).toMatch(/modules +queue +\[user\]/)
   expect(text).toMatch(/hosts +all +\[declaration\]/)
-  expect(text).toMatch(/focus +own +\[default\]/)
+  expect(text).toMatch(/focus +all +\[default\]/)
   expect(text).toMatch(/teams +OPS +\[user\]/)
 })
 
@@ -637,7 +658,7 @@ test('/factory reset returns each feature to its declaration or default and show
   trace("FR-014-AC-9")
   const w = world(() => undefined as never)
   feature(w, { hosts: 'all' })
-  choice(w, { modules: ['queue'], hosts: 'local', focus: 'team' })
+  choice(w, { modules: ['queue'], hosts: 'local', focus: 'Beta' })
   expect(await run(w, 'show')).toMatch(/hosts +local +\[user\]/)
   const reset = await run(w, 'reset')
   expect(reset).toMatch(/hosts +all +\[declaration\]/)
@@ -668,7 +689,7 @@ test('choices made for one session do not change the band of another', async ($,
 test('the help lists use, focus, teams, hosts, show and reset, each with an example', () => {
   trace("FR-014-AC-11")
   const text = helpText(false)
-  for (const example of ['/factory use queue,lanes', '/factory focus team', '/factory focus Release Train', '/factory teams QSL,ENG', '/factory hosts all', '/factory show', '/factory reset']) expect(text).toContain(example)
+  for (const example of ['/factory use queue,lanes', '/factory focus Release Train', '/factory teams QSL,ENG', '/factory hosts all', '/factory show', '/factory reset']) expect(text).toContain(example)
 })
 
 test('the plugin registers /factory and the four aliases and no other command', async ($, on) => {
@@ -807,7 +828,7 @@ test('a declaration that changes the focus scope re-reads the leads at the next 
   await w.clock!.advance(1000)
   const focusText = async () => (await band.find({ key: 'focus' }))?.text
   expect(await focusText()).not.toMatch(/\+1$/)
-  feature(w, { focus: 'team', teams: ['QSL', 'ENG'] })
+  feature(w, { teams: ['QSL', 'ENG'] })
   await w.clock!.advance(15_000)
   await w.clock!.advance(1000)
   expect(await focusText()).toMatch(/\+1$/)

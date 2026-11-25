@@ -44,8 +44,8 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 ### Selected teams
 
 - The selected teams SHALL be the same for the tiles, the retro health, the role evaluations, the widget and the band's team cell.
-- Where the teams are chosen, by the user's teams choice or else a session declaration ([FR-012](./FR-012-selection-precedence.md)), the selected teams SHALL be those, whatever the focus is: `own`, `team` or a name.
-- Where no teams are chosen, the selected teams SHALL be the session's own team, for the focus `own`, `team` and a named focus alike; the teams of a named focus's definition SHALL NOT select any.
+- Where the teams are chosen, by the user's teams choice or else a session declaration ([FR-012](./FR-012-selection-precedence.md)), the selected teams SHALL be those, whatever the focus is: `all` or a name. A `teams` choice of `all` selects no team in particular.
+- Where no teams are chosen, the selected teams SHALL be the session's own team, for the focus `all` and a named focus alike; the teams of a named focus's definition SHALL NOT select any.
 - Where no teams are chosen and `agent-msg whoami` fails, no team is selected.
 - The leads the Work and Focus views read follow the focus, not this rule.
 - A team with a key that is not among the selected teams SHALL NOT be drawn. The selected teams SHALL be drawn in the order of the selection.
@@ -134,7 +134,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-33 | A selected team with no series is named, with why an exporter id with no key cannot be told apart. | Test |
 | FR-029-AC-34 | The widget and the band team cell read the selected teams' series, the widget a lower bound where one of them has none. Where no selected team has any, the widget says the closures are unknown and which keys no series carries, and the band cell reads the keyless ids by their id. | Test |
 | FR-029-AC-35 | With a stage coverage of 0 and no age above zero the oldest age reads `—`; with a stage coverage below 1 and an age it reads `≥`; with every stage covered it reads exactly. | Test |
-| FR-029-AC-36 | A teams choice or declaration selects the Team view's teams under the focus `own`, `team` and a name; with none chosen each of those selects the session's own team. | Test |
+| FR-029-AC-36 | A teams choice or declaration selects the Team view's teams under the focus `all` and a name; with none chosen each of those selects the session's own team. | Test |
 | FR-029-AC-37 | A tile and a daily row with no value say why: no series published, no current sample, or an age not measured. | Test |
 | FR-029-AC-25 | Against the factory's Prometheus the Team view shows the values and days Prometheus answers. | Demonstration |
 

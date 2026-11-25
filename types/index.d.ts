@@ -161,13 +161,19 @@ export type FocusView = {
   via: 'definition' | 'lead' | 'summary' | null
   /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, earlier outcome. */
   notes: string[]
+  /** What the focus is made of: a definition's members, or a lead's reported scope. */
+  selectors: { kind: 'initiative' | 'project' | 'milestone' | 'ticket'; ref: string; project?: string; label?: string }[]
+  /** The tickets the lead's own focus names. */
+  tickets: string[]
+  /** True for a definition whose members cannot be read. */
+  isUnreadable: boolean
 }
 
 /** A source's error, shown on the pane and in `/factory show`. */
 export type SourceError = { source: string; text: string }
 
-/** `scope` is the focus and teams the last finished read was made for. */
-export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string }
+/** `scope` is the focus and teams the last finished read was made for, `heldFor` those the focuses held were found for. */
+export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string; heldFor?: string }
 
 // ---------------------------------------------------------------- Escalations and Relay panes
 
@@ -271,7 +277,17 @@ export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; m
 export type WorkPr = { url: string; repo: string; number: number | null; status: string; draft: boolean }
 
 /** A ticket of the focus status: started, or closed lately. `prs` is null where ix-board is too old to say. */
-export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null; /** when the answer naming it was read */ at?: number | null }
+export type WorkIssue = {
+  identifier: string
+  title: string
+  state: string
+  prs: WorkPr[] | null
+  /** when the answer naming it was read */
+  at?: number | null
+  /** the ids of its project and milestone, of an `ix-board issues` answer: null in none, absent where not said */
+  project?: string | null
+  milestone?: string | null
+}
 
 /** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
 export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
@@ -285,7 +301,7 @@ export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; i
 export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[] }
 
 /** The gated `ix-board issues` answer: the tickets asked for, those answered, and when. */
-export type TicketsAnswer = { at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
+export type TicketsAnswer = { /** the TICKETS_SHAPE of the build that read it */ shape?: number; at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
 
 export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
 
@@ -303,7 +319,10 @@ export type WorkLeadFocus = { summary: string; tickets: string[]; at: number | n
  * `listed` counts the leads that read asked, `silent` names those that answered with no report, and `pending` counts
  * those another session was reading.
  */
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number }
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number; /** the teams of every lead `agent-msg who` lists */ teams: string[] }
+
+/** The choice open under the Work tab's header, the focus names it offers and why it failed. */
+export type WorkPicker = { open: 'teams' | 'focus' | null; names: string[]; error: string | null }
 
 /** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
 export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }
@@ -358,6 +377,7 @@ declare module 'claude-code' {
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, number>>
       workMeta: Shaped<WorkMeta>
+      workPicker: Shaped<WorkPicker>
       workFeed: Shaped<WorkFeed>
       workBoards: Shaped<Record<string, WorkBoard>>
       workTickets: Shaped<WorkBoard | null>

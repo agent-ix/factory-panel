@@ -32,7 +32,8 @@ The mod SHALL read a source only while something on screen draws its data.
 - The mod SHALL redraw its sites at least every 15 seconds, or every `refreshSeconds` where that is shorter, so that a view that stays on screen keeps being read.
 - The mod SHALL start no read from a timer or from session start other than through a drawing, except the identity lookup of an interactive session at start.
 - A session that is not interactive SHALL run no identity lookup and no read.
-- A typed `/factory show` or choice command reads the focus source once, through the same 30 minute gate, although no view draws it ([FR-014](./FR-014-user-choice.md)).
+- A typed `/factory show` or choice command, and a choice made in the Work view's header, reads the focus source once, through the same 30 minute gate, although no view draws it ([FR-014](./FR-014-user-choice.md)).
+- Opening the Work view's focus choice reads `agent-msg focuses list` once.
 
 ### A terminal nobody can see
 

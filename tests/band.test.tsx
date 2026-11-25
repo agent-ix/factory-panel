@@ -61,12 +61,15 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
     title: null,
     via: null,
     notes: [],
+    selectors: [],
+    tickets: [],
+    isUnreadable: false,
     },
   ],
   escalations: [],
   hiddenEscalations: [],
   localMachine: 'draco',
-  scope: { hosts: 'all', focus: 'own', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' },
+  scope: { hosts: 'all', focus: 'all', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' },
   teamViews: [],
   focusesLoaded: true,
   boardLoaded: true,
@@ -113,7 +116,7 @@ test('local shows this machine only', () => {
 test('focus draws one bar for the whole focus, and +N when there are more', () => {
   expect(text(buildCells(['focus'], snapshot()), 'focus')).toBe('QSL layer 4 ████░░░░ 50%'.replace('████░░░░', '████░░░░'))
   const two = snapshot()
-  const more = snapshot({ focuses: [...two.focuses, { ...two.focuses[0]!, address: 'hub:ENG:arch', summary: 'Payments' }], scope: { hosts: 'all', focus: 'team', teams: ['QSL', 'ENG'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' } })
+  const more = snapshot({ focuses: [...two.focuses, { ...two.focuses[0]!, address: 'hub:ENG:arch', summary: 'Payments' }], scope: { hosts: 'all', focus: 'all', teams: ['QSL', 'ENG'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' } })
   expect(text(buildCells(['focus'], more), 'focus')).toMatch(/ \+1$/)
   expect(text(buildCells(['focus'], snapshot({ scope: { hosts: 'all', focus: 'layer 4', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' } })), 'focus')).toMatch(/50%/)
 })

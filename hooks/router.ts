@@ -1,11 +1,10 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
-import { focusBannerNow, focusDetailNow, readForCommand } from './focus'
+import { choiceApplied, focusBannerNow, focusDetailNow, readForCommand } from './focus'
 import { readRecords } from './progress'
 import { SOURCE_NAMES, selectorErrorList, sourceState } from './sources'
-import { markStale } from './schedule'
-import { clearChoice, getSelection, normalizeModules, refreshSelection, writeChoice } from './selection'
+import { ALL, clearChoice, focusValue, getSelection, normalizeModules, refreshSelection, writeChoice } from './selection'
 import type { Feature, Selection } from './selection'
 import { defaultView, isViewId, showView } from './views'
 import type { ViewId } from './views'
@@ -21,20 +20,20 @@ const VALID_MODULES = MODULE_IDS.join(', ')
 
 /** The skill snippet: the declaration an agent writes for its own session. */
 export const snippetFor = (sel: Selection): string => {
-  const example = { modules: ['queue', 'lanes'], hosts: 'local', focus: 'own', teams: sel.identity.status === 'detected' ? [sel.identity.team] : ['QSL'] }
+  const example = { modules: ['queue', 'lanes'], hosts: 'local', focus: 'all', teams: sel.identity.status === 'detected' ? [sel.identity.team] : ['QSL'] }
   return [
     'Skill snippet (the agent writes this file for its own session; writing it again replaces the earlier choice):',
     `  Write ~/.ix/factory-panel/features/${sel.key}.json with this content:`,
     `  ${JSON.stringify(example)}`,
-    `  Keys, all optional: modules (${VALID_MODULES}), hosts (${VALID_HOSTS}), focus (own, team or a focus name), teams (a list of team names).`,
+    `  Keys, all optional: modules (${VALID_MODULES}), hosts (${VALID_HOSTS}), focus (all or a focus name), teams (a list of team names, or ["all"]).`,
   ].join('\n')
 }
 
 const CHOICE_HELP = [
   '  Choose:      what to display (your choice beats a skill\'s, which beats the automatic view)',
   '    /factory use queue,lanes     the modules, in this order',
-  '    /factory focus team          own | team | a focus name, e.g. /factory focus Release Train',
-  '    /factory teams QSL,ENG       the teams whose leads and lanes show',
+  '    /factory focus Release Train the tickets of one focus, within the teams; all clears it',
+  '    /factory teams QSL,ENG       the teams whose leads and lanes show; all is every team',
   '    /factory hosts all           all | local machines',
   '    /factory show                what is shown and where each value came from',
   '    /factory reset               back to the skill\'s selection or the automatic view',
@@ -108,15 +107,9 @@ const list = (text: string): string[] => text.split(/[\s,]+/).filter(Boolean)
 /** A typed command is on screen: one gated read of the focuses it is about to print. Where none can be made, what is held is printed. */
 const readFocuses = ($: EngineInterface, changed: boolean): Promise<void> => readForCommand($, changed).catch(() => undefined)
 
-/**
- * After a choice: re-read the selection, read the focuses for it, and say what is now shown. The lanes the scope reads
- * are due at the next drawing of a view that shows them.
- */
+/** After a choice: re-read what it selects and say what is now shown. */
 async function applied($: EngineInterface, lead: string): Promise<string> {
-  const sel = await refreshSelection($)
-  markStale('focus', 'board', 'work', 'tickets', 'retro', 'roles')
-  await readFocuses($, true)
-  $.ui.invalidate('ui.render')
+  const sel = await choiceApplied($)
   return `${lead}\n${await showText($, sel)}`
 }
 
@@ -139,12 +132,12 @@ async function choose($: EngineInterface, command: string, rest: string): Promis
       return failed(() => writeChoice($, c => ({ ...c, modules })), `Showing ${modules.join(', ')}.`)
     }
     case 'focus': {
-      const focus = rest.trim()
-      const value = ['own', 'team'].includes(focus.toLowerCase()) ? focus.toLowerCase() : focus
+      const value = focusValue(rest)
       return failed(() => writeChoice($, c => ({ ...c, focus: value })), `Focus: ${value}.`)
     }
     case 'teams': {
-      const teams = list(rest)
+      const named = list(rest)
+      const teams = named.some(t => t.toLowerCase() === ALL) ? [ALL] : named
       if (teams.length === 0) return '/factory teams needs team names, for example /factory teams QSL,ENG.'
       return failed(() => writeChoice($, c => ({ ...c, teams })), `Teams: ${teams.join(', ')}.`)
     }

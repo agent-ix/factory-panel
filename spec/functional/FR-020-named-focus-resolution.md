@@ -16,7 +16,7 @@ relationships:
 
 ## Description
 
-The mod SHALL resolve the name of `/factory focus <name>` against the keywords, the named focus definitions, the lead addresses and the lead summaries, in that order, as a read-only lookup.
+The mod SHALL resolve the name of `/factory focus <name>` against the keyword `all`, the named focus definitions, the lead addresses and the lead summaries, in that order, as a read-only lookup.
 
 ## Context
 
@@ -24,7 +24,8 @@ The mod SHALL resolve the name of `/factory focus <name>` against the keywords, 
 
 ## Behavior
 
-- The order SHALL be: the keywords `own` and `team`; a named focus definition; a lead address; a lead focus summary.
+- The order SHALL be: the keyword `all`, which `own` and `team` also mean; a named focus definition; a lead address; a lead focus summary.
+- The lead address and lead summary steps SHALL match only leads of the selected teams ([FR-013](./FR-013-scoping.md)).
 - The mod SHALL stop at the first step that matches.
 - The mod SHALL run the resolution on every progress refresh while the focus choice is a name, with `list` for the lookup and `show` only for the matched definition.
 - The mod SHALL run `agent-msg focuses list` and `agent-msg focuses show` with a timeout of 5 seconds each.
@@ -48,13 +49,14 @@ The mod SHALL resolve the name of `/factory focus <name>` against the keywords, 
 - Where two active definitions share the name, the mod SHALL show both.
 - Where two active definitions share the name, the mod SHALL say how many matched.
 - The Focus pane SHALL show the focus of the matched lead or the matched definition.
+- The Work view's focus choice SHALL offer `all`, the names of the active definitions the session's team can choose, and the focus chosen, reading them with `agent-msg focuses list` when it is opened.
 - The mod SHALL NOT create, change, archive or take ownership of a named focus.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-020-AC-1 | Given a definition named `Own` and `/factory focus own`, the own-focus scope applies and the definition is not used. | Test |
+| FR-020-AC-1 | Given a definition named `Own` and a stored focus of `own`, the focus is `all` and the definition is not used. | Test |
 | FR-020-AC-2 | Given an active definition named `Beta` for the session's team, `/factory focus BETA` and `/factory focus <its focus_id in upper case>` each show progress over that definition's members. | Test |
 | FR-020-AC-3 | Given definitions named `Beta` for teams QSL and ENG and the session `host1:QSL:code`, `/factory focus Beta` uses only the QSL definition, and given whoami fails it shows both and says two matched. | Test |
 | FR-020-AC-4 | Given `list --json` returns `{"definitions":[]}` and a lead summary equal to the name, the lead summary focus is shown. | Test |

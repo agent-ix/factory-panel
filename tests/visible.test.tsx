@@ -409,7 +409,7 @@ test('a changed teams choice reads the work reports again at the next drawing', 
   await pass(w, 2 * SEC)
   const cell = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('')
   expect(await cell()).toMatch(/1 ticket /)
-  w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify({ modules: ['work'], focus: 'team', teams: ['ENG'] }))
+  w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify({ modules: ['work'], teams: ['QSL', 'ENG'] }))
   // The cell's own interval of 60 seconds is not up.
   await pass(w, 35 * SEC)
   expect(await cell()).toMatch(/2 tickets /)

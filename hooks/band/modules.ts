@@ -1,7 +1,8 @@
 import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead } from '../../types'
 import { agoShort } from '../shared'
 import { cellBar, loadColor, tempColor, usd } from '../ui/glyphs'
-import { workCounts } from '../work'
+import { ALL_TICKETS, focusCounts } from '../work'
+import type { FocusFilter } from '../work'
 
 // The band's modules. Each is a pure function of a snapshot of what the panes already collected,
 // so a test seeds a snapshot and reads the cell back. A module with nothing to say returns null
@@ -21,14 +22,12 @@ export type Cell = { id: ModuleId; pane: string; parts: Part[]; alert?: string }
 /** What the selection narrows the band to. `teams` empty means every team. */
 export type Scope = {
   hosts: 'all' | 'local'
-  /** `own`, `team` or a focus name. */
+  /** `all` or a focus name. */
   focus: string
   teams: readonly string[]
   /** The session's own team; null when the relay did not say. */
   ownTeam: string | null
-  /** The session's own address; null when the relay did not say. */
-  ownAddress?: string | null
-  /** True when the user or a declaration named the teams, so one that matches nothing is worth saying. */
+  /** True when the user or a declaration chose the teams, so one that matches nothing is worth saying. */
   teamsSelected: boolean
   identity: 'pending' | 'detected' | 'unknown'
 }
@@ -59,7 +58,7 @@ export type Snapshot = {
 }
 
 /** What the Work view holds: the leads and how their last read went (see WorkMeta), and the focus statuses. */
-export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; boards: readonly WorkBoard[] }
+export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; boards: readonly WorkBoard[]; /** what the focus narrows the tickets to */ filter?: FocusFilter }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
 const DOWN_AFTER_SECS = 120
@@ -79,16 +78,11 @@ const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCas
 
 export const teamOf = (address: string): string => address.split(':')[1] ?? ''
 
-/** The teams whose lead entries may be read for this scope; null reads every lead (a focus name searches all). */
-export const focusTeams = (scope: Scope): string[] | null => {
-  const want = scope.focus.trim().toLowerCase()
-  if (scope.identity === 'detected' && scope.ownTeam !== null) {
-    if (want === 'own') return [scope.ownTeam]
-    if (want === 'team') return [scope.ownTeam, ...scope.teams.filter(t => !same(t, scope.ownTeam!))]
-    return null
-  }
-  return scope.teams.length > 0 ? [...scope.teams] : null
-}
+/** The teams whose leads are read and listed; null is every team. */
+export const focusTeams = (scope: Scope): string[] | null => (scope.teams.length > 0 ? [...scope.teams] : null)
+
+/** Whether the focus value is a name, which narrows what the teams show. */
+export const isNamedFocus = (focus: string): boolean => focus.trim() !== '' && focus.trim().toLowerCase() !== 'all'
 
 /** The focus entries this scope shows, in order, and a note when a name matched none or several. */
 export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: FocusView[]; note: string | null } => {
@@ -96,8 +90,8 @@ export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: 
   const lower = want.toLowerCase()
   const teams = focusTeams(scope)
   const inTeams = (f: FocusView) => teams === null || teams.some(t => same(t, teamOf(f.address)))
-  if (lower === 'own' || lower === 'team') {
-    // Grouped under each team, in the order the teams are listed.
+  if (!isNamedFocus(want)) {
+    // Together under each team, in the order the teams are listed.
     const shown = all.filter(inTeams)
     if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
     return { shown, note: null }
@@ -105,27 +99,28 @@ export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: 
   // A focus name the poll already resolved (a definition, a lead address or a summary) is shown as it found it.
   const resolved = all.filter(f => f.via !== null && f.via !== undefined)
   if (resolved.length > 0) return { shown: resolved, note: resolved.length > 1 ? `${resolved.length} focuses matched "${want}"` : null }
-  // A focus name: a session that could not be identified is first held to the teams it was given.
-  const pool = scope.identity === 'detected' ? [...all] : all.filter(inTeams)
+  // A focus name never widens the teams.
+  const pool = all.filter(inTeams)
   const exact = pool.filter(f => same(f.summary, want))
   const shown = exact.length > 0 ? exact : pool.filter(f => f.summary.toLowerCase().includes(lower))
   const note = shown.length === 0 ? `no focus matches "${want}"` : shown.length > 1 ? `${shown.length} focuses matched "${want}"` : null
   return { shown, note }
 }
 
+/** The start of the line that says no lead of the teams has reported a focus. */
+export const NO_FOCUS_BY = 'no focus reported by'
+
 /** The one line that says why these focuses are shown; null while the session is still being identified. */
 export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
-  // The session's own entry: an entry at the session's own address.
-  const ownEntryExists = scope.ownAddress != null && focuses.some(f => f.via == null && same(f.address, scope.ownAddress!))
   const name = scope.focus.trim()
-  const lower = name.toLowerCase()
-  const keyword = lower === 'own' || lower === 'team'
-  if (!keyword && name !== '') return `your choice: ${name}`
-  if (scope.identity === 'unknown') return 'could not tell who this session is, showing every focus'
-  if (scope.identity === 'pending') return null
-  if (lower === 'own' && ownEntryExists) return 'own focus'
-  if (lower === 'team') return 'team focuses'
-  return 'no focus reported, showing the whole team'
+  if (isNamedFocus(name)) return `your choice: ${name}`
+  const teams = focusTeams(scope)
+  if (teams === null) {
+    if (scope.identity === 'unknown') return 'could not tell who this session is, showing every focus'
+    return scope.identity === 'pending' ? null : 'focuses of every team'
+  }
+  const has = scopeFocuses(focuses, scope).shown.length > 0
+  return `${has ? 'focuses of' : NO_FOCUS_BY} ${teams.join(', ')}`
 }
 
 const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope).shown
@@ -269,22 +264,27 @@ const relay = (s: Snapshot): Cell | null => {
 const work = (s: Snapshot): Cell | null => {
   const w = s.work
   if (w.at === null && w.relayError === null) return null // not asked yet
+  const filter = w.filter ?? ALL_TICKETS
   const known = w.leads.filter(l => l.readAt !== null)
   const unread = w.leads.length - known.length
   const old = known.filter(l => l.error !== null).length
   // With no report in hand, now or from an earlier read, nothing is known of the tickets.
   const isKnown = known.length > 0 || (unread === 0 && w.relayError === null)
-  const c = workCounts(w.leads, w.boards, s.now, isKnown, w.listed)
+  const c = focusCounts(w.leads, w.boards, s.now, isKnown, w.listed, filter)
   const dash = (n: number | null, isAtLeast = false) => (n === null ? '—' : `${isAtLeast ? '≥' : ''}${n}`)
   // Each dash of the cell says why, a reason two share once.
   const why = [...new Set([c.prsWhy, c.mergedWhy].filter(r => r !== null))]
   // A lead that was never read, reports nothing or reports old work may hold more tickets and PRs than are counted.
   const isShort = c.reporting < c.listed
   const of = c.tickets !== null && isShort ? ` (${c.reporting}/${c.listed} leads)` : ''
+  // A ticket whose project is unknown may be in the focus, so what is counted is a lower bound.
+  const isPlaced = c.unplaced === 0
   const parts: Part[] = [
-    { text: `${dash(c.tickets, isShort)} ${c.tickets === 1 ? 'ticket' : 'tickets'}`, tone: c.tickets === null ? 'inactive' : undefined },
+    { text: `${dash(c.tickets, isShort || !isPlaced)} ${c.tickets === 1 ? 'ticket' : 'tickets'}`, tone: c.tickets === null ? 'inactive' : undefined },
+    { text: c.tickets === null || isPlaced ? '' : ` +${c.unplaced} unknown project`, dim: true },
+    { text: filter.kind === 'unread' ? ' · focus not read' : '', tone: 'warning' },
     { text: `${of}${c.oldTickets > 0 ? ` · +${c.oldTickets} old` : ''}`, dim: true },
-    { text: ` · ${dash(c.prsOpen, isShort || c.prsPartial)} ${c.prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
+    { text: ` · ${dash(c.prsOpen, isShort || c.prsPartial || !isPlaced)} ${c.prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
     { text: ` · ${dash(c.merged, c.mergedPartial)} merged 24h`, dim: true },
     { text: c.oldAt === null ? '' : ` · ix-board ${agoShort(c.oldAt, s.now)} old`, tone: 'warning' },
     { text: why.length === 0 ? '' : ` (${why.join('; ')})`, dim: true },
@@ -298,11 +298,8 @@ const work = (s: Snapshot): Cell | null => {
   return { id: 'work', pane: 'work', parts, alert }
 }
 
-/**
- * The teams the Team view and the team cell read: those the user or a declaration chose, whatever the focus; where none
- * is chosen, those of the session's focus, else its own team. None: every team.
- */
-export const selectedTeams = (scope: Scope): string[] => (scope.teamsSelected ? [...scope.teams] : (focusTeams(scope) ?? [...scope.teams]))
+/** The teams the Team view and the team cell read: those selected, whatever the focus. None: every team. */
+export const selectedTeams = (scope: Scope): string[] => [...scope.teams]
 
 /**
  * The team views a selection reads: `shown`, those keyed with a selected team, in the selection's order; `unmatched`,

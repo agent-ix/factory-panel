@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Teams and focus are two settings. Teams say which leads are listed (your own by default, one or more, or `all`); the focus, one named focus or `all` (the default), narrows their tickets and never widens the teams. Both are at the top of the Work tab, clickable, and `/factory teams` and `/factory focus` set the same values.
+- Under a focus the Work tab lists the tickets of the focus, folds the leads with nothing in it, keeps tickets of unknown project behind a line of their own and keeps unread leads listed; Recent, the widget and the band's work cell follow.
+- The `own` and `team` focus values are gone: a stored or declared one means `all`. The Focus tab and band pick lead focus entries by the teams, narrowed by the focus name, and their banner reads `focuses of <teams>`.
 - A Work tab ticket row reads id, title, badges, age. The role and status words (`coder running`, `reviewer done`, `focus`) and the Linear state are gone, the ages stand in one column and the title takes the freed width. A ticket with no title because Linear has no record of it, or it could not be read, still says so.
 
 ## 0.9.0

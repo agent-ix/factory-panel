@@ -5,7 +5,7 @@ import { trace } from './trace'
 import { focusBanner } from '../hooks/band/modules'
 import { matchLeads } from '../hooks/namedfocus'
 import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, onScreen, pageLines, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
-import { defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
+import { FP, defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
 import type { World } from './world'
 
 // Tests for the banner that says why these focuses are shown and the resolution of the name of
@@ -38,33 +38,34 @@ test('a name that matches a lead summary is the first line of the pane and of /f
   expect((await shown($)).split('\n')).toContain('your choice: Release Train')
 })
 
-test('the default scope with a focus entry of the session says own focus', async ($, on) => {
+test('the default scope says the focuses of the session team', async ($, on) => {
   trace("FR-019-AC-2")
   const w = world(on, true)
   lead(w, null)
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('own focus')
-  expect((await shown($)).split('\n')).toContain('own focus')
+  expect((await shown($)).split('\n')).toContain('focuses of QSL')
 })
 
-test('focus team says team focuses', async ($, on) => {
-  trace("FR-019-AC-3")
+test('several chosen teams are named, and all teams says every team', async ($, on) => {
+  trace("FR-019-AC-3", "FR-019-AC-10")
   const w = world(on, true)
   lead(w, null)
-  choose(w, 'team')
+  w.files.set(`${FP}/choices/draco_QSL_code.json`, JSON.stringify({ teams: ['QSL', 'ENG'] }))
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('team focuses')
+  expect((await shown($)).split('\n')).toContain('focuses of QSL, ENG')
+  await $.command.run({ command: 'factory', args: 'teams all' } as never)
+  expect((await shown($)).split('\n')).toContain('focuses of every team')
 })
 
-test('an identified session whose team has no focus entry says no focus reported, showing the whole team', async ($, on) => {
+test('an identified session whose team has no focus entry says no focus reported by that team', async ($, on) => {
   trace("FR-019-AC-4")
   const w = world(on, true)
   w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2'))
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('no focus reported, showing the whole team')
+  expect((await shown($)).split('\n')).toContain('no focus reported by QSL')
 })
 
-test('whoami failing with focus own says it could not tell who the session is', async ($, on) => {
+test('whoami failing with no choice says it could not tell who the session is', async ($, on) => {
   trace("FR-019-AC-5")
   const w = world(on, true)
   w.whoami.value = undefined
@@ -105,7 +106,7 @@ test('whoami failing with a name says your choice', async ($, on) => {
   expect((await shown($)).split('\n')).toContain('your choice: Beta')
 })
 
-test('whoami failing with focus team says it could not tell who the session is', async ($, on) => {
+test('whoami failing with a stored team focus says it could not tell who the session is', async ($, on) => {
   trace("FR-019-AC-9")
   const w = world(on, true)
   w.whoami.value = undefined
@@ -116,13 +117,13 @@ test('whoami failing with focus team says it could not tell who the session is',
   // The order is the spec's: the name first, then the identity, then own, team and the rest.
   const detected = { hosts: 'local', teams: [], ownTeam: 'QSL', teamsSelected: false } as const
   expect(focusBanner({ ...detected, focus: 'Beta', identity: 'unknown' }, [])).toBe('your choice: Beta')
-  expect(focusBanner({ ...detected, focus: 'own', identity: 'unknown' }, [])).toBe('could not tell who this session is, showing every focus')
-  expect(focusBanner({ ...detected, focus: 'own', identity: 'detected' }, [])).toBe('no focus reported, showing the whole team')
+  expect(focusBanner({ ...detected, focus: 'all', identity: 'unknown' }, [])).toBe('could not tell who this session is, showing every focus')
+  expect(focusBanner({ ...detected, focus: 'all', identity: 'detected' }, [])).toBe('focuses of every team')
 })
 
 // ---------------------------------------------------------------- FR-020 named focus resolution
 
-test('the keywords own and team win over a definition named Own and the definition is not used', async ($, on) => {
+test('a stored own means all and wins over a definition named Own, which is not used', async ($, on) => {
   trace("FR-020-AC-1")
   const w = world(on, true)
   lead(w, null)
@@ -131,7 +132,7 @@ test('the keywords own and team win over a definition named Own and the definiti
   await started($, w)
   expect(focusCalls(w)).toEqual([])
   const lines = await pageLines($)
-  expect((await shown($)).split('\n')).toContain('own focus')
+  expect((await shown($)).split('\n')).toContain('focuses of QSL')
   expect(lines).not.toContain('Own')
 })
 
@@ -443,11 +444,10 @@ test('a name that is the address of a lead whose work show fails shows that erro
   shows(lines, /^no focus matches "draco:QSL:plan"$/)
 })
 
-test('the banner calls the focus own only when the session’s own address has an entry', async () => {
+test('the banner says no focus is reported only where no lead of the teams has one', async () => {
   trace("FR-019-AC-2", "FR-019-AC-4")
   const entry = (address: string) => ({ address, via: null }) as never
-  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', ownAddress: 'draco:QSL:code', teamsSelected: false, focus: 'own', identity: 'detected' } as const
-  expect(focusBanner(scope, [entry('draco:ENG:code')])).toBe('no focus reported, showing the whole team')
-  expect(focusBanner(scope, [entry('draco:QSL:arch')])).toBe('no focus reported, showing the whole team')
-  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('DRACO:qsl:code')])).toBe('own focus')
+  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, focus: 'all', identity: 'detected' } as const
+  expect(focusBanner(scope, [entry('draco:ENG:code')])).toBe('no focus reported by QSL')
+  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('DRACO:qsl:code')])).toBe('focuses of QSL')
 })

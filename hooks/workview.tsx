@@ -1,18 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { TicketsAnswer, WorkAgent, WorkFeed, WorkLead, WorkMeta } from '../types'
+import type { TicketsAnswer, WorkAgent, WorkFeed, WorkLead, WorkMeta, WorkPicker } from '../types'
 import { CALL_TIMEOUT_MS, limited } from './board'
-import { focusWasRead } from './focus'
+import { choiceApplied, focusHeld, focusWasRead } from './focus'
 import { gatedBoard } from './linear'
 import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson } from './shared'
 import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
 import type { LeadRead, WorkReport } from './leads'
-import { focusTeams, statusOf, teamOf } from './band/modules'
+import { focusTeams, isNamedFocus, statusOf, teamOf } from './band/modules'
+import { definitionNames } from './namedfocus'
 import { markStale, track } from './schedule'
-import { getSelection, scopeOf, selectionReady } from './selection'
+import { ALL, getSelection, scopeKeyOf, scopeOf, selectionReady, writeChoice } from './selection'
+import type { Picked } from './selection'
 import { sourceClear, sourceFailed, sourceOk } from './sources'
-import { TICKET_ID, activeIds, boardNotes, composeWork, foldFeed, focusBoards, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf, workCounts } from './work'
+import { TICKET_ID, activeIds, boardNotes, composeWork, focusCounts, focusEvents, focusFilter, foldFeed, focusBoards, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf } from './work'
 import type { RecentEntry, WorkTicket } from './work'
 import type { Options } from './shared'
 
@@ -28,6 +30,8 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const EVENT_LIMIT = 1000
 const EVENT_PAGES = 5
 const RECENT_ROWS = 10
+/** The version of what a tickets answer holds; a cached answer of another is read again. */
+const TICKETS_SHAPE = 2
 /** The tickets no focus names are read again within the gate's interval only where there are new ones, and this long after. */
 const TICKETS_AGAIN_MS = 5 * 60 * 1000
 /** At most this many tickets are asked for at once. */
@@ -35,13 +39,15 @@ const TICKETS_MAX = 100
 
 const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
 const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, number>, { shape: 'workLast-2' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0 } as WorkMeta, { shape: 'workMeta-5' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0, teams: [] } as WorkMeta, { shape: 'workMeta-6' })
 const EMPTY_FEED: WorkFeed = { events: [], phase: {}, error: null }
 const workFeed = atom({ plugin: 'factory-panel', key: 'workFeed' } as const, EMPTY_FEED, { shape: 'workFeed-1' })
 export const workCollapsed = atom({ plugin: 'factory-panel', key: 'workCollapsed' } as const, [] as string[])
 const workAll = atom({ plugin: 'factory-panel', key: 'workAll' } as const, false)
 const workWarnings = atom({ plugin: 'factory-panel', key: 'workWarnings' } as const, false)
-/** The folded rows that are open: `silent`, and `finished-<address>`. */
+/** The choice open under the header, and the focus names it offers. */
+const workPicker = atom({ plugin: 'factory-panel', key: 'workPicker' } as const, { open: null, names: [], error: null } as WorkPicker, { shape: 'workPicker-1' })
+/** The folded rows that are open: `silent`, `outside`, `finished-<address>` and `unplaced-<address>`. */
 const workOpen = atom({ plugin: 'factory-panel', key: 'workOpen' } as const, [] as string[])
 
 // ---------------------------------------------------------------- data
@@ -143,10 +149,13 @@ async function runIssues($: EngineInterface, ids: string[]): Promise<TicketsAnsw
   if (ran.exitCode !== 0 && !(ran.exitCode === 3 && ran.stderr.trim() === '')) throw new Error(failureText(ran.stderr, ran.exitCode))
   if (ran.isStdoutTruncated) throw new Error('the answer was cut at 4 MiB')
   const answer: unknown = JSON.parse(ran.stdout)
-  return { at: await $.clock.now(), asked: ids, issues: issuesOf(answer), unknown: unknownOf(answer) }
+  return { shape: TICKETS_SHAPE, at: await $.clock.now(), asked: ids, issues: issuesOf(answer), unknown: unknownOf(answer) }
 }
 
-/** Reads the titles, states and PRs of the reported tickets no focus status names; false when that failed. */
+/**
+ * Reads the titles, states and PRs of the reported tickets no focus status names; false when that failed. Under a named
+ * focus every reported ticket is read, for the project that places it.
+ */
 export function pollTickets($: EngineInterface): Promise<boolean> {
   return track($, 'tickets', async () => {
     const [meta, leads, boards, isFocusRead] = await Promise.all([read($, workMeta), read($, workLeads), focusBoards($), focusWasRead($)])
@@ -155,7 +164,8 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
       markStale('tickets')
       return true
     }
-    const named = new Set(boards.flatMap(b => b.issues.map(i => i.identifier)))
+    const isFiltered = isNamedFocus(getSelection().focus.value)
+    const named = new Set(isFiltered ? [] : boards.flatMap(b => b.issues.map(i => i.identifier)))
     const askable = (ids: string[]) => ids.filter(id => TICKET_ID.test(id) && !named.has(id)).sort()
     // Where there are more than can be asked for, those in hand come first.
     const inHand = askable(activeIds(leads))
@@ -168,8 +178,8 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
     const teams = focusTeams(scopeOf(getSelection()))
     const now = await $.clock.now()
     // One answer for the sessions that read the same teams, in the gate every session shares.
-    const got = await gatedBoard($, `tickets:${teams === null ? '*' : teams.join(',').toLowerCase()}`, () => limited(() => runIssues($, wanted)), {
-      outdated: (answer: TicketsAnswer) => now - answer.at >= TICKETS_AGAIN_MS && wanted.some(id => !answer.asked.includes(id)),
+    const got = await gatedBoard($, `tickets:${teams === null ? '*' : teams.join(',').toLowerCase()}${isFiltered ? ':focus' : ''}`, () => limited(() => runIssues($, wanted)), {
+      outdated: (answer: TicketsAnswer) => answer.shape !== TICKETS_SHAPE || (now - answer.at >= TICKETS_AGAIN_MS && wanted.some(id => !answer.asked.includes(id))),
     })
     const error = got.backoffUntil !== null ? pausedText(got.backoffUntil, now) : got.error
     const data = got.data
@@ -208,8 +218,11 @@ async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean
     await selectionReady()
     const teams = focusTeams(scopeOf(getSelection()))
     let addresses: string[]
+    let known: string[]
     try {
-      addresses = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
+      const all = await listLeads($)
+      known = [...new Set(all.map(teamOf).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+      addresses = all.filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
     } catch (error) {
       sourceFailed('agent-msg work', errorText(error))
       // With no list nothing is read: every lead drawn is as it was last read.
@@ -234,7 +247,7 @@ async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean
     const relayError = failure === null ? null : `no lead could be read, ${failed[0]}`
     const silent = [...reads.values()].filter(r => r.error === null && r.report === null).map(r => r.address).sort((a, b) => a.localeCompare(b))
     const pending = [...reads.values()].filter(r => r.pending === true && r.report === undefined).length
-    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size, silent, pending }))
+    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size, silent, pending, teams: known }))
     const reported = ticketIds(await read($, workLeads)).sort().join()
     if (reported !== lastTickets) markStale('tickets')
     lastTickets = reported
@@ -290,6 +303,52 @@ export function ticketLine(t: WorkTicket, now: number, width: number): string {
   return `${left}${text.padEnd(room)}${right}`.trimEnd()
 }
 
+// ---------------------------------------------------------------- the two choices
+
+/** The longest a choice's value reads in the header. */
+const VALUE_CELLS = 18
+
+/** `QSL, quoin`, `all`, or how many where the names do not fit. */
+const teamsText = (teams: readonly string[]): string => {
+  if (teams.length === 0) return ALL
+  const names = teams.join(', ')
+  return names.length <= VALUE_CELLS ? names : `${teams.length} teams`
+}
+
+/** The teams after one is pressed: added or removed; every team where all or none is left. */
+export function toggledTeams(selected: readonly string[], team: string): string[] {
+  if (team === ALL) return [ALL]
+  const isOn = selected.some(t => t.toLowerCase() === team.toLowerCase())
+  const next = isOn ? selected.filter(t => t.toLowerCase() !== team.toLowerCase()) : [...selected, team]
+  return next.length === 0 ? [ALL] : next
+}
+
+/** Saves a choice to the user's choices file, as `/factory teams` and `/factory focus` do, and reads for it. */
+async function choose($: EngineInterface, change: (c: Picked) => Picked): Promise<void> {
+  try {
+    await writeChoice($, change)
+  } catch (error) {
+    await update($, workPicker, p => ({ ...p, error: `Could not save your choice: ${errorText(error)}` }))
+    return
+  }
+  await choiceApplied($)
+}
+
+/** Opens a choice under the header, or closes it; the focus names are read as it opens. */
+async function openPicker($: EngineInterface, which: 'teams' | 'focus'): Promise<void> {
+  const held = await read($, workPicker)
+  const open = held.open === which ? null : which
+  await update($, workPicker, p => ({ ...p, open, error: null }))
+  if (open !== 'focus') return
+  try {
+    const sel = getSelection()
+    const names = await definitionNames($, sel.identity.status === 'detected' ? sel.identity.team : null)
+    await update($, workPicker, p => ({ ...p, names, error: null }))
+  } catch (error) {
+    await update($, workPicker, p => ({ ...p, error: `agent-msg focuses: ${errorText(error)}` }))
+  }
+}
+
 async function toggleCollapsed($: EngineInterface, address: string): Promise<void> {
   await update($, workCollapsed, list => (list.includes(address) ? list.filter(a => a !== address) : [...list, address]))
 }
@@ -299,10 +358,18 @@ export function registerWork(on: On, _options: Options): void {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
     const [leads, last, meta, feed, boards, collapsed, opened, all, warnOpen, isFocusRead] = await Promise.all([read($, workLeads), read($, workLast), read($, workMeta), read($, workFeed), readBoards($), read($, workCollapsed), read($, workOpen), read($, workAll), read($, workWarnings), focusWasRead($)])
+    const [picker, focusNow] = await Promise.all([read($, workPicker), focusHeld($)])
+    const sel = getSelection()
+    const scope = scopeOf(sel)
+    const filter = focusFilter(scope.focus, scopeKeyOf(scope), focusNow.meta, focusNow.focuses, boards)
     const now = await $.clock.now()
     const width = Math.max(30, e.props.bodyColumns ?? 60)
-    const view = composeWork(leads, last, boards)
-    const counts = workCounts(leads, boards, now, true, meta.listed)
+    const view = composeWork(leads, last, boards, filter)
+    const counts = focusCounts(leads, boards, now, true, meta.listed, filter)
+    // Under a focus, a lead that was read and holds nothing of it, nor anything that may be of it, is folded away.
+    const isOutside = (l: (typeof view.leads)[number]) => filter.kind === 'named' && l.readAt !== null && l.error === null && l.tickets.length + l.finished.length + l.unplaced.length === 0
+    const shown = view.leads.filter(l => !isOutside(l))
+    const outside = view.leads.filter(isOutside)
     const notes = boardNotes(boards, now)
     const oldAge = notes.oldAt === null ? null : agoShort(notes.oldAt, now)
     // A lead whose report was never read may hold more tickets; one drawn as last read, or whose report is old, is marked old on its row.
@@ -315,11 +382,11 @@ export function registerWork(on: On, _options: Options): void {
 
     if (e.props.placement === 'widget') {
       const isShort = counts.reporting < counts.listed
-      const tickets = `${isShort ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}${counts.oldTickets > 0 ? ` · +${counts.oldTickets} old` : ''}`
+      const tickets = `${isShort || counts.unplaced > 0 ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}${counts.unplaced > 0 ? ` · +${counts.unplaced} unknown project` : ''}${counts.oldTickets > 0 ? ` · +${counts.oldTickets} old` : ''}`
       const merged = counts.merged === null ? ` · merged 24h unavailable (${counts.mergedWhy})` : ` · ${counts.mergedPartial ? '≥' : ''}${counts.merged} merged 24h`
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{unknown ?? `${plural(view.leads.length, 'lead')} · ${tickets}${merged}${notRead}${oldAge === null ? '' : ` · ix-board ${oldAge} old`}`}</Text>
+          <Text weight="semibold">{unknown ?? `${plural(shown.length, 'lead')} · ${tickets}${merged}${notRead}${oldAge === null ? '' : ` · ix-board ${oldAge} old`}${filter.kind === 'unread' ? ' · focus not read' : ''}`}</Text>
         </Box>
       )
     }
@@ -342,20 +409,23 @@ export function registerWork(on: On, _options: Options): void {
               <Button key={`toggle-${l.address}`} plain label={isOpen ? '▾' : '▸'} onPress={() => void toggleCollapsed($, l.address)} />
               <Text color={m.color}>{m.mark}</Text>
               <Text wrap="truncate-end">{l.address}</Text>
-              {!isOpen && l.readAt !== null && <Text dimColor>{`(${plural(l.tickets.length, 'ticket')})`}</Text>}
+              {!isOpen && l.readAt !== null && <Text dimColor>{`(${plural(l.tickets.length, 'ticket')}${l.unplaced.length > 0 ? `, ${l.unplaced.length} unknown project` : ''})`}</Text>}
             </Box>
             <Text dimColor size="caption" tabular>{age}</Text>
           </Box>
           {isOpen && l.tickets.map(ticket)}
-          {isOpen && l.readAt !== null && l.tickets.length === 0 && l.finished.length === 0 && <Text dimColor>   no ticket reported</Text>}
-          {isOpen && l.tickets.length === 0 && l.summary !== '' && <Text dimColor wrap="truncate-end">{`   focus: ${l.summary}`}</Text>}
+          {isOpen && l.readAt !== null && l.tickets.length + l.finished.length + l.unplaced.length === 0 && <Text dimColor>{l.outside > 0 ? '   no ticket in this focus' : '   no ticket reported'}</Text>}
+          {isOpen && l.tickets.length + l.unplaced.length === 0 && l.summary !== '' && <Text dimColor wrap="truncate-end">{`   focus: ${l.summary}`}</Text>}
           {isOpen && l.finished.length > 0 && <Box flexDirection="row" paddingLeft={3}>{fold(done, `${l.finished.length} finished`)}</Box>}
           {isOpen && opened.includes(done) && l.finished.map(ticket)}
+          {isOpen && l.unplaced.length > 0 && <Box flexDirection="row" paddingLeft={3}>{fold(`unplaced-${l.address}`, `${plural(l.unplaced.length, 'ticket')} with unknown project`)}</Box>}
+          {isOpen && opened.includes(`unplaced-${l.address}`) && l.unplaced.map(ticket)}
         </Box>
       )
     }
 
-    const rows = recentRows(recentOf(view.activity, feed.events, all, focusTeams(scopeOf(getSelection()))), RECENT_ROWS)
+    const events = focusEvents(feed.events, filter, focusTeams(scope))
+    const rows = recentRows(recentOf(view.activity, events.events, all, focusTeams(scope)), RECENT_ROWS)
     // Why ix-board's part of Recent is not there; the relay's events show without it.
     const focuses = boards.filter(b => b.ticketsOnly !== true)
     const none = focuses.some(b => b.error) ? 'ix-board’s focus status could not be read.' : isFocusRead && focuses.length === 0 ? 'No focus names a project or ticket, so there is no focus status to read merges from.' : 'Waiting for ix-board’s focus status…'
@@ -373,30 +443,70 @@ export function registerWork(on: On, _options: Options): void {
             </Box>
           )
         })}
+        {all && events.unplaced > 0 && <Text dimColor>{`${plural(events.unplaced, 'event')} of tickets with unknown project not listed`}</Text>}
         {missing !== null && <Text dimColor>{missing}</Text>}
         {missing === null && rows.length === 0 && <Text dimColor>{nothing}</Text>}
       </Box>
     )
 
-    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`)]
+    const lookups = isNamedFocus(scope.focus) ? (focusNow.meta.errors ?? []).filter(e => e.source === 'agent-msg focuses').map(e => `${e.source}: ${e.text}`) : []
+    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`), ...lookups]
     const reporting = view.leads.length > 0 || meta.at !== null
+    const filterNotes = filter.kind === 'unread' ? [filter.why] : filter.kind === 'named' ? filter.notes : []
+    const teams = focusTeams(scope) ?? []
+    const isOn = (value: boolean) => (value ? '✓ ' : '  ')
+    const known = [...teams, ...meta.teams].filter((t, i, list) => list.findIndex(o => o.toLowerCase() === t.toLowerCase()) === i).sort((a, b) => a.localeCompare(b))
+    const focus = isNamedFocus(scope.focus) ? scope.focus : ALL
+    const names = [ALL, ...(focus === ALL || picker.names.some(n => n.toLowerCase() === focus.toLowerCase()) ? [] : [focus]), ...picker.names]
+    const pickTeam = (t: string) => () => void choose($, c => ({ ...c, teams: toggledTeams(teams, t) }))
+    const options =
+      picker.open === 'teams' ? (
+        <Box key="teams-picker" flexDirection="column" paddingLeft={2}>
+          <Button key="team-option-all" plain label={`${isOn(teams.length === 0)}all teams`} onPress={pickTeam(ALL)} />
+          {known.map(t => (
+            <Button key={`team-option-${t}`} plain label={`${isOn(teams.some(o => o.toLowerCase() === t.toLowerCase()))}${t}`} onPress={pickTeam(t)} />
+          ))}
+        </Box>
+      ) : picker.open === 'focus' ? (
+        <Box key="focus-picker" flexDirection="column" paddingLeft={2}>
+          {names.map(n => (
+            <Button key={`focus-option-${n}`} plain label={`${isOn(n.toLowerCase() === focus.toLowerCase())}${n}`} onPress={() => void choose($, c => ({ ...c, focus: n })).then(() => update($, workPicker, p => ({ ...p, open: null })))} />
+          ))}
+        </Box>
+      ) : null
 
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text weight="semibold" size="heading">Work</Text>
-            {reporting && <Text dimColor size="caption">{`${plural(view.leads.length, 'lead')}${notRead}`}</Text>}
+            <Button key="teams-choice" plain label={`Teams: ${teamsText(teams)} ▾`} onPress={() => void openPicker($, 'teams')} />
+            <Button key="focus-choice" plain label={`Focus: ${clip(focus, VALUE_CELLS)} ▾`} onPress={() => void openPicker($, 'focus')} />
           </Box>
           <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($), pollTickets($)])} />
         </Box>
+        {(options !== null || picker.error !== null || filterNotes.length > 0 || reporting) && (
+          <Box flexDirection="column">
+            {options}
+            {picker.error !== null && <Text color="warning" size="caption">{picker.error}</Text>}
+            {filterNotes.map((t, i) => <Text key={`filter-${i}`} color="warning" size="caption">{t}</Text>)}
+            {reporting && <Text dimColor size="caption">{`${plural(view.leads.length, 'lead')}${notRead}`}</Text>}
+          </Box>
+        )}
 
         {/* A read that failed says nothing of who has reported. */}
         {view.leads.length === 0 && <Text dimColor>{unknown ?? (meta.busy ? 'Reading the leads’ work reports…' : 'No lead has reported work.')}</Text>}
 
-        {view.leads.length > 0 && (
+        {shown.length > 0 && (
           <Box flexDirection="column" backgroundColor={CARD_BG}>
-            {view.leads.map(leadBlock)}
+            {shown.map(leadBlock)}
+          </Box>
+        )}
+
+        {outside.length > 0 && (
+          <Box flexDirection="column">
+            <Box flexDirection="row">{fold('outside', `${outside.length} ${outside.length === 1 ? 'lead' : 'leads'} with nothing in this focus`)}</Box>
+            {opened.includes('outside') && outside.map(l => <Text key={`outside-${l.address}`} dimColor wrap="truncate-end">{`   ${l.address} · ${l.outside === 0 ? 'no ticket reported' : `${plural(l.outside, 'ticket')} outside the focus`}`}</Text>)}
           </Box>
         )}
 

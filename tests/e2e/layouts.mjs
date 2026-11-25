@@ -92,7 +92,7 @@ class Session {
   }
 }
 
-const BANNER = /(your choice: .+|own focus|team focuses|could not tell who this session is, showing every focus|no focus reported, showing the whole team)/
+const BANNER = /(your choice: .+|focuses of .+|could not tell who this session is, showing every focus|no focus reported by .+)/
 const bandLine = text => text.split('\n').find(l => /^\s*1: \S/.test(l))
 const promptLine = text => text.split('\n').find(l => /^❯/.test(l))
 const popupOpen = (text, view) => new RegExp(`^│ ${view}\\b`, 'm').test(text) && text.includes('╭')
@@ -151,9 +151,9 @@ async function classic() {
     const reason = await s.waitFor(t => /^\s*your choice: Release Train/m.test(t))
     s.capture('2d-show-name')
     check('classic: /factory show says your choice: Release Train', reason !== null, s.capture().slice(-600))
-    s.type('/factory focus own')
+    s.type('/factory focus all')
     s.key('Enter')
-    await s.waitFor(t => /Focus: own/.test(t))
+    await s.waitFor(t => /Focus: all/.test(t))
     await s.waitFor(t => /^\s*1: local/m.test(t), 10000)
 
     // NFR-003-M-1: open takes one typed command.

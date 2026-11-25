@@ -2,11 +2,12 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { FEED_CAP, boardOf, composeWork, eventRole, foldFeed, lastOfEvents, mergeBoards, recentOf } from '../hooks/work'
+import { FEED_CAP, boardOf, composeWork, eventRole, focusFilter, foldFeed, lastOfEvents, mergeBoards, recentOf } from '../hooks/work'
 import { runFactory } from '../hooks/router'
-import { ticketLine } from '../hooks/workview'
+import { ticketLine, toggledTeams } from '../hooks/workview'
+import type { FocusView } from '../types'
 import { VIEW_IDS } from '../hooks/views'
-import { CLASSIC, FP, drawBand, fake$, options, out, report, startSession, world } from './world'
+import { CLASSIC, FP, defRow, drawBand, fake$, listJson, options, out, report, showJson, startSession, world } from './world'
 import type { World } from './world'
 import { ix } from './board-kit'
 
@@ -403,7 +404,7 @@ test('Work follows Focus in the dock and /factory work opens it', async ($, on) 
 // ---------------------------------------------------------------- the model
 
 test('the latest event of each lead and ticket wins, an answer is merged once and activity is newest first', () => {
-  const last: Record<string, { role: string; status: string; at: number }> = {}
+  const last: Record<string, number> = {}
   lastOfEvents(JSON.parse(events([LEAD, 'QSL-1', 'coder', 'running', 10], [LEAD, 'QSL-1', 'reviewer', 'done', 3], [LEAD, 'QSL-1', 'coder', 'running', 8])).events, last)
   expect(last[`${LEAD}\u0000QSL-1`]).toBe(NOW - 3 * MIN)
   const a = boardOf(JSON.parse(rich()))
@@ -801,5 +802,197 @@ test('where no focus names tracker work, Recent says there is no focus status to
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(lines).toContain('No focus names a project or ticket, so there is no focus status to read merges from.')
   expect(lines.join('\n')).not.toMatch(/Waiting for ix-board|Nothing merged/)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- FR-028 the teams and focus choices
+
+const OTHER = 'hub:ENG:code'
+const CHOICES = `${FP}/choices/draco_QSL_code.json`
+const inProject = (identifier: string, project: string | null) => ({ ...single(identifier, 'Specced', []), project_id: project })
+const saidTickets: Record<string, string | null> = { 'QSL-7': 'p1', 'QSL-8': 'p9', 'QSL-10': null }
+
+/**
+ * A world whose lead holds a ticket the focus status lists, one placed in the focus by its project, one of another
+ * project, one in none and one Linear has no record of; the idle lead holds only another project's; an ENG lead holds a
+ * ticket of the focus. The focus `Ledger` is a definition over the project Alpha.
+ */
+async function filtering($: $t, on: Parameters<TestBody>[1], choices: Record<string, unknown> = { focus: 'Ledger' }, arrange: (w: World) => void = () => undefined): Promise<World> {
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: ['QSL-1240', 'QSL-7', 'QSL-8', 'QSL-9', 'QSL-10'].map((id, i) => agent(`a${i}`, id, 'coder', 'running', 1 + i)) })
+  w.leads.set(IDLE, { ...report(IDLE, 'other work', ['running']), agents: [agent('b', 'QSL-8', 'coder', 'running', 3)] })
+  w.leads.set(OTHER, { ...report(OTHER, 'payments', ['running']), agents: [agent('c', 'QSL-1240', 'coder', 'running', 2)] })
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => {
+    const line = argv.join(' ')
+    if (line.startsWith('agent-msg work events')) return out(events([LEAD, 'QSL-7', 'reviewer', 'running', 4], [LEAD, 'QSL-8', 'reviewer', 'running', 3], [LEAD, 'QSL-9', 'reviewer', 'running', 2]))
+    if (line === 'agent-msg focuses list --json') return out(listJson(defRow('foc-1', 'Ledger', 'QSL'), defRow('foc-2', 'Payments', 'QSL'), defRow('foc-3', 'Elsewhere', 'ENG')))
+    if (line === 'agent-msg focuses show foc-1 --json') return out(showJson('Ledger', 'QSL', { projects: ['Alpha'] }))
+    return prior?.(argv, init)
+  }
+  ix(w, {
+    projects: { Alpha: () => out(rich()) },
+    issues: ids => out(JSON.stringify({ complete: false, missing: ids.filter(id => id === 'QSL-9'), issues: ids.filter(id => id !== 'QSL-9').map(id => inProject(id, id in saidTickets ? saidTickets[id]! : 'p1')) })),
+  })
+  w.files.set(CHOICES, JSON.stringify(choices))
+  arrange(w)
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(1000)
+  await w.clock!.advance(MIN)
+  await ui.unmount()
+  return w
+}
+
+const rowsFor = (d: Drawn) => d.lines.filter(l => /^ {3}QSL-/.test(l)).map(l => l.trim().split(' ')[0])
+const button = (d: Drawn, key: string) => d.buttons.find(b => b.key === key)?.label
+
+test('a focus narrows the tickets of the teams’ leads, folds a lead with nothing in it and keeps unknown projects apart', async ($, on) => {
+  trace("FR-028-AC-31", "FR-028-AC-32", "FR-028-AC-33")
+  await filtering($, on)
+  const d = await draw($)
+  // Listed by the focus status, and placed by its project: the two of the focus.
+  expect(rowsFor(d)).toEqual(['QSL-1240', 'QSL-7'])
+  // The ENG lead holds a ticket of the focus, and a focus never widens the teams.
+  expect(d.lines).not.toContain(OTHER)
+  expect(button(d, 'teams-choice')).toBe('Teams: QSL ▾')
+  expect(button(d, 'focus-choice')).toBe('Focus: Ledger ▾')
+  // QSL-9, which Linear has no record of, may be of the focus: counted apart and listed on demand.
+  expect(button(d, `unplaced-${LEAD}`)).toBe('▸ 1 ticket with unknown project')
+  await d.press(`unplaced-${LEAD}`)
+  expect(ticketRow(d, 'QSL-9')).toMatch(/QSL-9 not in Linear /)
+  // The idle lead holds another project's ticket only.
+  expect(button(d, 'outside')).toBe('▸ 1 lead with nothing in this focus')
+  expect(d.lines).not.toContain(IDLE)
+  await d.press('outside')
+  expect(d.lines).toContain(`   ${IDLE} · 1 ticket outside the focus`)
+  await d.unmount()
+})
+
+test('Recent and the widget follow the focus and say what an unknown project leaves out', async ($, on) => {
+  trace("FR-028-AC-34")
+  await filtering($, on)
+  const d = await draw($)
+  await d.press('kinds')
+  const roles = d.lines.filter(l => /review start/.test(l))
+  expect(roles).toHaveLength(1)
+  expect(roles[0]).toContain('QSL-7')
+  expect(d.lines).toContain('1 event of tickets with unknown project not listed')
+  await d.unmount()
+  const widget = await draw($, 'terminal', 'widget')
+  expect(widget.text).toContain('1 lead · ≥2 tickets · +1 unknown project · 2 merged 24h')
+  await widget.unmount()
+})
+
+test('with the focus all every ticket of the teams’ leads is listed and none is set apart', async ($, on) => {
+  trace("FR-028-AC-31")
+  await filtering($, on, {})
+  const d = await draw($)
+  expect(rowsFor(d).sort()).toEqual(['QSL-10', 'QSL-1240', 'QSL-7', 'QSL-8', 'QSL-8', 'QSL-9'])
+  expect(button(d, 'focus-choice')).toBe('Focus: all ▾')
+  expect(button(d, 'outside')).toBeUndefined()
+  expect(d.buttons.filter(b => b.key.startsWith('unplaced-'))).toEqual([])
+  await d.unmount()
+})
+
+test('a lead whose report cannot be read stays listed under a focus', async ($, on) => {
+  trace("FR-028-AC-35")
+  await filtering($, on, { focus: 'Ledger' }, w => {
+    const prior = w.stub.value
+    w.stub.value = (argv, init) => (argv.join(' ') === `agent-msg work --lead ${IDLE} show` ? out('', 1, 'ssh: no route') : prior?.(argv, init))
+  })
+  const d = await draw($)
+  expect(d.lines).toContain(IDLE)
+  expect(d.lines).toContain('not read')
+  expect(button(d, 'outside')).toBeUndefined()
+  await d.unmount()
+})
+
+test('a focus that matches nothing says so and folds every lead that was read', async ($, on) => {
+  trace("FR-028-AC-36")
+  await filtering($, on, { focus: 'Nowhere' })
+  const d = await draw($)
+  expect(d.lines).toContain('no focus matches "Nowhere"')
+  expect(button(d, 'outside')).toBe('▸ 2 leads with nothing in this focus')
+  await d.unmount()
+})
+
+test('until the focus has been read every ticket is shown and the tab says why', async ($, on) => {
+  trace("FR-028-AC-37")
+  await filtering($, on, { focus: 'Ledger' }, w => {
+    const prior = w.stub.value
+    w.stub.value = (argv, init) => (argv.join(' ').startsWith('agent-msg focuses') ? out('', 1, 'redis down') : prior?.(argv, init))
+  })
+  const d = await draw($)
+  expect(d.lines).toContain('focus Ledger is not read yet: every ticket is shown')
+  expect(rowsFor(d)).toContain('QSL-8')
+  await d.unmount()
+})
+
+test('the header chooses teams and focus, and each choice is saved and leaves the other', async ($, on) => {
+  trace("FR-028-AC-38", "FR-014-AC-20")
+  const w = await filtering($, on, {})
+  const saved = () => JSON.parse(w.files.get(CHOICES)!) as unknown
+  const d = await draw($)
+  await d.press('teams-choice')
+  expect(d.buttons.filter(b => b.key.startsWith('team-option-')).map(b => b.label)).toEqual(['  all teams', '  ENG', '✓ QSL'])
+  await d.press('team-option-ENG')
+  expect(saved()).toEqual({ teams: ['QSL', 'ENG'] })
+  expect(button(d, 'teams-choice')).toBe('Teams: QSL, ENG ▾')
+  await d.press('focus-choice')
+  // The definitions of the session's team, as FR-020 resolves them.
+  expect(d.buttons.filter(b => b.key.startsWith('focus-option-')).map(b => b.label)).toEqual(['✓ all', '  Ledger', '  Payments'])
+  await d.press('focus-option-Ledger')
+  expect(saved()).toEqual({ teams: ['QSL', 'ENG'], focus: 'Ledger' })
+  expect(button(d, 'focus-choice')).toBe('Focus: Ledger ▾')
+  expect(d.buttons.filter(b => b.key.startsWith('focus-option-'))).toEqual([])
+  await d.press('teams-choice')
+  await d.press('team-option-all')
+  expect(saved()).toEqual({ teams: ['all'], focus: 'Ledger' })
+  expect(button(d, 'teams-choice')).toBe('Teams: all ▾')
+  await d.unmount()
+})
+
+test('pressing a team adds or removes it, and none left is every team', () => {
+  trace("FR-028-AC-38")
+  expect(toggledTeams(['QSL'], 'ENG')).toEqual(['QSL', 'ENG'])
+  expect(toggledTeams(['QSL', 'ENG'], 'qsl')).toEqual(['ENG'])
+  expect(toggledTeams(['QSL'], 'QSL')).toEqual(['all'])
+  expect(toggledTeams([], 'ENG')).toEqual(['ENG'])
+  expect(toggledTeams(['QSL', 'ENG'], 'all')).toEqual(['all'])
+})
+
+test('a ticket is out of a focus only where all its members are known', () => {
+  trace("FR-028-AC-32")
+  const PID = '00000000-0000-4000-8000-000000000001'
+  const MID = '00000000-0000-4000-8000-000000000002'
+  const view = (selectors: FocusView['selectors'], over: Partial<FocusView> = {}): FocusView => ({ address: 'foc-1', machine: '', kind: '', summary: '', status: 'unknown', scope: { initiatives: 0, projects: 0, tickets: 0 }, focusReportedAt: null, fetchedAt: null, initiatives: [], loose: [], header: null, warnings: [], title: 'F', via: 'definition', notes: [], selectors, tickets: [], isUnreadable: false, ...over })
+  const ticket = (identifier: string, project: string | null | undefined, milestone: string | null = null) => ({ identifier, title: 't', state: '', prs: null, ...(project === undefined ? {} : { project, milestone }) })
+  const singles = { issues: [ticket('A-1', PID), ticket('A-2', 'elsewhere'), ticket('A-3', null), ticket('A-4', undefined), ticket('A-5', 'elsewhere', MID)], activity: null, at: 1, ticketsOnly: true as const }
+  const places = (f: FocusView) => {
+    const filter = focusFilter('F', 'k', { heldFor: 'k' }, [f], [singles])
+    if (filter.kind !== 'named') throw new Error(filter.kind)
+    return ['A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6'].map(filter.place)
+  }
+  expect(places(view([{ kind: 'project', ref: PID }]))).toEqual(['in', 'out', 'out', 'unknown', 'out', 'unknown'])
+  // A project named but never answered has no id: what is not in the others may be in it.
+  expect(places(view([{ kind: 'project', ref: PID }, { kind: 'project', ref: 'Beta' }]))).toEqual(['in', 'unknown', 'out', 'unknown', 'unknown', 'unknown'])
+  // So for an initiative not expanded.
+  expect(places(view([{ kind: 'initiative', ref: 'I' }]))).toEqual(['unknown', 'unknown', 'out', 'unknown', 'unknown', 'unknown'])
+  expect(places(view([{ kind: 'milestone', ref: MID }]))).toEqual(['out', 'out', 'out', 'unknown', 'in', 'unknown'])
+  expect(places(view([{ kind: 'ticket', ref: 'a-6' }]))).toEqual(['out', 'out', 'out', 'out', 'out', 'in'])
+  expect(places(view([], { isUnreadable: true }))).toEqual(['unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown'])
+  // A definition that selects nothing holds nothing; a lead that names no tracker work judges nothing.
+  expect(places(view([]))).toEqual(['out', 'out', 'out', 'out', 'out', 'out'])
+  expect(places(view([], { via: 'summary' }))[0]).toBe('unknown')
+  expect(focusFilter('F', 'k', { heldFor: 'other' }, [view([])], []).kind).toBe('unread')
+  expect(focusFilter('all', 'k', {}, [], []).kind).toBe('all')
+})
+
+test('the band’s work cell follows the focus', async ($, on) => {
+  trace("FR-009-AC-18")
+  await filtering($, on, { focus: 'Ledger', modules: ['work'] })
+  const ui = await drawBand($, CLASSIC)
+  expect((await ui.find({ key: 'work' }))?.text).toMatch(/^≥2 tickets \+1 unknown project/)
   await ui.unmount()
 })

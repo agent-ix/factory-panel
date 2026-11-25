@@ -123,7 +123,7 @@ test('with no view drawn /factory show reads the focuses once, says how old they
   expect(w.ran.filter(l => l === 'agent-msg who' || l.startsWith('ix-board'))).toEqual([])
   const first = await shownText($)
   expect(first).toMatch(/^focus data: read \d+s ago, progress from \d+s ago$/m)
-  expect(first).toMatch(/^own focus$/m)
+  expect(first).toMatch(/^focuses of QSL$/m)
   expect(first).toMatch(/^ {4}Pa: 1\/2 /m)
   expect(statusCalls(w)).toEqual(['--project A'])
   const asked = w.ran.filter(l => l === 'agent-msg who').length
@@ -176,7 +176,7 @@ test('a choice reads the focuses for what it chose before it answers, and says n
   const chosen = ((await $.command.run({ command: 'factory', args: 'focus Nowhere' } as never)) as { text: string }).text
   expect(chosen).toMatch(/^focus data: read \d+s ago/m)
   expect(chosen).toMatch(/^no focus matches "Nowhere"$/m)
-  const back = ((await $.command.run({ command: 'factory', args: 'focus own' } as never)) as { text: string }).text
+  const back = ((await $.command.run({ command: 'factory', args: 'focus all' } as never)) as { text: string }).text
   expect(back).toMatch(/^ {4}Pa: 1\/2 /m)
   // The 30 minute gate holds: neither command asked ix-board again.
   expect(statusCalls(w)).toHaveLength(asked)
@@ -240,7 +240,7 @@ test('the source state of agent-msg focuses and ix-board is cleared when nothing
   expect(await shownText($)).toMatch(/agent-msg focuses: list/)
   // The choice stops being a name, and the lead no longer scopes anything.
   w.leads.set(LEAD, report(LEAD, 'Beta', ['running'], null))
-  await $.command.run({ command: 'factory', args: 'focus own' } as never)
+  await $.command.run({ command: 'factory', args: 'focus all' } as never)
   await w.clock!.advance(2 * MIN + 1000)
   const after = await shownText($)
   expect(after).not.toMatch(/agent-msg focuses/)

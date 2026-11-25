@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLead, WorkPr, WorkRoleEvent } from '../types'
+import type { FocusMeta, FocusView, WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLead, WorkPr, WorkRoleEvent } from '../types'
+import { NOTE_EXCLUSIONS } from './namedfocus'
+import { isUuid } from './progress'
 
 // The model of the Work tab: what each lead has in hand, from the relay's work reports, joined with what
 // ix-board's focus status says of the tickets and of what was merged lately.
@@ -79,6 +81,9 @@ const issueOf = (v: unknown): WorkIssue | null => {
   if (o === null || identifier === '') return null
   return { identifier, title: str(o.title), state: str(o.state), prs: Array.isArray(o.prs) ? o.prs.flatMap(p => prOf(p) ?? []) : null }
 }
+
+/** An id of an answer: null where it says there is none, absent where it says nothing. */
+const idOf = (o: Record<string, unknown>, key: string): string | null | undefined => (o[key] === null ? null : str(o[key]) || undefined)
 
 const activityOf = (v: unknown): WorkActivity | null => {
   const o = obj(v)
@@ -170,7 +175,9 @@ export function issuesOf(answer: unknown): WorkIssue[] {
   if (!Array.isArray(body?.issues)) throw new Error('the answer is not a list of issues')
   return list(body.issues).flatMap(v => {
     const o = obj(v)
-    return o === null ? [] : (issueOf({ ...o, state: str(o.state_name) || str(o.state), prs: o.attachments_complete === false ? null : o.pull_requests }) ?? [])
+    if (o === null) return []
+    const issue = issueOf({ ...o, state: str(o.state_name) || str(o.state), prs: o.attachments_complete === false ? null : o.pull_requests })
+    return issue === null ? [] : [{ ...issue, project: idOf(o, 'project_id'), milestone: idOf(o, 'project_milestone_id') }]
   })
 }
 
@@ -187,7 +194,127 @@ export type WorkTicket = {
 }
 
 /** `tickets` are those in hand, `finished` those whose agents have all finished. */
-export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[]; finished: WorkTicket[]; summary: string; error: string | null; readAt: number | null }
+export type WorkLeadView = {
+  address: string
+  status: string
+  at: number | null
+  /** the tickets of the focus */
+  tickets: WorkTicket[]
+  finished: WorkTicket[]
+  /** the tickets, in hand or finished, that may or may not be of the focus: their project is unknown */
+  unplaced: WorkTicket[]
+  /** how many of its tickets are not of the focus */
+  outside: number
+  summary: string
+  error: string | null
+  readAt: number | null
+}
+
+// ---------------------------------------------------------------- the focus filter
+
+/** Where a ticket stands to the focus: `unknown` where its project, or what the focus is made of, is not known. */
+export type Place = 'in' | 'out' | 'unknown'
+
+/**
+ * What the focus narrows the tickets to. `unread` is a focus whose members are not known at all, so every ticket is
+ * shown, with `why`.
+ */
+export type FocusFilter =
+  | { kind: 'all' }
+  | { kind: 'unread'; why: string }
+  | { kind: 'named'; place: (id: string) => Place; notes: string[] }
+
+export const ALL_TICKETS: FocusFilter = { kind: 'all' }
+
+const placeOf = (filter: FocusFilter, id: string): Place => (filter.kind === 'named' ? filter.place(id) : 'in')
+
+const lower = (s: string): string => s.toLowerCase()
+
+/** The place one focus gives a ticket no answer of the focus lists, by the project and milestone the ticket is in. */
+function placeIn(f: FocusView, issue: WorkIssue | undefined): Place {
+  if (f.isUnreadable) return 'unknown'
+  // A lead whose report names no tracker work and no ticket says nothing a ticket can be judged by.
+  if (f.via !== 'definition' && f.selectors.length === 0 && f.tickets.length === 0) return 'unknown'
+  if (f.selectors.every(s => s.kind === 'ticket')) return 'out'
+  if (issue === undefined || issue.project === undefined) return 'unknown'
+  // A ticket in no project is in no project, initiative or milestone.
+  if (issue.project === null) return 'out'
+  const rows = [...f.initiatives.flatMap(i => i.projects), ...f.loose]
+  const of = (kind: FocusView['selectors'][number]['kind']) => f.selectors.filter(s => s.kind === kind)
+  const ids = new Set([...rows.flatMap(p => p.id ?? []), ...of('project').flatMap(s => (isUuid(s.ref) ? s.ref : []))].map(lower))
+  if (ids.has(lower(issue.project))) return 'in'
+  const milestones = of('milestone')
+  if (milestones.some(s => issue.milestone != null && lower(s.ref) === lower(issue.milestone))) return 'in'
+  // Out only where every project of the focus is known.
+  const isWhole =
+    f.initiatives.length >= of('initiative').length &&
+    f.initiatives.every(i => i.failed === null && i.projects.every(p => p.id !== null)) &&
+    of('project').every(s => isUuid(s.ref) || rows.some(p => p.id !== null && (p.ref === s.ref || p.name === s.ref || p.id === s.ref))) &&
+    milestones.every(s => isUuid(s.ref) && issue.milestone !== undefined)
+  return isWhole ? 'out' : 'unknown'
+}
+
+/**
+ * The filter of a focus choice, from the focuses held. `key` is what a read for this choice and these teams is asked
+ * for. A ticket is of the focus where a focus names it, an answer of ix-board over its members lists it, or its project
+ * or milestone is one of them; exclusions of a definition are not applied.
+ */
+export function focusFilter(choice: string, key: string, meta: Partial<FocusMeta>, focuses: readonly FocusView[], boards: readonly WorkBoard[]): FocusFilter {
+  const name = choice.trim()
+  if (name === '' || lower(name) === 'all') return ALL_TICKETS
+  const unread: FocusFilter = { kind: 'unread', why: `focus ${name} is not read yet: every ticket is shown` }
+  if (meta.heldFor !== key) return unread
+  const found = focuses.filter(f => f.via !== null && f.via !== undefined)
+  if (found.length === 0) {
+    // That nothing matches is known only after a read that ended with every source answering.
+    const isFailed = (meta.errors ?? []).some(e => e.source === 'agent-msg focuses' || e.source === 'agent-msg work')
+    if (meta.scope !== key || meta.at === null || meta.busy === true || isFailed) return unread
+    return { kind: 'named', place: () => 'out', notes: [`no focus matches "${name}"`] }
+  }
+  const listed = new Set(boards.filter(b => b.ticketsOnly !== true).flatMap(b => b.issues.map(i => lower(i.identifier))))
+  const named = new Set(found.flatMap(f => [...f.tickets, ...f.selectors.filter(s => s.kind === 'ticket').map(s => s.ref)]).map(lower))
+  const singles = new Map(boards.filter(b => b.ticketsOnly === true).flatMap(b => b.issues.map(i => [i.identifier, i] as const)))
+  const place = (id: string): Place => {
+    if (named.has(lower(id)) || listed.has(lower(id))) return 'in'
+    const places = found.map(f => placeIn(f, singles.get(id)))
+    return places.includes('in') ? 'in' : places.includes('unknown') ? 'unknown' : 'out'
+  }
+  const notes = [
+    ...found.filter(f => f.isUnreadable).map(f => `the members of ${f.title ?? name} cannot be read`),
+    ...(found.some(f => f.notes.includes(NOTE_EXCLUSIONS)) ? ['the focus’s exclusions are not applied'] : []),
+  ]
+  return { kind: 'named', place, notes }
+}
+
+/** The leads with only the tickets of the focus. */
+const narrowed = (leads: readonly WorkLead[], filter: FocusFilter): WorkLead[] =>
+  leads.map(l => ({
+    ...l,
+    agents: l.agents.filter(a => placeOf(filter, a.ticket) === 'in'),
+    focus: l.focus === null ? null : { ...l.focus, tickets: l.focus.tickets.filter(t => placeOf(filter, t) === 'in') },
+  }))
+
+/**
+ * The counts of `workCounts` for the tickets of the focus, with how many tickets in hand of current reports have an
+ * unknown project and so are in none of them.
+ */
+export function focusCounts(leads: readonly WorkLead[], boards: readonly WorkBoard[], now: number, leadsRead: boolean, listed: number, filter: FocusFilter): WorkCounts & { unplaced: number } {
+  const current = leads.filter(l => l.readAt !== null && !isOldReport(l.reportedAt, now))
+  const unplaced = leadsRead ? activeIds(current).filter(id => placeOf(filter, id) === 'unknown').length : 0
+  return { ...workCounts(narrowed(leads, filter), boards, now, leadsRead, listed), unplaced }
+}
+
+/** Whether an event is of a lead of `teams`; null is every team. */
+const isOfTeams = (e: WorkRoleEvent, teams: readonly string[] | null): boolean => teams === null || teams.some(t => lower(t) === lower(e.address.split(':')[1] ?? ''))
+
+/**
+ * The role events of the focus among those of the leads of `teams`, and how many of theirs were left out because their
+ * ticket's project is unknown. The activity of the focus statuses is that of the focus already.
+ */
+export function focusEvents(all: readonly WorkRoleEvent[], filter: FocusFilter, teams: readonly string[] | null): { events: WorkRoleEvent[]; unplaced: number } {
+  const events = all.filter(e => isOfTeams(e, teams))
+  return { events: events.filter(e => placeOf(filter, e.ticket) === 'in'), unplaced: events.filter(e => placeOf(filter, e.ticket) === 'unknown').length }
+}
 
 /** A focus status that has answered: the read of single tickets and a focus never answered are not one. */
 const isAnswer = (b: WorkBoard): boolean => b.ticketsOnly !== true && b.at !== null
@@ -253,7 +380,7 @@ const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): stri
  * ticket no lead reports is already on the Focus tab. A ticket's time is that of the latest transition of an agent on
  * it, else of the latest report of one.
  */
-export function composeWork(leads: readonly WorkLead[], last: Record<string, number>, boards: readonly WorkBoard[]): WorkView {
+export function composeWork(leads: readonly WorkLead[], last: Record<string, number>, boards: readonly WorkBoard[], filter: FocusFilter = ALL_TICKETS): WorkView {
   const board = mergeBoards(boards)
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
   const unknown = new Set(boards.flatMap(b => b.unknown ?? []))
@@ -277,8 +404,11 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, num
       return { id, title: issue?.title ?? '', why: whyOf(id, issue), badges: badgesOf(agents, issue), at }
     })
     tickets.sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || a.id.localeCompare(b.id))
-    const finished = tickets.filter(t => isFinished(lead, t.id))
-    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets: tickets.filter(t => !finished.includes(t)), finished, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
+    const mine = tickets.filter(t => placeOf(filter, t.id) === 'in')
+    const unplaced = tickets.filter(t => placeOf(filter, t.id) === 'unknown')
+    const finished = mine.filter(t => isFinished(lead, t.id))
+    const outside = tickets.length - mine.length - unplaced.length
+    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets: mine.filter(t => !finished.includes(t)), finished, unplaced, outside, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
   })
   views.sort((a, b) => a.address.localeCompare(b.address))
   return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.some(isAnswer) }
@@ -363,11 +493,10 @@ export function recentRows(entries: readonly RecentEntry[], rows: number): Recen
  * `teams` (null: every lead).
  */
 export function recentOf(activity: readonly WorkActivity[] | null, events: readonly WorkRoleEvent[], all: boolean, teams: readonly string[] | null): RecentEntry[] {
-  const mine = (e: WorkRoleEvent) => teams === null || teams.some(t => t.toLowerCase() === (e.address.split(':')[1] ?? '').toLowerCase())
   const rows: RecentEntry[] = [
     ...(activity ?? []).filter(a => all || a.kind === 'merged').map(a => ({ at: a.at, activity: a })),
     // Newest first before the sort, so that events of the same moment keep that order.
-    ...(all ? events.filter(mine).reverse().map(event => ({ at: event.at, event })) : []),
+    ...(all ? events.filter(e => isOfTeams(e, teams)).reverse().map(event => ({ at: event.at, event })) : []),
   ]
   return rows.sort((a, b) => b.at - a.at)
 }

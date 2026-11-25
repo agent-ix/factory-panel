@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { Selector } from './board'
 import { errorText } from './shared'
 
-// Resolving the name of `/factory focus <name>`: the keywords, then the named focus
+// Resolving the name of `/factory focus <name>`: the keyword `all`, then the named focus
 // definitions ix-relay stores, then a lead address, then a lead summary. This file is the
 // definitions step. It only reads: `list` and `show` are the only `agent-msg focuses` subcommands
 // the mod runs, and nothing creates, changes, archives or claims a definition.
@@ -112,6 +112,14 @@ export async function resolveDefinitions($: EngineInterface, name: string, team:
     }
   }
   return found
+}
+
+/** The names of the active definitions a session of `team` can choose (every team's where it is unknown), by name. */
+export async function definitionNames($: EngineInterface, team: string | null): Promise<string[]> {
+  const listed = (await call($, ['agent-msg', 'focuses', 'list', '--json'])) as { definitions?: unknown }
+  if (!Array.isArray(listed?.definitions)) throw new Error('agent-msg focuses list printed no definitions list')
+  const names = (listed.definitions as Row[]).flatMap(row => (text(row?.name) && row.state === 'active' && row.available !== false && (team === null || same(row.team, team)) ? [row.name] : []))
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b))
 }
 
 /** The leads whose address is `name` as `host:team:segment`, or whose `team:segment` end is `name`, ignoring case. */

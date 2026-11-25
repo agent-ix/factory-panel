@@ -116,21 +116,21 @@ test('the old per-view commands are aliases, and /focuses team sets the focus sc
     expect(w.opens.map(x => x.id)).toContain(id)
   }
   w.opens.length = 0
-  await $.command.run({ command: 'focuses', args: 'team' })
+  await $.command.run({ command: 'focuses', args: 'Beta' })
   await settle()
   expect(w.opens).toEqual([])
-  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: 'team' })
+  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: 'Beta' })
 })
 
-test('/factory focus with no argument opens the Focus view, and /factory focus team sets the scope and opens no view', async ($, on) => {
+test('/factory focus with no argument opens the Focus view, and /factory focus <name> sets the scope and opens no view', async ($, on) => {
   trace("FR-003-AC-5")
   const w = world(on)
   await runFactory(fake$(w) as never, options(), 'focus', false)
   expect(w.opens.map(x => x.id)).toEqual(['focus'])
   w.opens.length = 0
-  await runFactory(fake$(w) as never, options(), 'focus team', false)
+  await runFactory(fake$(w) as never, options(), 'focus Beta', false)
   expect(w.opens).toEqual([])
-  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: 'team' })
+  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: 'Beta' })
 })
 
 // ---------------------------------------------------------------- FR-001 ambient view
