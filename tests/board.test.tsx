@@ -191,7 +191,7 @@ test('every project failing with no record draws no total, shows each failed row
   trace("FR-022-AC-6")
   const w = world(on, true)
   const specs = many(3)
-  ix(w, { roadmap: [{ name: 'A', projects: specs.map(p => ({ name: p.name })) }], projects: Object.fromEntries(specs.map(p => [p.name, BAD_MILESTONE])) })
+  ix(w, { roadmap: [{ name: 'A', projects: specs.map(p => ({ name: p.name, id: pid(p.name) })) }], projects: Object.fromEntries(specs.map(p => [pid(p.name), dangling(pid(p.name))])), other: chunks })
   const p = (await progress(w, [initiative('A')])).progress!
   expect(p.header).toBeNull()
   expect(p.initiatives[0]!.projects.every(x => x.failed)).toBe(true)
@@ -552,7 +552,7 @@ test('with more failing projects than the allowance finds, the rest are not isol
   trace("FR-026-AC-20")
   const w = world(on, true)
   const specs = many(32)
-  const failing = [2, 6, 10, 14, 18, 22, 26, 30].map(i => `Proj ${i}`)
+  const failing = [1, 3, 5, 7, 9, 11, 13, 15].map(i => `Proj ${i}`)
   const b = ix(w, { projects: { ...byName(specs), ...Object.fromEntries(failing.map(n => [n, `bad data in ${n}`])) }, other: chunks })
   const shown = await progress(w, specs.map(p => proj(p.name)))
   expect(status(b).length).toBeLessThanOrEqual(1 + 12)
@@ -621,11 +621,12 @@ test('a source error is never laid on a project: nothing is remembered and nothi
     expect(p.warnings.map(x => x.kind)).toEqual(['source'])
     expect(w.files.has(KNOWN_BAD)).toBe(false)
   }
-  // Both halves refused with the same words, which name nothing.
+  // No status call answers, and the halves and then the quarters are refused with the same words, which name nothing.
+  const eight = many(8).map(p => p.name)
   const w = world(on, true)
-  const b = ix(w, { projects: Object.fromEntries(refs.map(r => [r, 'ix-board: cannot reach Linear'])) })
-  const p = (await progress(w, refs.map(proj))).progress!
-  expect(b.calls).toHaveLength(3)
+  const b = ix(w, { projects: Object.fromEntries(eight.map(r => [r, 'ix-board: cannot reach Linear'])) })
+  const p = (await progress(w, eight.map(proj))).progress!
+  expect(b.calls).toHaveLength(1 + 2 + 4)
   expect(p.warnings).toEqual([{ kind: 'source', name: 'ix-board', text: 'ix-board: cannot reach Linear', id: null }])
   expect(w.files.has(KNOWN_BAD)).toBe(false)
   // A call for several projects that times out is nobody's failure, also after another call answered.
@@ -700,15 +701,110 @@ test('a unit unanswered at the call timeout or at the budget fails alone and is 
   expect(stuck.progress!.loose[0]).toMatchObject({ name: 'A', failed: false })
 })
 
-test('a lone project that fails with nothing to show it is at fault is not remembered and is asked again next time', async ($, on) => {
+test('a lone project that fails with nothing to show it is at fault is a source error, held five minutes and not remembered', async ($, on) => {
   trace("FR-026-AC-26")
   const w = world(on, true)
   const b = ix(w, { projects: { P: 'bad data' }, other: chunks })
-  await progress(w, [proj('P')])
+  const shown = await progress(w, [proj('P')])
+  expect(shown.progress!.warnings).toEqual([{ kind: 'source', name: 'ix-board', text: 'bad data', id: null }])
   expect(w.files.has(KNOWN_BAD)).toBe(false)
-  await w.clock!.advance(31 * MIN)
+  await w.clock!.advance(4 * MIN)
   await progress(w, [proj('P')])
-  expect(status(b)).toHaveLength(2)
+  expect(b.calls).toHaveLength(1)
+  await w.clock!.advance(2 * MIN)
+  await progress(w, [proj('P')])
+  expect(b.calls).toEqual([together(['P']), together(['P'])])
+})
+
+for (const [layout, failing] of [
+  ['in one half', [1, 3]],
+  ['one in each half', [1, 5]],
+] as const)
+  test(`two bad projects ${layout} refused in the same words are both found, the others drawn and the two remembered`, async ($, on) => {
+    trace("FR-026-AC-27")
+    const w = world(on, true)
+    const specs = many(8)
+    const bad = failing.map(i => `Proj ${i}`)
+    const named = (args: string[]) => out(JSON.stringify({ identifier: args[1], name: args[1] }))
+    const b = ix(w, { projects: { ...byName(specs), ...Object.fromEntries(bad.map(n => [n, 'bad data'])) }, other: named })
+    const shown = await progress(w, specs.map(p => proj(p.name)))
+    expect(status(b).length).toBeLessThanOrEqual(1 + 12)
+    expect(shown.progress!.loose.filter(r => !r.failed)).toHaveLength(6)
+    expect(shown.progress!.warnings.map(x => x.kind)).toEqual(['project', 'project'])
+    expect(Object.keys(knownBad(w)).sort()).toEqual(bad.map(n => `project:${n}`).sort())
+    // The refresh is kept for the whole interval, and the next one is one call for the healthy ones.
+    await w.clock!.advance(31 * MIN)
+    const from = b.calls.length
+    await progress(w, specs.map(p => proj(p.name)))
+    expect(b.calls.slice(from)).toEqual([together(specs.map(p => p.name).filter(n => !bad.includes(n)))])
+  })
+
+test('a search in which no status call answers, in words that differ, is a source error: nothing is remembered and it is asked again after five minutes', async ($, on) => {
+  trace("FR-026-AC-28")
+  const w = world(on, true)
+  const refs = many(4).map(p => p.name)
+  const b = ix(w, { projects: Object.fromEntries(refs.map(r => [r, `broke ${r.slice(-1)}`])), other: chunks })
+  const shown = await progress(w, refs.map(proj))
+  expect(shown.progress!.warnings.map(x => x.kind)).toEqual(['source'])
+  expect(w.files.has(KNOWN_BAD)).toBe(false)
+  expect(b.calls.filter(c => c.startsWith('project-chunk'))).toEqual([])
+  const first = b.calls.length
+  await w.clock!.advance(4 * MIN)
+  await progress(w, refs.map(proj))
+  expect(b.calls).toHaveLength(first)
+  await w.clock!.advance(2 * MIN)
+  await progress(w, refs.map(proj))
+  expect(b.calls.length).toBeGreaterThan(first)
+})
+
+test('one project whose ready count is unknown leaves the initiative and header Ready unknown, and no record says 0', async ($, on) => {
+  trace("FR-023-AC-10")
+  const w = world(on, true)
+  const twin = [pid('Twin one'), pid('Twin two')] as const
+  const solo = pid('Solo')
+  ix(w, {
+    roadmap: [{ name: 'A', projects: [{ name: 'Twin', id: twin[0] }, { name: 'Twin', id: twin[1] }, { name: 'Solo', id: solo }] }],
+    projects: { [twin[0]]: project('Twin', 1, 4, { id: twin[0], ready: 2 }), [twin[1]]: project('Twin', 1, 4, { id: twin[1], ready: 1 }), [solo]: project('Solo', 1, 2, { id: solo, ready: 1 }) },
+  })
+  const p = (await progress(w, [initiative('A')])).progress!
+  expect(p.initiatives[0]!.projects.map(x => x.ready)).toEqual([null, null, 1])
+  expect(p.initiatives[0]!.ready).toBeNull()
+  expect(p.header!.ready).toBeNull()
+  expect(saved(w)[`project:${twin[0]}`]).toBeDefined()
+  expect('ready' in saved(w)[`project:${twin[0]}`]).toBe(false)
+  expect(saved(w)[`project:${solo}`]).toMatchObject({ ready: 1 })
+  // The record without a ready count is read back and drawn as unknown, not as 0.
+  ix(w, { roadmap: [{ name: 'A', projects: [{ name: 'Twin', id: twin[0] }] }], projects: { [twin[0]]: 'ix-board: authentication failed' } })
+  const old = (await progress(w, [proj(twin[0])], { manual: true, advance: 0 })).progress!
+  expect(old.loose[0]).toMatchObject({ old: true, ready: null })
+  expect(old.header!.ready).toBeNull()
+})
+
+test('a write of the gate file drops what was not read for a day and old 0.7.0 keys not written for an hour, and replaces the file whole', async ($, on) => {
+  trace("FR-015-AC-5", "FR-015-AC-6")
+  const w = world(on, true)
+  const GATE = `${FP}/linear-gate.json`
+  const entry = (ago: number) => ({ at: T0 - ago, claimAt: null, data: null })
+  w.files.set(GATE, JSON.stringify({ backoffUntil: null, entries: {
+    'agents:OLD': entry(25 * 60 * MIN),
+    'agents:LATE': entry(23 * 60 * MIN),
+    'progress:never': { at: null, claimAt: null, data: null },
+    'focus:--project dead': entry(61 * MIN),
+    'focus:--project live': entry(10 * MIN),
+  } }))
+  ix(w, { projects: { A: project('A', 1, 2) } })
+  await progress(w, [proj('A')])
+  expect(Object.keys(JSON.parse(w.files.get(GATE)!).entries).sort()).toEqual(['agents:LATE', 'focus:--project live', 'progress:project:A'])
+  expect(w.writes).not.toContain(GATE)
+  expect(w.ran.filter(l => l.startsWith('mv -f ') && l.endsWith(` ${GATE}`)).length).toBeGreaterThan(0)
+  expect([...w.files.keys()].filter(k => k.endsWith('.tmp'))).toEqual([])
+  // A rename that fails leaves the file as it was.
+  const before = w.files.get(GATE)
+  w.mvFails.value = true
+  await w.clock!.advance(31 * MIN)
+  await progress(w, [proj('A')])
+  expect(w.files.get(GATE)).toBe(before)
+  expect([...w.files.keys()].filter(k => k.endsWith('.tmp'))).toEqual([])
 })
 
 test('ix-board missing is one ix-board error and no further call in that refresh', async ($, on) => {
@@ -976,17 +1072,17 @@ test('a direct project whose status call fails is named by project-chunk, shown 
   const [a, b2] = REAL_SCOPE.projects as [string, string]
   const chunk = (name: string, id: string) => out(JSON.stringify({ blocker_layers: [[]], goal: 'a goal', identifier: id, milestones: [], name, open_tickets: [] }))
   const b = ix(w, {
-    projects: { [a]: 'timed out', [b2]: BAD_MILESTONE },
+    projects: { [a]: dangling(a), [b2]: dangling(b2) },
     other: args => (args[0] === 'project-chunk' ? (args[1] === a ? chunk('FSL alpha release', a) : chunk('QSL Production Hardening', b2)) : out('', 1, 'not stubbed')),
   })
   const shown = await progress(w, [proj(a), proj(b2)])
-  expect([...b.calls].sort()).toEqual([together([a, b2]), together([a]), together([b2]), `project-chunk ${a}`, `project-chunk ${b2}`].sort())
+  expect([...b.calls].sort()).toEqual([together([a, b2]), together([b2]), `project-chunk ${a}`, `project-chunk ${b2}`].sort())
   expect(shown.progress!.loose.map(p => [p.name, p.failed, p.id])).toEqual([['FSL alpha release', true, a], ['QSL Production Hardening', true, b2]])
   expect(shown.progress!.warnings.map(x => x.name)).toEqual(['FSL alpha release', 'QSL Production Hardening'])
   expect(saved(w)[`project:${a}`]).toMatchObject({ name: 'FSL alpha release', unknown: true, total: 0 })
   // A later failure knows the name already: no project-chunk call, and the name-only record draws no counts.
   await w.clock!.advance(31 * MIN)
-  const again = await progress(w, [proj(a), proj(b2)])
+  const again = await progress(w, [proj(a), proj(b2)], { manual: true })
   expect(b.calls.filter(c => c.startsWith('project-chunk'))).toHaveLength(2)
   expect(again.progress!.loose.map(p => [p.name, p.failed, p.old])).toEqual([['FSL alpha release', true, false], ['QSL Production Hardening', true, false]])
   expect(again.progress!.header).toBeNull()
@@ -1164,10 +1260,10 @@ test('a project named by project-chunk through its name keeps a name-only record
   trace("FR-025-AC-3")
   const w = world(on, true)
   const id = pid('Named')
-  const b = ix(w, { projects: { Named: BAD_MILESTONE }, other: args => (args[0] === 'project-chunk' ? out(JSON.stringify({ identifier: id, name: 'Named', goal: '', milestones: [], open_tickets: [], blocker_layers: [] })) : out('', 1, 'not stubbed')) })
-  await progress(w, [proj('Named')])
+  const b = ix(w, { projects: { Named: 'bad data', Other: project('Other', 1, 2) }, other: args => (args[0] === 'project-chunk' ? out(JSON.stringify({ identifier: id, name: 'Named', goal: '', milestones: [], open_tickets: [], blocker_layers: [] })) : out('', 1, 'not stubbed')) })
+  await progress(w, [proj('Named'), proj('Other')])
   expect(saved(w)[`project:${id}`]).toMatchObject({ name: 'Named', unknown: true })
   await w.clock!.advance(31 * MIN)
-  await progress(w, [proj('Named')])
+  await progress(w, [proj('Named'), proj('Other')], { manual: true })
   expect(b.calls.filter(c => c.startsWith('project-chunk'))).toHaveLength(1)
 })

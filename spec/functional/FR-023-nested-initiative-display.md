@@ -26,11 +26,14 @@ The mod SHALL draw each initiative with its projects indented beneath it, each w
 - The mod SHALL compute Remaining as `total - done`.
 - The mod SHALL compute Ready of a project asked alone as the count of `ready_queue` entries of its answer, and of a project asked with others as the count of entries that name it as their `project`.
 - Where two projects of one answer share a name, the mod SHALL show no Ready for either.
+- Where a `ready_queue` entry of an answer for several projects names no project, the mod SHALL show no Ready for any project of that answer.
 - The mod SHALL compute Blocked of a project asked alone as the count of entries not classified `Completed` in `blocker_layers` of its answer.
 - The mod SHALL show no Blocked for a project asked with others, a blocker entry naming no project.
 - The mod SHALL show `-` for a Ready or Blocked that is not shown by these rules or whose key is absent from the answer.
 - The mod SHALL show `0` for Ready or Blocked where its key is present and empty.
-- The mod SHALL compute an initiative's Remaining and Ready as the sums over its counted projects, and its Blocked as their sum only where every counted project has one.
+- The mod SHALL compute an initiative's Remaining as the sum over its counted projects.
+- The mod SHALL compute the Ready of an initiative and of the header, and an initiative's Blocked, as the sum over the counted projects only where every one of them has it, and show `-` otherwise, in the band's queue cell too.
+- The record of a project whose Ready is unknown SHALL hold no `ready`.
 - The mod SHALL compute the Blocked of the header as that of the one counted project where it has one, else as the number of distinct entries not classified `Completed` over the `blocker_layers` of every answer of the refresh.
 - The mod SHALL show no Blocked in the header where a counted project is drawn from a record or an answer lacks `blocker_layers`.
 - Where the header has a Blocked and a counted project asked with others has none, `/factory show` SHALL say that blocked is counted once over the focus because a combined answer does not say which project a blocker belongs to.
@@ -56,6 +59,7 @@ The mod SHALL draw each initiative with its projects indented beneath it, each w
 | FR-023-AC-7 | A failed project P2 shows its name, an empty bar and `—` and no error text, and its error is in the footer warning expansion and in `/factory show`. | Test |
 | FR-023-AC-8 | A project under A and B is drawn under both. | Test |
 | FR-023-AC-9 | Given two projects answered by one call, each shows its own Ready and `-` for Blocked, the header shows the distinct open blockers once, and `/factory show` says why no project has its own. | Test |
+| FR-023-AC-10 | Given an initiative with two projects of one name in one answer and a third whose Ready is 1, the initiative and the header show no Ready, the two records hold no `ready`, and a project later drawn from such a record shows no Ready. | Test |
 
 ## Dependencies
 

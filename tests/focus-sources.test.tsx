@@ -6,7 +6,7 @@ import { resetSources, sourceFailed } from '../hooks/sources'
 import { showText } from '../hooks/router'
 import { getSelection } from '../hooks/selection'
 import { BAD_MILESTONE, CLASSIC, NEVER, bandCells, defRow, drawBand, fake$, listJson, out, report, roadmapJson, showJson, startSession, statusJson, world } from './world'
-import { LEAD, MIN, board, choose, hides, lead, look, named, onScreen, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
+import { LEAD, MIN, board, choose, focusCalls, hides, lead, look, named, onScreen, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
 import { record } from './focus-kit'
 
 // Tests of the flow around the progress of a focus: one refresh at a time, and the sources that fail
@@ -110,6 +110,78 @@ test('ix-board failing for one project and Prometheus failing are both listed by
   expect(text).toMatch(/^ {2}prometheus: Prometheus 503$/m)
 })
 
+// ---------------------------------------------------------------- FR-014 a typed command reads what it prints
+
+test('with no view drawn /factory show reads the focuses once, says how old they are, and a second show reads nothing', async ($, on) => {
+  trace("FR-014-AC-15")
+  const w = world(on, true)
+  lead(w, { projects: ['A'] }, 'Release train summary')
+  board(w, { combined: () => pageOf('Pa', 1, 2) })
+  await startSession($)
+  await w.clock!.advance(1000)
+  expect(focusCalls(w)).toEqual([])
+  expect(w.ran.filter(l => l === 'agent-msg who' || l.startsWith('ix-board'))).toEqual([])
+  const first = await shownText($)
+  expect(first).toMatch(/^focus data: read \d+s ago, progress from \d+s ago$/m)
+  expect(first).toMatch(/^own focus$/m)
+  expect(first).toMatch(/^ {4}Pa: 1\/2 /m)
+  expect(statusCalls(w)).toEqual(['--project A'])
+  const asked = w.ran.filter(l => l === 'agent-msg who').length
+  await w.clock!.advance(60_000)
+  expect(await shownText($)).toMatch(/^focus data: read 1m ago/m)
+  expect(w.ran.filter(l => l === 'agent-msg who')).toHaveLength(asked)
+  expect(statusCalls(w)).toHaveLength(1)
+})
+
+test('before a read has finished /factory show answers after five seconds, says the data is not read yet and claims neither no focus nor no match', async ($, on) => {
+  trace("FR-014-AC-16")
+  const w = world(on, true)
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === 'agent-msg who' ? w.clock!.sleep(60_000).then(() => out('')) : prior?.(argv, init))
+  await startSession($)
+  await w.clock!.advance(1000)
+  for (const args of ['show', 'focus Release Train']) {
+    let text: string | undefined
+    const run = ($.command.run({ command: 'factory', args } as never) as Promise<{ text?: string }>).then(r => void (text = r.text))
+    await w.clock!.advance(4_000)
+    expect(text).toBeUndefined()
+    await w.clock!.advance(2_000)
+    await run
+    expect(text).toMatch(/^focus data: not read yet: it is being read now, run \/factory show again$/m)
+    expect(text).not.toMatch(/no focus reported|no focus matches/)
+  }
+  await w.clock!.advance(120_000)
+})
+
+test('where the leads cannot be listed /factory show says the data is not read and does not say no focus is reported', async ($, on) => {
+  trace("FR-014-AC-18")
+  const w = world(on, true)
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === 'agent-msg who' ? out('', 1, 'relay store unavailable') : prior?.(argv, init))
+  await startSession($)
+  const text = await shownText($)
+  expect(text).toMatch(/^focus data: not read yet: the last read failed: .*relay store unavailable$/m)
+  expect(text).not.toMatch(/no focus reported|no focus matches/)
+})
+
+test('a choice reads the focuses for what it chose before it answers, and says no match only after that read', async ($, on) => {
+  trace("FR-014-AC-16", "FR-014-AC-17")
+  const w = world(on, true)
+  lead(w, { projects: ['A'] }, 'Release train summary')
+  named(w, () => out(listJson()))
+  board(w, { combined: () => pageOf('Pa', 1, 2) })
+  await startSession($)
+  await shownText($)
+  const asked = statusCalls(w).length
+  const chosen = ((await $.command.run({ command: 'factory', args: 'focus Nowhere' } as never)) as { text: string }).text
+  expect(chosen).toMatch(/^focus data: read \d+s ago/m)
+  expect(chosen).toMatch(/^no focus matches "Nowhere"$/m)
+  const back = ((await $.command.run({ command: 'factory', args: 'focus own' } as never)) as { text: string }).text
+  expect(back).toMatch(/^ {4}Pa: 1\/2 /m)
+  // The 30 minute gate holds: neither command asked ix-board again.
+  expect(statusCalls(w)).toHaveLength(asked)
+})
+
 test('a source that never returns does not hold back the others, and the first view is painted before any answers', async ($, on) => {
   trace("FR-018-AC-5")
   const w = world(on, true)
@@ -181,9 +253,10 @@ test('/factory show gives the age of ix-board projects from progress.json and of
   lead(w, { projects: ['C'] })
   const id = '11111111-2222-4333-8444-555555555555'
   seed(w, { [`project:${id}`]: record({ id, name: 'C' }) })
-  lead(w, { projects: [id] })
+  // A second project answers, so the failure of the first is the project's own and not ix-board's.
+  lead(w, { projects: [id, 'D'] })
   w.fetch.value = () => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'success', data: { result: [] } }) } })
-  board(w, { combined: () => out('', 1, BAD_MILESTONE) })
+  board(w, { combined: args => (args[1] === 'D' ? pageOf('D', 1, 2) : out('', 1, BAD_MILESTONE)) })
   await started($, w)
   await onScreen($, 'factory')
   await w.clock!.advance(1000)
@@ -262,7 +335,7 @@ test('/factory show prints the X of Y projects, partial and not expanded wording
   trace("FR-022-AC-1", "FR-022-AC-11")
   const text = await showScenario($, on)
   expect(text).toMatch(/^ {2}total: .*3 of 4 projects.*partial.*1 initiative not expanded$/m)
-  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · 11\/29 done · remaining 18 · ready 3 · blocked - · partial$/m)
+  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · 11\/29 done · remaining 18 · ready - · blocked - · partial$/m)
   expect(text).toMatch(/^ {2}initiative initiative 674ffba8: projects unknown$/m)
 })
 

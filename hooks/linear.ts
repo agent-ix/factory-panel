@@ -1,12 +1,14 @@
 import type { EngineInterface } from 'claude-code'
 
-import { errorText } from './shared'
+import { errorText, writeWhole } from './shared'
 
 // Every ix-board read refreshes ix-board's cache of the whole Linear workspace once it is five
 // minutes old, and this mod loads in every session. So the panes share one gate, in a file every
 // session on the machine reads: each read runs at most once per interval across all of them, its
 // result is kept for the others, and when Linear says "rate limited; retry in N s" nobody calls
 // ix-board again until then.
+//
+// The file is written whole (a temporary file, renamed), and a write drops what nobody uses any more.
 
 /** Every gated read of Linear, `ix-board agents` included, runs at most once in this long across all sessions. */
 export const BOARD_INTERVAL_MS = 30 * 60 * 1000
@@ -17,6 +19,14 @@ const MANUAL_MIN_MS = 60 * 1000
 
 /** An outcome a source error cut short is held this long, not the whole interval, and not asked again meanwhile. */
 export const UNKEPT_TTL_MS = 5 * 60 * 1000
+/** An entry nobody has fetched or claimed for this long is dropped at the next write. */
+export const ENTRY_UNUSED_MS = 24 * 60 * 60 * 1000
+/**
+ * The keys 0.7.0 gated progress under. Nothing reads them now; one is dropped once it has not been written for this
+ * long, so a session still running 0.7.0 keeps the gate it is using.
+ */
+const OLD_KEY = 'focus:'
+export const OLD_KEY_UNUSED_MS = 60 * 60 * 1000
 
 type Entry = {
   at: number | null
@@ -88,11 +98,18 @@ function exclusive<T>(run: () => Promise<T>): Promise<T> {
   return next
 }
 
-/** Re-reads the file before writing, so another session's entries in between survive. */
+/** The entries still in use: fetched or claimed within a day, or for a 0.7.0 key within the hour. */
+function pruned(entries: Record<string, Entry>, now: number): Record<string, Entry> {
+  const used = (e: Entry): number => Math.max(e.at ?? -Infinity, e.claimAt ?? -Infinity)
+  return Object.fromEntries(Object.entries(entries).filter(([key, e]) => now - used(e) <= (key.startsWith(OLD_KEY) ? OLD_KEY_UNUSED_MS : ENTRY_UNUSED_MS)))
+}
+
+/** Re-reads the file before writing, so another session's entries in between survive, and drops the unused ones. */
 async function save($: EngineInterface, change: (g: GateFile) => void): Promise<void> {
   const g = await load($)
   change(g)
-  await $.fs.write(await pathOf($), JSON.stringify(g))
+  g.entries = pruned(g.entries, await $.clock.now())
+  await writeWhole($, await pathOf($), JSON.stringify(g))
 }
 
 /** Linear's own wait, from ix-board's "Linear rate limited; retry in 3600.005s". */

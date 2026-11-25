@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { factoryDir } from './selection'
+import { writeWhole } from './shared'
 
 // The last good progress of each selector: one file, `~/.ix/factory-panel/progress.json`,
 // shared by every session on the machine. A refresh of a selector that fails shows its record,
@@ -13,7 +14,8 @@ export type ProgressRecord = {
   done: number
   total: number
   inProgress: number
-  ready: number
+  /** Entries of the ready queue that are the project's; absent when the answer did not say. */
+  ready?: number
   /** Entries of the blocker layers not classified Completed; absent when the answer carried none. */
   blocked?: number
   /** Stage counts of the open work, by state, from `open_by_state`. */
@@ -55,7 +57,7 @@ const str = (v: unknown): v is string => typeof v === 'string'
 const isRecord = (v: unknown): v is ProgressRecord => {
   if (typeof v !== 'object' || v === null) return false
   const o = v as Record<string, unknown>
-  return ['at_ms', 'seen_ms'].every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number)) && ['done', 'total', 'inProgress', 'ready'].every(k => count(o[k]))
+  return ['at_ms', 'seen_ms'].every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number)) && ['done', 'total', 'inProgress'].every(k => count(o[k])) && (o.ready === undefined || count(o.ready))
 }
 
 const isMembership = (v: unknown): v is Membership => {
@@ -207,14 +209,10 @@ export async function saveFile($: EngineInterface, now: number, mine: Records, i
   return merged
 }
 
-/** Writes a file of the mod's directory by writing a temporary file and renaming it; a failure leaves the previous file. */
+/** Writes a file of the mod's directory whole; a failure leaves the previous file. */
 async function replaceFile($: EngineInterface, file: string, body: unknown): Promise<void> {
   try {
-    const path = `${await factoryDir($)}/${file}`
-    const temp = `${path}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    await $.fs.write(temp, `${JSON.stringify(body, null, 2)}\n`)
-    const moved = await $.process.run(['mv', '-f', temp, path], { timeoutMs: 5_000 })
-    if (moved.exitCode !== 0) await $.process.run(['rm', '-f', temp], { timeoutMs: 5_000 })
+    await writeWhole($, `${await factoryDir($)}/${file}`, `${JSON.stringify(body, null, 2)}\n`)
   } catch {
     // Nothing to do: the caller keeps what it holds.
   }

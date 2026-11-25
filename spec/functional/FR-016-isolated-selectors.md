@@ -40,7 +40,7 @@ The mod SHALL keep the progress of a focus per selector, so that one failing sel
 - The mod SHALL classify a non-zero exit with no stderr text as the failure of that call, with its stdout text as the error where it has any.
 - The mod SHALL classify stderr text that indicates a Linear rate limit as a source error.
 - A Linear rate limit holds the whole workspace, so it is a source error and never a selector error.
-- The mod SHALL classify any other non-zero exit with stderr text as a selector error.
+- The mod SHALL classify any other non-zero exit with stderr text as a selector error, except as [FR-026](./FR-026-per-project-calls.md) makes it a source error where no status call of the refresh answers.
 - Where a source error occurs, the mod SHALL make no further ix-board call in that refresh.
 - The mod SHALL run at most 4 ix-board processes at once per session, counted across every focus shown.
 - The mod SHALL give each ix-board call a timeout of 20 seconds.

@@ -11,6 +11,10 @@ Fetch less.
 - An initiative's project list is used for 6 hours before the roadmap or an initiative call is asked again, the roadmap is read at most once every 30 minutes across all sessions, and an initiative that fails is tried again after an hour.
 - Changed numbers: a combined answer does not say which project a blocker belongs to, so a project asked with others shows `-` for Blocked, as do the initiatives that hold it; the header Blocked is now the number of distinct open blockers of the focus, no longer a sum that counted a shared blocker once per project. Done, total and Ready are as before.
 - A recorded value is drawn in the warning tone after 60 minutes (it was 30), since progress is now read every 30 minutes.
+- `/factory show` and the choice commands read the focuses (gated as ever) when no view has, say `focus data: not read yet` instead of `no focus reported` or `no focus matches` before a read has ended, and otherwise print the age of the data.
+- Where no status call of a refresh answers and the errors do not name every project, ix-board is taken to be at fault: a source error, nothing remembered, another try after 5 minutes. Two bad projects that fail in the same words are found while any other call answers or in the first two levels of the search.
+- Ready of an initiative, the header and the queue cell is `-` while any counted project's Ready is unknown, and an unknown Ready is no longer recorded as 0.
+- `linear-gate.json` is written whole (temporary file and rename) and drops entries unused for a day, and the unused keys of 0.7.0.
 
 ## 0.7.0
 

@@ -1,7 +1,7 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
-import { focusBannerNow, focusDetailNow } from './focus'
+import { focusBannerNow, focusDetailNow, readForCommand } from './focus'
 import { readRecords } from './progress'
 import { SOURCE_NAMES, selectorErrorList, sourceState } from './sources'
 import { markStale } from './schedule'
@@ -105,10 +105,17 @@ export const showText = async ($: EngineInterface, sel: Selection): Promise<stri
 
 const list = (text: string): string[] => text.split(/[\s,]+/).filter(Boolean)
 
-/** After a choice: re-read and say what is now shown. The data the scope reads is due at the next drawing of a view that shows it. */
+/** A typed command is on screen: one gated read of the focuses it is about to print. Where none can be made, what is held is printed. */
+const readFocuses = ($: EngineInterface, changed: boolean): Promise<void> => readForCommand($, changed).catch(() => undefined)
+
+/**
+ * After a choice: re-read the selection, read the focuses for it, and say what is now shown. The lanes the scope reads
+ * are due at the next drawing of a view that shows them.
+ */
 async function applied($: EngineInterface, lead: string): Promise<string> {
   const sel = await refreshSelection($)
   markStale('focus', 'board')
+  await readFocuses($, true)
   $.ui.invalidate('ui.render')
   return `${lead}\n${await showText($, sel)}`
 }
@@ -159,7 +166,10 @@ export async function runFactory($: EngineInterface, options: Options, args: str
   // Every command sees the files as they are now, so a declaration written a moment ago counts.
   const sel = await refreshSelection($)
   if (command === 'help' && rest === '') return helpText(isFullscreen, sel)
-  if (command === 'show' && rest === '') return showText($, sel)
+  if (command === 'show' && rest === '') {
+    await readFocuses($, false)
+    return showText($, sel)
+  }
   if (command === 'reset' && rest === '') return choose($, 'reset', '')
   if (command === 'focus' && rest !== '') return choose($, 'focus', rest)
   if (['use', 'teams', 'hosts'].includes(command)) return choose($, command, rest)

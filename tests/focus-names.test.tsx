@@ -331,7 +331,7 @@ test('a list or show that never returns is given up on after 5 seconds and the l
   await onScreen($)
   // A view is read once its drawing has stood for 150 ms.
   await w.clock!.advance(150 + 4900)
-  hides(await pageLines($), /^Beta$/)
+  hides(await paneLines($), /^Beta$/)
   await w.clock!.advance(200)
   const lines = await pageLines($)
   expect(timeouts).toEqual([5000])
@@ -400,7 +400,7 @@ test('a show that never returns is given up on after 5 seconds, the error is sho
   await onScreen($)
   // A view is read once its drawing has stood for 150 ms.
   await w.clock!.advance(150 + 4900)
-  hides(await pageLines($), /^Beta$/)
+  hides(await paneLines($), /^Beta$/)
   await w.clock!.advance(200)
   const lines = await pageLines($)
   expect(timeouts).toEqual([5000])

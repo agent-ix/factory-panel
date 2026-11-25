@@ -39,7 +39,10 @@ The mod SHALL request the progress of all healthy projects of a focus in one ix-
 - Where a call for several projects fails and the error is no source error of [FR-016](./FR-016-isolated-selectors.md), the mod SHALL search that call for the failing projects.
 - Where the error names a project as `in project <project-uuid>` and exactly one ref of the call is that project, by id or by the name `project-chunk` or a record gives the uuid, the mod SHALL take that ref as failing and ask for the other refs together.
 - Otherwise the mod SHALL ask for the two halves of the refs, each in one call, and search each half that fails.
-- Where both halves fail with the same error text and that text names no uuid, the mod SHALL treat the error as a source error.
+- The mod SHALL search level by level, splitting every failed part of one level before it splits any part of the next, and SHALL record the answers of a level before it judges its failures.
+- Where no `focus status` call of the refresh has succeeded and every call of a second or later level fails with the same error text, naming no uuid, the mod SHALL treat that error as a source error and end the search.
+- Where the one call for all healthy projects fails and no `focus status` call of the refresh succeeds, the mod SHALL treat its error as a source error, unless for each of those projects an error names it, by its id, by a ref of at least 8 characters, or as the project the error of a combined call names.
+- Where that source error is declared, the mod SHALL remember no selector of the refresh and ask for no project name.
 - The mod SHALL make at most 12 further ix-board calls for such searches in one refresh, halves, retries without a named project and the `project-chunk` call that names it counted together.
 - Where that allowance is used up, the mod SHALL count each ref not yet asked alone as failed with `not isolated: <error>`.
 - The mod SHALL end every search within the 60 second budget of [FR-016](./FR-016-isolated-selectors.md).
@@ -89,13 +92,15 @@ Note: `ix-board focus status --help` states that `--project` accepts a UUID, an 
 | FR-026-AC-17 | Given one call for two projects, no row has a blocked count, the header blocked is the number of distinct open blockers of the answer, and two projects of one name show no ready count. | Test |
 | FR-026-AC-18 | Given one of 18 projects makes the combined call fail with an error that names its id, at most one further `focus status` call is made, the other 17 are drawn, the failed one is named with the error, and `known-bad.json` holds it with its id and name. | Test |
 | FR-026-AC-19 | Given one of 19 projects fails with an error that names no project id, it is found with at most 12 further calls, the others are drawn, and it alone is remembered. | Test |
-| FR-026-AC-20 | Given more failing projects than 12 further calls can isolate, no more calls are made, the projects not isolated fail with `not isolated: <error>`, and only failing projects asked alone are remembered. | Test |
+| FR-026-AC-20 | Given more failing projects than 12 further calls can isolate while other calls answer, no more calls are made, the projects not isolated fail with `not isolated: <error>`, and only failing projects asked alone are remembered. | Test |
 | FR-026-AC-21 | Given a remembered project, a refresh 31 minutes later leaves it out of the combined call and draws it failed with the remembered error; a refresh 60 minutes after the last try asks it alone; a manual refresh asks it alone at once; and when it answers it is forgotten and the next combined call names it again. | Test |
 | FR-026-AC-22 | Given another session reads a `known-bad.json` that holds a project, its first refresh leaves that project out of the combined call and asks it not at all. | Test |
-| FR-026-AC-23 | Given an authentication failure, a rate limit, two halves refused with the same words that name no project, or a timeout of a call for several projects, one source error is shown and nothing is remembered; and a try of a remembered project cut off by a source error stays due. | Test |
+| FR-026-AC-23 | Given an authentication failure, a rate limit, a timeout of a call for several projects, or 8 projects whose every call is refused with the same words that name no project, one source error is shown and nothing is remembered, the last after 7 calls; and a try of a remembered project cut off by a source error stays due. | Test |
 | FR-026-AC-24 | Given one initiative answered by the roadmap, two initiatives needing rule 3 calls and 3 listed projects, one roadmap call, two rule 3 calls and one combined call are made. | Test |
 | FR-026-AC-25 | Given a ticket unanswered at the 20 second call timeout or at the 60 second budget, it fails with `timed out`, the projects are drawn and nothing is remembered. | Test |
-| FR-026-AC-26 | Given the only project of a focus fails with an error that does not name it and no other call succeeds, it is not remembered and the next refresh asks it again. | Test |
+| FR-026-AC-26 | Given the only project of a focus fails with an error that does not name it and no other call succeeds, one source error is shown, it is not remembered, no call is made for 5 minutes and the first refresh after them asks it again. | Test |
+| FR-026-AC-27 | Given 8 projects of which 2 fail with the same words that name no project, whether both are in one half or one is in each, the other 6 are drawn, the 2 are found within 12 further calls and remembered, and the next refresh is one call for the 6, 30 minutes later. | Test |
+| FR-026-AC-28 | Given 4 projects whose every call is refused, each in its own words that name no project, one source error is shown, nothing is remembered, no project name is asked for, and the first call after 5 minutes asks again. | Test |
 
 ## Superseded in 0.7.1
 

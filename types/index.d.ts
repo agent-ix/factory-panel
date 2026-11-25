@@ -166,7 +166,8 @@ export type FocusView = {
 /** A source's error, shown on the pane and in `/factory show`. */
 export type SourceError = { source: string; text: string }
 
-export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[] }
+/** `scope` is the focus and teams the last finished read was made for. */
+export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string }
 
 // ---------------------------------------------------------------- Escalations and Relay panes
 

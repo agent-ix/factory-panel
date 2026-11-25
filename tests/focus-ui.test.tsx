@@ -353,7 +353,7 @@ test('with problems the card body holds no error text', async ($, on) => {
 
 test('pressing the warning shows the full messages with ids and names, and a second press hides them', async ($, on) => {
   trace("FR-024-AC-4")
-  await setup($, on, { initiatives: ['A'] }, { roadmap: [{ name: 'A', projects: [{ name: 'P1' }] }], projects: { P1: MILESTONE } })
+  await setup($, on, { initiatives: ['A'] }, { ...TWO, projects: { P1: MILESTONE, P2: project('P2', 1, 2) } })
   const d = await draw($)
   expect(d.buttons.find(b => b.key === 'warnings-toggle')!.hotkey).toBeUndefined()
   await d.press('warnings-toggle')
@@ -365,7 +365,7 @@ test('pressing the warning shows the full messages with ids and names, and a sec
 
 test('an error text with no milestone expands to the parts it has', async ($, on) => {
   trace("FR-024-AC-5")
-  await setup($, on, { initiatives: ['A'] }, { roadmap: [{ name: 'A', projects: [{ name: 'P1' }] }], projects: { P1: 'timed out' } })
+  await setup($, on, { initiatives: ['A'] }, { ...TWO, projects: { P1: 'timed out', P2: project('P2', 1, 2) } })
   const d = await draw($)
   await d.press('warnings-toggle')
   expect(d.text).toMatch(/P1.*timed out/)

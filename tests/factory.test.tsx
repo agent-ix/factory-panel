@@ -112,6 +112,11 @@ const engine = (on: Parameters<TestBody>[1], reads = true) => {
     files.set(e.path, e.text)
     return { value: undefined }
   })
+  /** The rename a whole-file write ends with. */
+  return (argv: readonly string[]) => {
+    files.set(argv[3]!, files.get(argv[2]!) ?? '')
+    files.delete(argv[2]!)
+  }
 }
 
 const run = (stdout: string, exitCode = 0) => ({
@@ -119,13 +124,14 @@ const run = (stdout: string, exitCode = 0) => ({
 })
 
 test('the pane draws machines, herdr, relay and board from seeded answers', { options: { teams: 'ENG,ix-relay,web' } }, async ($, on) => {
-  engine(on)
+  const rename = engine(on)
   on('http.fetch', (_, e) => {
     const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
     return { value: { status: 200, ok: true, headers: {}, text: prometheusAnswer(body) } }
   })
   on('process.run', (_, e) => {
     const [bin] = e.argv
+    if (bin === 'mv') return (rename(e.argv), run(''))
     if (bin === 'printenv') return run('/home/test\n')
     if (bin === 'hostname') return run('node-a\n')
     if (bin === 'herdr') return run(herdrSnapshot)

@@ -152,7 +152,7 @@ const stagesOf = (p: StatusProject): Record<string, number> | null => {
 /**
  * The rows of an answer. `alone` is an answer to a call for one project that holds one project: the whole ready queue
  * and every blocker are its own. Otherwise the ready queue is split by project name (not at all where two projects share
- * one) and no blocker is given to a project, since an answer does not say whose a blocker is.
+ * one, nor where an entry names none) and no blocker is given to a project, since an answer does not say whose a blocker is.
  */
 function rowsOf(status: Status, alone: boolean): Row[] {
   const projects = status.projects ?? []
@@ -161,7 +161,8 @@ function rowsOf(status: Status, alone: boolean): Row[] {
     const done = p.progress?.done ?? 0
     const total = p.progress?.total ?? 0
     const shared = projects.filter(o => o.name === p.name).length > 1
-    const ready = !Array.isArray(status.ready_queue) ? null : alone ? status.ready_queue.length : shared ? null : status.ready_queue.filter(r => r?.project === p.name).length
+    const queue = Array.isArray(status.ready_queue) ? status.ready_queue : null
+    const ready = queue === null ? null : alone ? queue.length : shared || queue.some(r => typeof r?.project !== 'string') ? null : queue.filter(r => r.project === p.name).length
     return {
       id: typeof p.id === 'string' ? p.id : null,
       identifier: typeof p.identifier === 'string' ? p.identifier : null,
@@ -176,8 +177,7 @@ function rowsOf(status: Status, alone: boolean): Row[] {
   })
 }
 
-const sumNullable = (values: (number | null)[]): number | null => (values.every(v => v === null) ? null : values.reduce<number>((a, v) => a + (v ?? 0), 0))
-/** A sum that is only known where every part is: a blocker count with a part missing would read as the whole. */
+/** A sum that is only known where every part is: a count with a part missing would read as the whole. */
 const sumAll = (values: (number | null)[]): number | null => (values.length === 0 || values.some(v => v === null) ? null : values.reduce<number>((a, v) => a + v!, 0))
 
 /** A milestone or ticket answer is one row: the sum of the projects it touches, with the answer's own queue and blockers. */
@@ -609,21 +609,27 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   }
   const group = (refs: readonly string[]): Promise<Result> => ask(['focus', 'status', ...refs.flatMap(r => ['--project', r])], refs.length > 1)
 
-  /** What follows one call for these projects: their answers, the failure of the one, or a search among the several. */
-  const settle = async (refs: readonly string[], result: Result): Promise<void> => {
+  /** Several projects whose one call was refused. */
+  type Refused = { refs: readonly string[]; error: string }
+  type Call = { refs: readonly string[]; result: Result }
+
+  /** What follows one call for these projects: their answers, the failure of the one, or the several still to be searched. */
+  const settle = async (refs: readonly string[], result: Result): Promise<Refused | null> => {
     if (result.ok) {
-      let status: Status
+      let status: Status | null = null
       try {
         status = parse(result.stdout)
       } catch {
-        return fail(refs, 'ix-board printed text that is not JSON')
+        fail(refs, 'ix-board printed text that is not JSON')
       }
-      return answer(refs, status)
+      if (status !== null) await answer(refs, status)
+      return null
     }
-    if (sourceError !== null) return
-    if (result.timedOut === true) return fail(refs, 'timed out')
-    if (refs.length === 1) return suspect(refs[0]!, result.error, false)
-    return search(refs, result.error)
+    if (sourceError !== null) return null
+    if (result.timedOut === true) fail(refs, 'timed out')
+    else if (refs.length === 1) suspect(refs[0]!, result.error, false)
+    else return { refs, error: result.error }
+    return null
   }
 
   /** The one ref among these that the error names as the project at fault, by id or else by that project's name. */
@@ -648,26 +654,60 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
     return byName[0]!
   }
 
-  /** Finds the projects that fail a call for several: the one the error names, else by halves. */
-  const search = async (refs: readonly string[], error: string): Promise<void> => {
+  /** The calls that take a refused group apart: the others without the project its error names, else its two halves. */
+  const split = async ({ refs, error }: Refused): Promise<Call[]> => {
     const guilty = await offender(refs, error)
-    if (sourceError !== null) return
-    if (guilty !== null) {
-      suspect(guilty, error, true)
-      const rest = refs.filter(r => r !== guilty)
-      if (!spend(1)) return fail(rest, notIsolated(error))
-      return settle(rest, await group(rest))
-    }
-    if (!spend(2)) return fail(refs, notIsolated(error))
+    if (sourceError !== null) return []
+    if (guilty !== null) suspect(guilty, error, true)
     const middle = Math.ceil(refs.length / 2)
-    const halves = [refs.slice(0, middle), refs.slice(middle)]
-    const [a, b] = (await Promise.all(halves.map(group))) as [Result, Result]
-    // Both halves refused with the very same words, which name nothing: that is ix-board's trouble, not a project's.
-    if (!a.ok && !b.ok && a.timedOut !== true && b.timedOut !== true && a.error === b.error && !UUID_IN.test(a.error)) {
-      sourceError ??= a.error
-      return
+    const parts = guilty !== null ? [refs.filter(r => r !== guilty)] : [refs.slice(0, middle), refs.slice(middle)]
+    if (!spend(parts.length)) {
+      fail(parts.flat(), notIsolated(error))
+      return []
     }
-    await Promise.all([settle(halves[0]!, a), settle(halves[1]!, b)])
+    return Promise.all(parts.map(async part => ({ refs: part, result: await group(part) })))
+  }
+
+  /**
+   * Finds the projects that fail a call for several, one level of splits at a time. While no status call has answered,
+   * a second or later level refused throughout with the very same words, which name nothing, is ix-board's trouble
+   * and not a project's, and the search ends there. The first level proves nothing: one bad project in each half
+   * reads the same.
+   */
+  const search = async (first: Refused): Promise<void> => {
+    let level = [first]
+    for (let depth = 1; level.length > 0; depth++) {
+      const calls = (await Promise.all(level.map(split))).flat()
+      if (sourceError !== null) return
+      // The answers of a level are recorded before its refusals are judged.
+      for (const c of calls) if (c.result.ok) await settle(c.refs, c.result)
+      const refusals = calls.flatMap(c => (!c.result.ok && c.result.timedOut !== true ? [c.result.error] : []))
+      const alike = refusals.length > 1 && refusals.length === calls.length && refusals.every(e => e === refusals[0]) && !UUID_IN.test(refusals[0]!)
+      if (depth > 1 && succeeded === 0 && alike) {
+        sourceError ??= refusals[0]!
+        return
+      }
+      level = []
+      for (const c of calls) {
+        if (c.result.ok) continue
+        const refused = await settle(c.refs, c.result)
+        if (refused !== null) level.push(refused)
+      }
+    }
+  }
+
+  /** The error of the call for all healthy projects, where ix-board refused it. */
+  let refusal: string | null = null
+  const combined = async (refs: readonly string[]): Promise<void> => {
+    const result = await group(refs)
+    if (!result.ok && result.timedOut !== true && sourceError === null) refusal = result.error
+    const refused = await settle(refs, result)
+    if (refused !== null) await search(refused)
+  }
+  /** Whether an error itself shows this project to be at fault: it names it, by its id or a ref long enough to mean it. */
+  const provenBy = (x: Suspect): boolean => {
+    const token = (x.project ? idOf(x.ref) : '') || x.ref
+    return x.named || (token.length >= 8 && x.error.includes(token))
   }
 
   const unit = async (s: Selector): Promise<void> => {
@@ -697,10 +737,19 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   if (sourceError === null) {
     await claim([...new Set(retries.flatMap(badKeys)), ...units.map(selectorKey).filter(k => bad[k] !== undefined)])
     await all([
-      ...(healthy.length === 0 ? [] : [group(healthy).then(r => settle(healthy, r))]),
+      ...(healthy.length === 0 ? [] : [combined(healthy)]),
       ...retries.map(ref => group([ref]).then(r => settle([ref], r))),
       ...units.map(unit),
     ])
+  }
+
+  // The healthy projects were refused and no status call of the refresh answered: unless the errors themselves name
+  // every one of them, nothing shows a project to be at fault. That is a source error: nothing is laid on or
+  // remembered of any.
+  if (sourceError === null && refusal !== null && succeeded === 0 && !healthy.every(ref => suspects.some(x => x.project && x.ref === ref && provenBy(x)))) {
+    sourceError = refusal
+    suspects.length = 0
+    for (const ref of healthy) delete outcomes[projectKey(ref)]
   }
 
   // A project nobody has ever named is asked for its name alone, once.
@@ -755,7 +804,7 @@ const recordOf = (r: Row, at: number, now: number): ProgressRecord => ({
   done: r.done,
   total: r.total,
   inProgress: r.inProgress,
-  ready: r.ready ?? 0,
+  ...(r.ready !== null ? { ready: r.ready } : {}),
   ...(r.blocked !== null ? { blocked: r.blocked } : {}),
   ...(r.stages !== null ? { stages: r.stages } : {}),
   ...(r.id !== null ? { id: r.id } : {}),
@@ -772,7 +821,7 @@ export function recordsOf(refresh: Refresh | null, now: number, existing: Record
       // A name resolved for a project that never answered is kept, unless a record of it exists.
       const n = outcome.named
       if (n?.id != null && existing[projectKey(n.id)] === undefined && mine[projectKey(n.id)] === undefined)
-        mine[projectKey(n.id)] = { at_ms: refresh.at, seen_ms: now, done: 0, total: 0, inProgress: 0, ready: 0, unknown: true, id: n.id, ...(n.identifier !== null ? { identifier: n.identifier } : {}), name: n.name }
+        mine[projectKey(n.id)] = { at_ms: refresh.at, seen_ms: now, done: 0, total: 0, inProgress: 0, unknown: true, id: n.id, ...(n.identifier !== null ? { identifier: n.identifier } : {}), name: n.name }
       continue
     }
     for (const r of outcome.rows) mine[r.id !== null ? projectKey(r.id) : key] = recordOf(r, outcome.at, now)
@@ -854,7 +903,7 @@ const rowFrom = (name: string, key: string, ref: string, r: { done: number; tota
   stages: null,
 })
 
-const recordRow = (r: ProgressRecord) => ({ done: r.done, total: r.total, inProgress: r.inProgress, ready: r.ready, blocked: r.blocked ?? null })
+const recordRow = (r: ProgressRecord) => ({ done: r.done, total: r.total, inProgress: r.inProgress, ready: r.ready ?? null, blocked: r.blocked ?? null })
 
 /**
  * The view of a refresh. A project shows its fresh answer, else its record of at most 24 hours marked old, else
@@ -931,7 +980,7 @@ export function compose(selectors: readonly Selector[], refresh: Refresh | null,
       total: counted.reduce((a, r) => a + r.total, 0),
       inProgress: counted.reduce((a, r) => a + r.inProgress, 0),
       remaining: counted.reduce((a, r) => a + r.total - r.done, 0),
-      ready: sumNullable(counted.map(r => r.ready)),
+      ready: sumAll(counted.map(r => r.ready)),
       blocked: sumAll(counted.map(r => r.blocked)),
       partial: counted.length < rows.length,
       oldestAt: olds.length === 0 ? null : Math.min(...olds),
@@ -985,7 +1034,7 @@ export function compose(selectors: readonly Selector[], refresh: Refresh | null,
       total,
       inProgress: counted.reduce((a, r) => a + r.inProgress, 0),
       remaining: total - done,
-      ready: sumNullable(counted.map(r => r.ready)),
+      ready: sumAll(counted.map(r => r.ready)),
       // One project's own count, else the distinct open blockers of this refresh's answers, which cover every row only
       // while none of them is drawn from a record.
       blocked: counted.length === 1 && counted[0]!.blocked !== null ? counted[0]!.blocked : counted.every(r => !r.old) ? (refresh?.blockers ?? null) : null,

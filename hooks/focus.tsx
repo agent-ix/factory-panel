@@ -4,7 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { FocusInitiative, FocusMeta, FocusProject, FocusView, FocusWarning, SourceError } from '../types'
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
-import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
+import { CARD_BG, INK, after, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { REFRESH_BUDGET_MS, resetBoard, selectorsOfScope } from './board'
 import { loadProgress } from './progressview'
 import type { Selector } from './board'
@@ -13,7 +13,7 @@ import type { Resolved } from './namedfocus'
 import { STALE_MS } from './progress'
 import { setSelectorErrors, sourceClear, sourceFailed, sourceOk } from './sources'
 import { focusDetail } from './showfocus'
-import { track } from './schedule'
+import { isDue, track } from './schedule'
 import { focusBanner, focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
 import { getSelection, scopeOf, selectionReady } from './selection'
 import type { Selection } from './selection'
@@ -124,17 +124,41 @@ const definitionEntry = (d: Resolved): Entry => ({
   selectors: d.unavailable ? [] : d.selectors,
 })
 
+/** What a read is asked for: the focuses held answer this focus and these teams only. */
+const scopeKeyOf = (scope: { focus: string; teams: readonly string[] }): string => `${scope.focus}\u0000${scope.teams.join(',')}`
+
+/** Whether a read has finished for the focus and teams now selected, so that what it did not find is known to be absent. */
+const isRead = (meta: FocusMeta, sel: Selection): boolean => meta.at !== null && meta.scope === scopeKeyOf(scopeOf(sel))
+
 /** The banner line for the focuses now held; `/factory show` prints the same line. */
 export async function focusBannerNow($: EngineInterface, sel: Selection): Promise<string | null> {
   const scope = scopeOf(sel)
-  return focusBanner(scope, await read($, focuses))
+  const all = await read($, focuses)
+  const banner = focusBanner(scope, all)
+  if (isRead(await read($, focusMeta), sel)) return banner
+  // Before a read, "no focus reported" is not known: the own focus line is left out unless an entry of its own shows it.
+  const own = scope.focus.trim().toLowerCase() === 'own' && scope.identity === 'detected'
+  return own && !all.some(f => f.address.toLowerCase() === scope.ownAddress?.toLowerCase()) ? null : banner
 }
 
-/** The lines of `/factory show` for the focuses the selection shows: notes, totals, and every initiative and project with its numbers. */
+/**
+ * The lines of `/factory show` for the focuses the selection shows: how old the data is, or that it is not read yet,
+ * then notes, totals, and every initiative and project with its numbers.
+ */
 export async function focusDetailNow($: EngineInterface, sel: Selection): Promise<string[]> {
   const all = await read($, focuses)
+  const meta = await read($, focusMeta)
+  const now = await $.clock.now()
   const { shown, note } = scopeFocuses(all, scopeOf(sel))
-  return [...(note === null ? [] : [note]), ...focusDetail(shown, await $.clock.now())]
+  const detail = focusDetail(shown, now)
+  if (!isRead(meta, sel)) {
+    const failure = meta.error ?? meta.errors.find(e => e.source === 'agent-msg work')?.text
+    const why = running !== null ? ': it is being read now, run /factory show again' : failure === undefined ? '' : `: the last read failed: ${failure}`
+    return [`focus data: not read yet${why}`, ...detail]
+  }
+  const answered = shown.flatMap(f => (f.fetchedAt === null ? [] : [f.fetchedAt]))
+  const age = `focus data: read ${ago(meta.at!, now)}${answered.length === 0 ? '' : `, progress from ${ago(Math.min(...answered), now)}`}`
+  return [age, ...(note === null ? [] : [note]), ...detail]
 }
 
 /** One refresh at a time: a tick that arrives during one is run once, after it. */
@@ -165,6 +189,19 @@ export function pollFocus($: EngineInterface, manual = false): Promise<void> {
   return running
 }
 
+/** How long a typed command waits for the read it asks for before it answers with what is held. */
+export const COMMAND_WAIT_MS = 5_000
+
+/**
+ * The read a typed command asks for. A command is on screen, so the focuses are read although no view may be drawn,
+ * through the same gates as a view's reads: ix-board is never asked sooner than its gate allows. A choice (`changed`)
+ * reads for what is now selected; otherwise only a source that is due is read, and a read under way is waited for.
+ */
+export async function readForCommand($: EngineInterface, changed: boolean): Promise<void> {
+  const reading = changed || isDue('focus', await $.clock.now()) ? pollFocus($) : running
+  if (reading !== null) await Promise.race([reading, after($, COMMAND_WAIT_MS)])
+}
+
 /** Forgets the refresh state of an earlier session; the tests start each session from nothing. */
 export function resetFocus(): void {
   resetBoard()
@@ -185,11 +222,14 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
     const isName = name !== '' && !['own', 'team'].includes(name.toLowerCase())
     const errors: SourceError[] = []
 
+    // Where the leads cannot be listed nothing is known of them: this read says nothing about what is absent.
+    let listed = true
     const gather = async (): Promise<{ lead: string; report: WorkReport }[]> => {
       let leads: string[]
       try {
         leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
       } catch (error) {
+        listed = false
         errors.push({ source: 'agent-msg work', text: errorText(error) })
         sourceFailed('agent-msg work', errorText(error))
         return []
@@ -264,7 +304,7 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
     if (entries.every(e => e.selectors.length === 0)) sourceClear('ix-board')
     setSelectorErrors(failed)
     const now = await $.clock.now()
-    await update($, focusMeta, () => ({ at: now, busy: false, error: null, errors }))
+    await update($, focusMeta, () => ({ at: now, busy: false, error: null, errors, ...(listed ? { scope: scopeKeyOf(scope) } : {}) }))
     return errors.length === 0
   } catch (error) {
     await update($, focusMeta, m => ({ ...m, busy: false, error: errorText(error) }))

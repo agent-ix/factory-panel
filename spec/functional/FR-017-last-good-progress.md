@@ -26,7 +26,7 @@ The mod SHALL keep the last successful progress of each selector and show it, ma
 - The mod SHALL merge `initiatives` by key when it writes, keeping the newer `seen_ms`.
 - The mod SHALL NOT treat `initiatives` as a malformed progress entry.
 - Where one `initiatives` entry is malformed, the mod SHALL ignore that entry alone.
-- Each progress entry SHALL hold `at_ms`, `seen_ms`, `done`, `total`, `inProgress` and `ready`.
+- Each progress entry SHALL hold `at_ms`, `seen_ms`, `done`, `total` and `inProgress`, and `ready` where it is known ([FR-023](./FR-023-nested-initiative-display.md)).
 - The mod SHALL set `seen_ms` to the current time on every refresh in which the selector is shown.
 - The mod SHALL write the file by writing a temporary file and renaming it.
 - When the mod is about to write, it SHALL re-read the file and merge by selector, keeping the newer `at_ms` and the newer `seen_ms` independently.
