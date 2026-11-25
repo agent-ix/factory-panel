@@ -261,11 +261,23 @@ export async function readBad($: EngineInterface): Promise<Bad> {
   }
 }
 
+/** The writes of the known-bad memory in this process run one after the other, so that none loses another's entries. */
+let badWrites: Promise<unknown> = Promise.resolve()
+
 /**
  * Re-reads the file, sets and removes the given entries, marks the touched ones seen, drops those not seen for
  * 24 hours, and writes it. Nothing is written when there is nothing to change.
  */
-export async function saveBad($: EngineInterface, now: number, change: { set?: Bad; clear?: readonly string[]; touch?: readonly string[] }): Promise<void> {
+export function saveBad($: EngineInterface, now: number, change: BadChange): Promise<void> {
+  const write = () => writeBad($, now, change)
+  const next = badWrites.then(write, write)
+  badWrites = next.catch(() => undefined)
+  return next
+}
+
+type BadChange = { set?: Bad; clear?: readonly string[]; touch?: readonly string[] }
+
+async function writeBad($: EngineInterface, now: number, change: BadChange): Promise<void> {
   const set = change.set ?? {}
   const clear = change.clear ?? []
   const touch = change.touch ?? []

@@ -382,8 +382,6 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
       pending = true
       return null
     }
-    // A roadmap that answered counts as an answer of ix-board, also when another focus or session read it.
-    answered++
     roadmapError = read.data.error ?? null
     return read.data.list ?? null
   }

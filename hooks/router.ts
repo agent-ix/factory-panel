@@ -1,10 +1,10 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
-import { focusBannerNow, focusDetailNow, pollFocus } from './focus'
+import { focusBannerNow, focusDetailNow } from './focus'
 import { readRecords } from './progress'
 import { SOURCE_NAMES, selectorErrorList, sourceState } from './sources'
-import { pollBoard } from './factory'
+import { markStale } from './schedule'
 import { clearChoice, getSelection, normalizeModules, refreshSelection, writeChoice } from './selection'
 import type { Feature, Selection } from './selection'
 import { defaultView, isViewId, showView } from './views'
@@ -105,23 +105,22 @@ export const showText = async ($: EngineInterface, sel: Selection): Promise<stri
 
 const list = (text: string): string[] => text.split(/[\s,]+/).filter(Boolean)
 
-/** After a choice: re-read, say what is now shown, and refresh the data the scope reads. */
-async function applied($: EngineInterface, options: Options, lead: string): Promise<string> {
+/** After a choice: re-read and say what is now shown. The data the scope reads is due at the next drawing of a view that shows it. */
+async function applied($: EngineInterface, lead: string): Promise<string> {
   const sel = await refreshSelection($)
-  void pollFocus($).catch(() => undefined)
-  void pollBoard($, options).catch(() => undefined)
+  markStale('focus', 'board')
   $.ui.invalidate('ui.render')
   return `${lead}\n${await showText($, sel)}`
 }
 
-async function choose($: EngineInterface, options: Options, command: string, rest: string): Promise<string> {
+async function choose($: EngineInterface, command: string, rest: string): Promise<string> {
   const failed = async (what: () => Promise<void>, lead: string): Promise<string> => {
     try {
       await what()
     } catch (error) {
       return `Could not save your choice: ${error instanceof Error ? error.message : String(error)}`
     }
-    return applied($, options, lead)
+    return applied($, lead)
   }
   switch (command) {
     case 'use': {
@@ -161,9 +160,9 @@ export async function runFactory($: EngineInterface, options: Options, args: str
   const sel = await refreshSelection($)
   if (command === 'help' && rest === '') return helpText(isFullscreen, sel)
   if (command === 'show' && rest === '') return showText($, sel)
-  if (command === 'reset' && rest === '') return choose($, options, 'reset', '')
-  if (command === 'focus' && rest !== '') return choose($, options, 'focus', rest)
-  if (['use', 'teams', 'hosts'].includes(command)) return choose($, options, command, rest)
+  if (command === 'reset' && rest === '') return choose($, 'reset', '')
+  if (command === 'focus' && rest !== '') return choose($, 'focus', rest)
+  if (['use', 'teams', 'hosts'].includes(command)) return choose($, command, rest)
   let view: ViewId
   if (text === '') view = defaultView(sel.modules.value)
   else if (isViewId(command) && rest === '') view = command
