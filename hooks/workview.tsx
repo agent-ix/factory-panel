@@ -3,13 +3,13 @@ import type { EngineInterface, On } from 'claude-code'
 
 import type { WorkAgent, WorkFeed, WorkLast, WorkLead, WorkMeta } from '../types'
 import { CARD_BG, ago, agoShort, errorText, runJson } from './shared'
-import { WORK_TIMEOUT_MS, listLeads, readReport } from './focus'
-import type { WorkReport } from './focus'
+import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
+import type { LeadRead, WorkReport } from './leads'
 import { focusTeams, statusOf, teamOf } from './band/modules'
 import { track } from './schedule'
 import { getSelection, scopeOf, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
-import { composeWork, foldFeed, isCutWithin, lastOfEvents, mergedSince, readBoards, recentOf, ticketIds } from './work'
+import { composeWork, foldFeed, isCutWithin, lastOfEvents, mergedSince, readBoards, recentOf, recentRows, ticketIds } from './work'
 import type { RecentEntry, WorkTicket } from './work'
 import type { Options } from './shared'
 
@@ -26,9 +26,9 @@ const EVENT_LIMIT = 1000
 const EVENT_PAGES = 5
 const RECENT_ROWS = 10
 
-const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-1' })
+const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-2' })
 const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, WorkLast>, { shape: 'workLast-1' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, unread: 0 } as WorkMeta, { shape: 'workMeta-2' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0 } as WorkMeta, { shape: 'workMeta-3' })
 const EMPTY_FEED: WorkFeed = { events: [], phase: {}, error: null }
 const workFeed = atom({ plugin: 'factory-panel', key: 'workFeed' } as const, EMPTY_FEED, { shape: 'workFeed-1' })
 export const workCollapsed = atom({ plugin: 'factory-panel', key: 'workCollapsed' } as const, [] as string[])
@@ -40,10 +40,23 @@ const workWarnings = atom({ plugin: 'factory-panel', key: 'workWarnings' } as co
 const agentsOf = (report: WorkReport): WorkAgent[] =>
   (report.agents ?? []).map(a => ({ name: a.name ?? '', ticket: a.ticket ?? '', role: a.role ?? '', status: a.status ?? '', reportedAt: typeof a.reported_at_ms === 'number' ? a.reported_at_ms : null }))
 
-const leadOf = (address: string, report: WorkReport): WorkLead => {
+const leadOf = (address: string, report: WorkReport): Omit<WorkLead, 'error' | 'readAt'> => {
   const agents = agentsOf(report)
   const times = [...agents.map(a => a.reportedAt), report.focus?.reported_at_ms, report.scope?.reported_at_ms].filter((t): t is number => typeof t === 'number')
   return { address: report.binding?.address ?? address, status: statusOf(report.agents), reportedAt: times.length === 0 ? null : Math.max(...times), agents }
+}
+
+/**
+ * The leads to draw while `reads` come in: one not yet answered keeps what was drawn of it, one that has reported
+ * nothing is left out, and one that could not be read is drawn as last read, else as unread.
+ */
+function leadsOf(addresses: readonly string[], reads: ReadonlyMap<string, LeadRead>, drawn: readonly WorkLead[]): WorkLead[] {
+  return addresses.flatMap((address): WorkLead[] => {
+    const read = reads.get(address)
+    if (read === undefined) return drawn.filter(l => l.address === address)
+    if (read.report) return [{ ...leadOf(address, read.report), error: read.error, readAt: read.at }]
+    return read.error === null ? [] : [{ address, status: 'unknown', reportedAt: null, agents: [], error: read.error, readAt: null }]
+  })
 }
 
 type EventPage = { events?: unknown[]; has_more?: boolean; next_cursor?: string }
@@ -67,7 +80,7 @@ async function readEvents($: EngineInterface, prior: Record<string, WorkLast>, h
   let cursor = eventCursor
   let more = false
   for (let page = 0; page < EVENT_PAGES; page++) {
-    const answer = await runJson<EventPage>($, ['agent-msg', 'work', 'events', '--limit', String(EVENT_LIMIT), '--after', cursor], WORK_TIMEOUT_MS)
+    const answer = await twice(() => runJson<EventPage>($, ['agent-msg', 'work', 'events', '--limit', String(EVENT_LIMIT), '--after', cursor], RELAY_TIMEOUT_MS))
     const events = Array.isArray(answer.events) ? answer.events : []
     lastOfEvents(events, last)
     feed = foldFeed(events, feed)
@@ -81,8 +94,8 @@ async function readEvents($: EngineInterface, prior: Record<string, WorkLast>, h
 let running: Promise<boolean> | null = null
 
 /** Reads the leads and their work reports; one read at a time. False when the relay could not be read. */
-export function pollWork($: EngineInterface): Promise<boolean> {
-  running ??= track($, 'work', () => refreshWork($)).finally(() => {
+export function pollWork($: EngineInterface, manual = false): Promise<boolean> {
+  running ??= track($, 'work', () => refreshWork($, manual ? 0 : LEAD_REUSE_MS)).finally(() => {
     running = null
   })
   return running
@@ -120,10 +133,9 @@ async function refreshEvents($: EngineInterface): Promise<boolean> {
   }
 }
 
-async function refreshWork($: EngineInterface): Promise<boolean> {
+async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean> {
   // The first drawing shows that a read is under way before anything has answered.
   await update($, workMeta, m => ({ ...m, busy: true }))
-  const errors: string[] = []
   try {
     await selectionReady()
     const teams = focusTeams(scopeOf(getSelection()))
@@ -132,23 +144,27 @@ async function refreshWork($: EngineInterface): Promise<boolean> {
       addresses = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
     } catch (error) {
       sourceFailed('agent-msg work', errorText(error))
+      // With no list nothing is read: every lead drawn is as it was last read.
+      await update($, workLeads, drawn => drawn.map(l => ({ ...l, error: errorText(error) })))
       throw error
     }
-    const reads = await Promise.all(addresses.map(async address => ({ address, read: await readReport($, address) })))
-    const leads: WorkLead[] = []
-    const failed: string[] = []
-    for (const { address, read: r } of reads) {
-      if ('error' in r) failed.push(`${address}: ${r.error}`)
-      else if (r.report !== null) leads.push(leadOf(address, r.report))
-    }
-    // A lead with no live agent fails its read as a matter of course: that is a source error only where every read failed.
-    if (failed.length > 0 && failed.length === reads.length) errors.push(failed.join(' · '))
-    if (errors.length === 0) sourceOk('agent-msg work', await $.clock.now())
-    else sourceFailed('agent-msg work', errors.join(' · '))
-    await update($, workLeads, () => leads)
+    const reads = new Map<string, LeadRead>()
+    // Each lead is drawn as it answers: those on this machine do not wait for those reached through ssh.
+    await Promise.all(
+      addresses.map(async address => {
+        reads.set(address, await readLead($, address, reuseMs))
+        await update($, workLeads, drawn => leadsOf(addresses, reads, drawn))
+      }),
+    )
+    await update($, workLeads, drawn => leadsOf(addresses, reads, drawn))
+    const failed = [...reads.values()].filter(r => r.error !== null).sort((a, b) => a.address.localeCompare(b.address)).map(r => `${r.address}: ${r.error}`)
+    // Some leads failing is told lead by lead; the source has failed where none answered.
+    const failure = failed.length > 0 && failed.length === reads.size ? failed.join(' · ') : null
+    if (failure === null) sourceOk('agent-msg work', await $.clock.now())
+    else sourceFailed('agent-msg work', failure)
     const now = await $.clock.now()
-    const failure = errors.length === 0 ? null : errors.join(' · ')
-    await update($, workMeta, () => ({ at: now, busy: false, error: failure, relayError: failure, listed: reads.length, unread: failed.length }))
+    const relayError = failure === null ? null : `no lead could be read, ${failed[0]}`
+    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size }))
     return failure === null
   } catch (error) {
     await update($, workMeta, m => ({ ...m, busy: false, error: errorText(error), relayError: errorText(error) }))
@@ -165,6 +181,8 @@ const MARKS: Record<string, { mark: string; color: string }> = {
   done: { mark: '✓', color: 'success' },
 }
 const UNKNOWN = { mark: '◌', color: 'inactive' }
+/** The mark of a lead whose report the last read did not get. */
+const NOT_READ = { mark: '▲', color: 'warning' }
 
 const KIND_MARKS = { merged: { mark: '✓', color: 'success' }, closed: { mark: '●', color: 'warning' }, opened: { mark: '○', color: 'subtle' } } as const
 const STEP_MARKS = { start: { mark: '◐', color: 'claude' }, done: { mark: '✓', color: 'success' } } as const
@@ -212,19 +230,25 @@ export function registerWork(on: On, _options: Options): void {
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const view = composeWork(leads, last, boards)
     const tickets = ticketIds(leads).length
+    // A lead whose report was never read may hold more tickets; one drawn as last read is marked old on its row.
+    const unread = view.leads.filter(l => l.readAt === null).length
+    const old = view.leads.filter(l => l.readAt !== null && l.error !== null).length
+    const notRead = [unread > 0 ? `${unread} not read` : '', old > 0 ? `${old} old` : ''].filter(Boolean).map(t => ` · ${t}`).join('')
     const merged = `${isCutWithin(view.cutAt, now, 24) ? '≥' : ''}${mergedSince(view.activity, now, 24)}`
 
     if (e.props.placement === 'widget') {
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{`${view.leads.length} lead${view.leads.length === 1 ? '' : 's'} · ${tickets} ticket${tickets === 1 ? '' : 's'}${view.activity === null ? '' : ` · ${merged} merged 24h`}`}</Text>
+          <Text weight="semibold">{`${view.leads.length} lead${view.leads.length === 1 ? '' : 's'} · ${unread > 0 ? '≥' : ''}${tickets} ticket${tickets === 1 ? '' : 's'}${view.activity === null ? '' : ` · ${merged} merged 24h`}${notRead}`}</Text>
         </Box>
       )
     }
 
     const leadBlock = (l: (typeof view.leads)[number]) => {
       const isOpen = !collapsed.includes(l.address)
-      const m = MARKS[l.status] ?? UNKNOWN
+      const isFailed = l.error !== null
+      const m = isFailed ? NOT_READ : (MARKS[l.status] ?? UNKNOWN)
+      const age = l.readAt === null ? 'not read' : isFailed ? `old ${agoShort(l.readAt, now)}` : l.at === null ? '—' : agoShort(l.at, now)
       return (
         <Box key={`lead-${l.address}`} flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
@@ -232,17 +256,17 @@ export function registerWork(on: On, _options: Options): void {
               <Button key={`toggle-${l.address}`} plain label={isOpen ? '▾' : '▸'} onPress={() => void toggleCollapsed($, l.address)} />
               <Text color={m.color}>{m.mark}</Text>
               <Text wrap="truncate-end">{l.address}</Text>
-              {!isOpen && <Text dimColor>{`(${l.tickets.length} ticket${l.tickets.length === 1 ? '' : 's'})`}</Text>}
+              {!isOpen && l.readAt !== null && <Text dimColor>{`(${l.tickets.length} ticket${l.tickets.length === 1 ? '' : 's'})`}</Text>}
             </Box>
-            <Text dimColor size="caption" tabular>{l.at === null ? '—' : agoShort(l.at, now)}</Text>
+            <Text dimColor size="caption" tabular>{age}</Text>
           </Box>
           {isOpen && l.tickets.map(t => <Text key={`${l.address}-${t.id}`} wrap="truncate-end">{ticketLine(t, now, width)}</Text>)}
-          {isOpen && l.tickets.length === 0 && <Text dimColor>   no ticket reported</Text>}
+          {isOpen && l.readAt !== null && l.tickets.length === 0 && <Text dimColor>   no ticket reported</Text>}
         </Box>
       )
     }
 
-    const rows = recentOf(view.activity, feed.events, all, focusTeams(scopeOf(getSelection()))).slice(0, RECENT_ROWS)
+    const rows = recentRows(recentOf(view.activity, feed.events, all, focusTeams(scopeOf(getSelection()))), RECENT_ROWS)
     // Why ix-board's part of Recent is not there; the relay's events show without it.
     const missing = !view.hasBoard ? 'Waiting for ix-board’s focus status…' : view.activity === null ? 'needs ix-board ≥0.9.0' : null
     const recent = () => (
@@ -268,13 +292,14 @@ export function registerWork(on: On, _options: Options): void {
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text weight="semibold" size="heading">Work</Text>
-            <Text dimColor size="caption">{view.leads.length} {view.leads.length === 1 ? 'lead' : 'leads'}</Text>
+            <Text dimColor size="caption">{`${view.leads.length} ${view.leads.length === 1 ? 'lead' : 'leads'}${notRead}`}</Text>
           </Box>
-          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($), pollEvents($)])} />
+          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($)])} />
         </Box>
 
+        {/* A read that failed says nothing of who has reported. */}
         {view.leads.length === 0 && (
-          <Text dimColor>{meta.busy || meta.at === null ? 'Reading the leads’ work reports…' : 'No lead has reported work.'}</Text>
+          <Text dimColor>{meta.relayError !== null ? 'The leads could not be read.' : meta.busy || meta.at === null ? 'Reading the leads’ work reports…' : 'No lead has reported work.'}</Text>
         )}
 
         {view.leads.length > 0 && (

@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { FocusView } from '../types'
-import { SourceFailure, compose, membershipsOf,projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
+import { SourceFailure, WORK_SHAPE, compose, membershipsOf,projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
 import type { Refresh, Selector } from './board'
 import { gatedBoard } from './linear'
 import { mergeInitiatives, mergeRecords, readFile, saveFile } from './progress'
@@ -41,7 +41,7 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
         throw error
       })
     },
-    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true, repeats: (r: Refresh) => r.unproven === true },
+    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true, repeats: (r: Refresh) => r.unproven === true, outdated: (r: Refresh) => r.work !== WORK_SHAPE },
   )
   const now = await $.clock.now()
   const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error

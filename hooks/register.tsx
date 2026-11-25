@@ -7,6 +7,7 @@ import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { PANE_SPEC as WORK_PANE, registerWork, resetWork } from './workview'
 import { resolveEndpoints } from './endpoints'
+import { resetLeads } from './leads'
 import { bandPlan, renderBand, startBand, syncStatus } from './band'
 import { resetSchedule, setRefresh } from './schedule'
 import { resetSelection } from './selection'
@@ -70,6 +71,7 @@ export const register: Register = (on, rawOptions) => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     resetSelection()
+    resetLeads()
     resetFocus()
     resetWork()
     resetSchedule()

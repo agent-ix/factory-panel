@@ -121,10 +121,10 @@ test('the badges are pr for an open or draft PR only, review with the count of r
   expect(ticketRow(d, 'QSL-1251')).toMatch(/\[spec\]/)
   await d.unmount()
   const board = boardOf(JSON.parse(rich()))
-  const one = composeWork([{ address: LEAD, status: 'running', reportedAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'running', reportedAt: NOW }, { name: 'b', ticket: 'QSL-9', role: 'coder', status: 'running', reportedAt: NOW }] }], {}, [{ issues: [{ identifier: 'QSL-9', title: 't', state: 'Specify', prs: [pr('draft')] }], activity: board.activity }])
+  const one = composeWork([{ address: LEAD, status: 'running', reportedAt: NOW, error: null, readAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'running', reportedAt: NOW }, { name: 'b', ticket: 'QSL-9', role: 'coder', status: 'running', reportedAt: NOW }] }], {}, [{ issues: [{ identifier: 'QSL-9', title: 't', state: 'Specify', prs: [pr('draft')] }], activity: board.activity }])
   expect(one.leads[0]!.tickets[0]!.badges).toEqual(['[pr]', '[review]', '[spec]'])
   // Finished agents keep no badge.
-  const done = composeWork([{ address: LEAD, status: 'done', reportedAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'done', reportedAt: NOW }, { name: 'g', ticket: 'QSL-9', role: 'gate', status: 'failed', reportedAt: NOW }, { name: 's', ticket: 'QSL-9', role: 'spec-author', status: 'done', reportedAt: NOW }] }], {}, [])
+  const done = composeWork([{ address: LEAD, status: 'done', reportedAt: NOW, error: null, readAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'done', reportedAt: NOW }, { name: 'g', ticket: 'QSL-9', role: 'gate', status: 'failed', reportedAt: NOW }, { name: 's', ticket: 'QSL-9', role: 'spec-author', status: 'done', reportedAt: NOW }] }], {}, [])
   expect(done.leads[0]!.tickets[0]!.badges).toEqual([])
 })
 
@@ -448,3 +448,90 @@ test('a band with the work module reads the leads and the focus status, shows th
   expect(w.opens.at(-1)?.id).toBe('work')
   await ui.unmount()
 })
+
+// ---------------------------------------------------------------- FR-028 the share of Recent held for role events
+
+const busy = (count: number) => rich({ activity: Array.from({ length: count }, (_, i) => act('merged', `QSL-${3000 + i}`, 't', i + 1, 500 + i)) })
+const reviews = (count: number) => events(...Array.from({ length: count }, (_, i): [string, string, string, string, number] => [LEAD, `QSL-${4000 + i}`, 'reviewer', 'running', 600 - i]))
+const kinds = (d: Drawn) => ({ role: recent(d).filter(l => /review start/.test(l)).length, activity: recent(d).filter(l => /filament-mltl#/.test(l)).length })
+
+for (const [title, activity, roles, expected] of [
+  ['role events older than all the activity keep half of the rows', 40, 20, { role: 5, activity: 5 }],
+  ['rows the role events do not fill go to the activity', 40, 2, { role: 2, activity: 8 }],
+  ['rows the activity does not fill go to the role events', 3, 20, { role: 7, activity: 3 }],
+] as const) {
+  test(`under a, ${title}`, async ($, on) => {
+    trace("FR-028-AC-18")
+    await setup($, on, busy(activity), reviews(roles))
+    const d = await draw($)
+    await d.press('kinds')
+    expect(kinds(d)).toEqual(expected)
+    // The newest of each kind, listed together newest first.
+    const ages = recent(d).map(l => l.split(' ')[0]!)
+    expect(ages.slice(0, expected.activity)).toEqual(Array.from({ length: expected.activity }, (_, i) => `${i + 1}m`))
+    expect(recent(d).slice(expected.activity).every(l => /review start/.test(l))).toBe(true)
+    expect(recent(d).at(expected.activity)).toMatch(new RegExp(`QSL-${4000 + roles - 1} `))
+    await d.unmount()
+  })
+}
+
+// ---------------------------------------------------------------- a gate entry an older build wrote
+
+const GATE = `${FP}/linear-gate.json`
+const KEY = 'progress:project:Alpha'
+
+/** The gate as a build older than 0.9.0 leaves it: a progress answer with no tickets or activity, read 5 minutes ago. */
+const seedGate = (w: World, entry: Record<string, unknown> = {}) => {
+  const data = { at: NOW - 5 * MIN, roadmapError: null, sourceError: null, expansions: [], outcomes: {}, blockers: 0 }
+  w.files.set(GATE, JSON.stringify({ backoffUntil: null, entries: { [KEY]: { at: NOW - 5 * MIN, claimAt: null, data, ...entry } } }))
+}
+
+async function overGate($: $t, on: Parameters<TestBody>[1], seed: (w: World) => void): Promise<World> {
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9)] })
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ').startsWith('agent-msg work events') ? out(events()) : prior?.(argv, init))
+  ix(w, { projects: { Alpha: () => out(rich()) } })
+  seed(w)
+  await startSession($)
+  return w
+}
+
+const focusCalls = (w: World) => w.ran.filter(l => l.startsWith('ix-board --json focus status'))
+
+test('a gate entry without the tickets and activity, as an older build writes it, is read again at once', async ($, on) => {
+  trace("FR-025-AC-15")
+  const w = await overGate($, on, w => seedGate(w))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(1000)
+  expect(focusCalls(w)).toHaveLength(1)
+  const drawn = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(drawn.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/\[pr\]/)
+  expect(drawn.some(l => /filament-mltl#412/.test(l))).toBe(true)
+  // The answer written now holds: later reads are answered from the gate.
+  await w.clock!.advance(10 * MIN)
+  expect(focusCalls(w)).toHaveLength(1)
+  // An older session writes over it again: it is read again once.
+  seedGate(w)
+  await w.clock!.advance(10 * MIN)
+  expect(focusCalls(w)).toHaveLength(2)
+  await ui.unmount()
+})
+
+for (const [title, entry, backoff] of [
+  ['held after a failure', { unkept: true, error: 'ix-board: authentication failed', at: NOW - 26 * MIN }, null],
+  ['that another session is reading', { claimAt: NOW - 1000 }, null],
+  ['under a Linear rate limit', {}, NOW + 60 * MIN],
+] as const) {
+  test(`an older entry ${title} is left to its hold`, async ($, on) => {
+    trace("FR-025-AC-15")
+    const w = await overGate($, on, w => {
+      seedGate(w, entry)
+      if (backoff !== null) w.files.set(GATE, JSON.stringify({ ...JSON.parse(w.files.get(GATE)!), backoffUntil: backoff }))
+    })
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+    await w.clock!.advance(2 * MIN)
+    expect(focusCalls(w)).toEqual([])
+    await ui.unmount()
+  })
+}

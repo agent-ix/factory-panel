@@ -24,7 +24,8 @@ const NOW = Date.UTC(2026, 10, 24, 12, 0)
 const HOUR = 3_600_000
 
 /** A lead whose agents report these tickets. */
-const workLead = (address: string, ...tickets: string[]): WorkLead => ({ address, status: 'running', reportedAt: NOW, agents: tickets.map((ticket, i) => ({ name: `a${i}`, ticket, role: 'coder', status: 'running', reportedAt: NOW })) })
+const workLead = (address: string, ...tickets: string[]): WorkLead => ({ address, status: 'running', reportedAt: NOW, agents: tickets.map((ticket, i) => ({ name: `a${i}`, ticket, role: 'coder', status: 'running', reportedAt: NOW })), error: null, readAt: NOW })
+const unreadLead = (address: string): WorkLead => ({ address, status: 'unknown', reportedAt: null, agents: [], error: 'timed out', readAt: null })
 const openPr = (number: number, status = 'open') => ({ url: `https://github.com/agent-ix/x/pull/${number}`, repo: 'agent-ix/x', number, status, draft: status === 'draft' })
 const merge = (ago: number, number: number) => ({ at: NOW - ago * HOUR, kind: 'merged' as const, identifier: `QSL-${number}`, title: 't', project: 'p', repo: 'agent-ix/x', number })
 /** Two tickets with two open PRs between them (one shared, one draft), one merged PR, and merges 1, 23 and 25 hours old. */
@@ -36,7 +37,7 @@ const board = (): WorkBoard => ({
   ],
   activity: [merge(1, 5), merge(23, 6), merge(25, 7)],
 })
-const workState = (over: Partial<Snapshot['work']> = {}): Snapshot['work'] => ({ leads: [workLead('hub:QSL:code', 'QSL-1', 'QSL-2')], at: NOW, relayError: null, listed: 1, unread: 0, boards: [board()], ...over })
+const workState = (over: Partial<Snapshot['work']> = {}): Snapshot['work'] => ({ leads: [workLead('hub:QSL:code', 'QSL-1', 'QSL-2')], at: NOW, relayError: null, listed: 1, boards: [board()], ...over })
 
 const row = (name: string, done: number, total: number, inProgress: number) => ({ key: `project:${name}`, ref: name, id: name, name, failed: false, done, total, inProgress, ready: 0, blocked: 0, at: null, old: false, stages: null })
 const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
@@ -234,20 +235,28 @@ test('where ix-board cut its activity inside the last day the merges are a lower
   expect(workText({ leads: [], boards: [answer(3, 60), answer(200, 2)] })).toMatch(/≥\d+ merged 24h$/)
 })
 
-test('with a lead’s report unread the tickets and PRs are lower bounds and the band says how many leads are missing', () => {
+test('with a lead’s report never read the tickets and PRs are lower bounds and the band says how many leads are missing', () => {
   trace("FR-009-AC-13")
-  expect(workText({ listed: 3, unread: 2 })).toBe('≥2 tickets · ≥2 PRs open · 2 merged 24h')
-  expect(buildCells(['work'], snapshot({ work: workState({ listed: 3, unread: 2 }) }))[0]?.alert).toBe('agent-msg work: 2 of 3 leads not read')
-  expect(workText({ leads: [], listed: 3, unread: 1, boards: [] })).toBe('≥0 tickets · — PRs open · — merged 24h')
+  const read = workLead('hub:QSL:code', 'QSL-1', 'QSL-2')
+  const two = { leads: [read, unreadLead('far:QSL:a'), unreadLead('far:QSL:b')], listed: 3 }
+  expect(workText(two)).toBe('≥2 tickets · ≥2 PRs open · 2 merged 24h')
+  expect(buildCells(['work'], snapshot({ work: workState(two) }))[0]?.alert).toBe('agent-msg work: 2 of 3 leads not read')
+  expect(workText({ leads: [workLead('hub:QSL:code'), unreadLead('far:QSL:a')], listed: 2, boards: [] })).toBe('≥0 tickets · — PRs open · — merged 24h')
+  // A report from an earlier read is counted: the numbers are not short, and the band says it is old.
+  const old = { leads: [read, { ...workLead('far:QSL:a', 'QSL-3'), error: 'timed out', readAt: NOW - HOUR }], listed: 2 }
+  expect(workText(old)).toBe('3 tickets · ≥2 PRs open · 2 merged 24h')
+  expect(buildCells(['work'], snapshot({ work: workState(old) }))[0]?.alert).toBe('agent-msg work: 1 of 2 leads not read, 1 shown from an earlier read')
 })
 
 test('the work cell is left out until the relay has answered or failed, and says why where it failed', () => {
   trace("FR-009-AC-11", "FR-009-AC-12")
   expect(buildCells(['work'], snapshot({ work: workState({ at: null, leads: [] }) }))).toEqual([])
-  // The leads held from an earlier read are not drawn as of now.
-  const failed = snapshot({ work: workState({ relayError: 'redis down' }) })
-  expect(text(buildCells(['work'], failed), 'work')).toBe('— tickets · — PRs open · 2 merged 24h')
+  // Leads held from an earlier read are counted and the band says why they are not new.
+  const failed = snapshot({ work: workState({ leads: [{ ...workLead('hub:QSL:code', 'QSL-1', 'QSL-2'), error: 'redis down' }], relayError: 'redis down' }) })
+  expect(text(buildCells(['work'], failed), 'work')).toBe('2 tickets · 2 PRs open · 2 merged 24h')
   expect(buildCells(['work'], failed)[0]?.alert).toBe('agent-msg work: redis down')
+  const unread = snapshot({ work: workState({ leads: [unreadLead('hub:QSL:code')], relayError: 'no lead could be read' }) })
+  expect(text(buildCells(['work'], unread), 'work')).toBe('— tickets · — PRs open · 2 merged 24h')
   const never = snapshot({ work: workState({ at: null, leads: [], boards: [], relayError: 'redis down' }) })
   expect(text(buildCells(['work'], never), 'work')).toBe('— tickets · — PRs open · — merged 24h')
   // ix-board's trouble is the focus's warning.

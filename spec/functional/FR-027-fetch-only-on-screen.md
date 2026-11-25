@@ -67,6 +67,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | Band cell `team` | Prometheus team series |
 
 - The band SHALL read the sources of every module it is selected to show, including a module that has nothing to say and draws no cell, and the selection.
+- The focus and the work reports share their reads of the leads, so a lead's report just read for one is not read again for the other ([FR-030](./FR-030-lead-report-reads.md)).
 
 ### How often
 

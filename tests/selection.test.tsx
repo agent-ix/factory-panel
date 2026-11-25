@@ -788,7 +788,7 @@ function snapshotOf() {
     relayError: null,
     boardError: null,
     now: Date.UTC(2026, 10, 24, 12, 0),
-    work: { leads: [], at: 1, relayError: null, listed: 0, unread: 0, boards: [] },
+    work: { leads: [], at: 1, relayError: null, listed: 0, boards: [] },
   } as Parameters<typeof buildCells>[1]
 }
 

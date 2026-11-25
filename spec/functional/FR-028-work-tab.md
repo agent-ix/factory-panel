@@ -25,7 +25,10 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 ### Leads and tickets
 
 - The Work view SHALL be the third view, after Focus, in the dock and in `/factory` ([FR-003](./FR-003-one-command.md)), opened by `/factory work`.
-- The mod SHALL list the verified leads of `agent-msg who` that the selected teams allow, each with a status mark (`◐` running, `◌` waiting or unknown, `✕` failed, `✓` done) and the age of its latest report.
+- The mod SHALL list the verified leads of `agent-msg who` that the selected teams allow and that have a report or could not be read ([FR-030](./FR-030-lead-report-reads.md)), each with a status mark (`◐` running, `◌` waiting or unknown, `✕` failed, `✓` done) and the age of its latest report.
+- A lead whose last read failed SHALL carry the mark `▲` in place of its status, and read `old <age>` where an earlier report is drawn, with the age of that read, or `not read` where there is none.
+- Each lead SHALL be drawn as its read answers.
+- The header SHALL say how many leads are listed, and how many are `not read` and `old`.
 - Under each lead the mod SHALL list the tickets of the agents in `agent-msg work --lead <address> show`, keeping each agent's name, ticket, role, status and report time, newest action first.
 - A badge SHALL count only agents that are running or waiting.
 - A ticket row SHALL show its id, the Linear state and title where ix-board's focus status names the ticket, its badges, and its last action as `<role> <status> <age>`.
@@ -38,6 +41,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 
 - The Recent section SHALL list at most 10 rows, newest first.
 - It SHALL list merges only until the `a` key shows every kind, and the `a` key SHALL toggle back. Every kind is the merged, closed and opened entries of the focus status's `activity[]`, and the `review` and `spec` events of the relay with the gate events.
+- Under every kind, 5 of the 10 rows SHALL be held for the newest role events, however much newer `activity[]` there is, and the other 5 for the newest `activity[]` entries. Rows one of the two does not fill SHALL go to the other. The rows chosen SHALL be listed together, newest first.
 - A row of an `activity[]` entry SHALL show its mark (`✓` merged, `●` closed, `○` opened), its age, the repository and PR number, the ticket id and the title.
 - Where the focus status has no `activity` key (an ix-board older than 0.9.0) it SHALL say `needs ix-board ≥0.9.0`, and the tickets SHALL show without a PR badge. Under every kind the relay's events SHALL be listed with that line, and with the line that says the focus status is awaited before one is read.
 
@@ -55,9 +59,9 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 
 - The tickets, their states and PRs and the activity SHALL come from the same gated `ix-board --json focus status` answer the Focus view reads: the Work view SHALL make no further Linear or ix-board call, and SHALL read an answer wrapped in a `result` key as the object inside.
 - While the view is on screen ([FR-027](./FR-027-fetch-only-on-screen.md)) the leads and their work reports SHALL be read once a minute and the events every 30 seconds, one read of each at a time, so that a transition is listed within 60 seconds of its report. The events read SHALL NOT wait on the leads' reports. The `r` key SHALL read both at once.
-- A failed relay read SHALL be one warning icon with its count on the footer, as on the Focus view ([FR-024](./FR-024-warning-icon-in-footer.md)).
+- Failed relay reads SHALL be one warning icon with their count on the footer, one for each lead not read, as on the Focus view ([FR-024](./FR-024-warning-icon-in-footer.md)).
 - Colour SHALL mark state only: the status and activity marks are coloured, ticket text is not. A row SHALL fit 60 columns, with ages like `4m` and no blank row inside the lead block.
-- The widget SHALL say `N leads · M tickets · K merged 24h`, with M the distinct tickets and K the distinct merged PRs, drawn `≥K` where ix-board cut its activity inside the day ([FR-009](./FR-009-band-cells.md)).
+- The widget SHALL say `N leads · M tickets · K merged 24h`, adding the leads `not read` and `old` and drawing `≥M` where a lead was never read, with M the distinct tickets and K the distinct merged PRs, drawn `≥K` where ix-board cut its activity inside the day ([FR-009](./FR-009-band-cells.md)).
 
 ## Acceptance Criteria
 
@@ -80,8 +84,9 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-15 | The events of a lead outside the selected teams are not listed. | Test |
 | FR-028-AC-16 | A review reported while the view is on screen is listed within 60 seconds. | Test |
 | FR-028-AC-17 | With no `activity` in the focus status, `a` lists the role events and says `needs ix-board ≥0.9.0`. | Test |
+| FR-028-AC-18 | Under `a`, 5 role events show beside 40 newer activity entries, and rows either kind does not fill go to the other, listed together newest first. | Test |
 
 ## Dependencies
 
 - **Upstream**: [US-001](../usecase/US-001-glance.md), [US-002](../usecase/US-002-open-more.md)
-- **See also**: [FR-004](FR-004-detail-view.md), [FR-025](FR-025-per-project-last-good.md), [FR-027](FR-027-fetch-only-on-screen.md), [FR-029](FR-029-team-metrics.md)
+- **See also**: [FR-030](FR-030-lead-report-reads.md), [FR-004](FR-004-detail-view.md), [FR-025](FR-025-per-project-last-good.md), [FR-027](FR-027-fetch-only-on-screen.md), [FR-029](FR-029-team-metrics.md)

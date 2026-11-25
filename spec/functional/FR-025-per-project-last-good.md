@@ -33,6 +33,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 - Whenever an initiative is resolved, the mod SHALL store its project ids and names in the reserved top-level key `initiatives` of `progress.json`, under the initiative id where known and the name otherwise, with `at_ms` and `seen_ms`.
 - The mod SHALL prune an `initiatives` entry whose `seen_ms` is older than 24 hours.
 - The mod SHALL read the progress of a focus at most once in 30 minutes across all sessions on the machine, through the shared gate file `linear-gate.json`.
+- A cached progress refresh that another version of the mod made, without the tickets and activity this one keeps, SHALL be read again at once, so that a session running an older build cannot leave a newer one without them. A refresh held after a failure, one another session is reading, and every read under a rate limit SHALL be left to their hold.
 - The mod SHALL hold every other gated read of Linear, `ix-board agents` included, to the same 30 minutes, `ix-board agents` reading Linear's ready queue for teams with an idle agent.
 - A refresh with a failed project, initiative, milestone, ticket or roadmap read SHALL be kept for the same 30 minutes.
 - Where a source error cut a refresh short, the mod SHALL NOT call ix-board for that focus again for 5 minutes.
@@ -60,6 +61,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 | FR-025-AC-12 | Given a gated read that fails outright, it is not made again for 5 minutes and its error is answered meanwhile. | Test |
 | FR-025-AC-13 | Given a gated read that succeeded, no session makes it again for 30 minutes, and the first after that does. | Test |
 | FR-025-AC-14 | Refreshes that keep ending in an inferred source error are called again after 5, 10, 20, 30 and 30 minutes, a manual refresh calls once 60 seconds have passed and not before, and the first such error after a refresh kept for the full interval is held 5 minutes. | Test |
+| FR-025-AC-15 | A gate entry without the tickets and activity, 5 minutes old, is read again at once and then held; one held after a failure, claimed by another session or under a rate limit is not read. | Test |
 
 ## Superseded in 0.7.1
 

@@ -25,8 +25,8 @@ const focusMeta = atom({ plugin: 'factory-panel', key: 'focusMeta' } as const, {
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], { shape: 'escalations-1' })
 const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden' } as const, [] as string[])
 const teamViews = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-1' })
-const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-1' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, unread: 0 } as WorkMeta, { shape: 'workMeta-2' })
+const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-2' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0 } as WorkMeta, { shape: 'workMeta-3' })
 const workBoards = atom({ plugin: 'factory-panel', key: 'workBoards' } as const, {} as Record<string, WorkBoard>, { shape: 'workBoards-1' })
 
 // Facts learned at session start: the machine this session runs on.
@@ -89,7 +89,7 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     relayError: fresh?.relayError ?? null,
     boardError: brd?.error ?? null,
     now,
-    work: { leads: list(wleads), at: wmeta?.at ?? null, relayError: wmeta?.relayError ?? null, listed: wmeta?.listed ?? 0, unread: wmeta?.unread ?? 0, boards: Object.values(wboards ?? {}) },
+    work: { leads: list(wleads), at: wmeta?.at ?? null, relayError: wmeta?.relayError ?? null, listed: wmeta?.listed ?? 0, boards: Object.values(wboards ?? {}) },
   }
 }
 

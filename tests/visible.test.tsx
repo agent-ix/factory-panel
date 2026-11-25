@@ -385,17 +385,20 @@ test('a changed focus choice reads the leads and lanes again at the next drawing
 test('a changed teams choice reads the work reports again at the next drawing', async ($, on) => {
   trace("FR-027-AC-15")
   const { w } = watched(on)
-  w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments'))
+  const eng = report('draco:ENG:code', 'Payments')
+  w.leads.set('draco:ENG:code', { ...eng, agents: eng.agents.map(a => ({ ...a, ticket: 'ENG-9' })) })
   declare(w, ['work'])
   await startSession($)
   const ui = await openBand($)
   await pass(w, 2 * SEC)
-  const asked = () => w.ran.filter(l => l === 'agent-msg work --lead draco:ENG:code show').length
-  expect(asked()).toBe(0)
+  const cell = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('')
+  expect(await cell()).toMatch(/1 ticket /)
   w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify({ modules: ['work'], focus: 'team', teams: ['ENG'] }))
-  // Once for the focus and once for the work cell, whose own interval of 60 seconds is not up.
+  // The cell's own interval of 60 seconds is not up.
   await pass(w, 35 * SEC)
-  expect(asked()).toBe(2)
+  expect(await cell()).toMatch(/2 tickets /)
+  // The focus and the work cell ask for the new lead's report once between them.
+  expect(w.ran.filter(l => l === 'agent-msg work --lead draco:ENG:code show')).toHaveLength(1)
   await ui.unmount()
 })
 

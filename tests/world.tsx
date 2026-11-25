@@ -3,6 +3,7 @@ import type { MockClock } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { resetFocus } from '../hooks/focus'
+import { resetLeads } from '../hooks/leads'
 import { resetWork } from '../hooks/workview'
 import { resetSelection } from '../hooks/selection'
 import { resetSources } from '../hooks/sources'
@@ -71,6 +72,7 @@ export const SHOWN = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'
 export function world(on: On, withClock = false): World {
   resetSelection()
   resetSources()
+  resetLeads()
   resetFocus()
   resetWork()
   const w: World = { opens: [], closes: [], asks: [], statuses: [], store: new Map(), whoami: { value: 'draco:QSL:code  (location)  model unknown' }, listed: { value: undefined }, relayFails: { value: false }, registered: [], files: new Map(), writes: [], ran: [], leads: new Map(), boardAgents: [], whoamiTimeout: { value: undefined }, whoamiMode: { value: 'answer' }, reads: [], clock: undefined, stub: { value: undefined }, mvFails: { value: false }, fetch: { value: undefined } }

@@ -133,6 +133,8 @@ export type GateOptions<T> = {
   keep?: (data: T) => boolean
   /** true for a result not kept whose hold doubles each time in a row, up to REPEAT_HOLD_MAX_MS */
   repeats?: (data: T) => boolean
+  /** true for a held result that lacks what this build draws, as an older build wrote it: it is read again as though due */
+  outdated?: (data: T) => boolean
 }
 
 /**
@@ -175,13 +177,15 @@ async function gate<T>(
   })
 
   if (g.backoffUntil !== null && g.backoffUntil > now) return cached()
+  // Only an answer that was kept: after a failure the hold protects ix-board, whichever build met it.
+  const isOutdated = had.unkept !== true && had.data !== null && opts.outdated?.(had.data as T) === true
   const wait = opts.manual ? MANUAL_MIN_MS : BOARD_INTERVAL_MS
   if (had.unkept === true && had.holdMs !== undefined && had.triedAt !== undefined) {
     // An inferred source error is held for its own time; a manual refresh asks it after 60 seconds.
     if (now - had.triedAt < (opts.manual ? MANUAL_MIN_MS : had.holdMs)) return cached()
   }
   // A manual refresh asks again at once when the last one was only held after a failure.
-  else if (had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
+  else if (!isOutdated && had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
   if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached()
 
   const claim = now + Math.random() / 10

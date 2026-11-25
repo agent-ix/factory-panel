@@ -128,7 +128,7 @@ export type WorkTicket = {
   lastAction: { what: string; at: number } | null
 }
 
-export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[] }
+export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[]; error: string | null; readAt: number | null }
 
 export type WorkView = {
   leads: WorkLeadView[]
@@ -177,7 +177,7 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
       return { id, title: issue?.title ?? '', state: issue === undefined || issue.state === '' ? null : issue.state, badges: badgesOf(agents, issue), lastAction: action }
     })
     tickets.sort((a, b) => (b.lastAction?.at ?? 0) - (a.lastAction?.at ?? 0) || a.id.localeCompare(b.id))
-    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets }
+    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets, error: lead.error, readAt: lead.readAt }
   })
   views.sort((a, b) => a.address.localeCompare(b.address))
   return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.length > 0 }
@@ -243,8 +243,24 @@ export function foldFeed(events: readonly unknown[], feed: Pick<WorkFeed, 'event
 /** One row of Recent: a ticket or PR event of ix-board, or a role event of the relay. */
 export type RecentEntry = { at: number; activity: WorkActivity; event?: undefined } | { at: number; event: WorkRoleEvent; activity?: undefined }
 
+/** The rows of `all` held for the role events, however much newer activity there is. */
+export const ROLE_ROWS = 5
+
 /**
- * What Recent lists, newest first: the merges; with `all`, every activity and the role events of the leads of
+ * The first `rows` of Recent. Role events and activity each have their share of the rows (ROLE_ROWS to the events),
+ * a share one does not fill goes to the other, and the rows chosen are listed together, newest first.
+ */
+export function recentRows(entries: readonly RecentEntry[], rows: number): RecentEntry[] {
+  const roles = entries.filter(e => e.event !== undefined)
+  const other = entries.length - roles.length
+  const keptRoles = Math.min(roles.length, Math.max(ROLE_ROWS, rows - other))
+  const kept = new Set<RecentEntry>(roles.slice(0, keptRoles))
+  let room = rows - kept.size
+  return entries.filter(e => (e.event !== undefined ? kept.has(e) : room-- > 0))
+}
+
+/**
+ * What Recent can list, newest first: the merges; with `all`, every activity and the role events of the leads of
  * `teams` (null: every lead).
  */
 export function recentOf(activity: readonly WorkActivity[] | null, events: readonly WorkRoleEvent[], all: boolean, teams: readonly string[] | null): RecentEntry[] {

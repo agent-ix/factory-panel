@@ -241,17 +241,20 @@ export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; 
 
 export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
 
-/** A lead of `agent-msg who` with the agents of its work report. */
-export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[] }
+/**
+ * A lead of `agent-msg who` with the agents of its work report. `error` is why the latest read failed, and `readAt`
+ * when the report drawn was read: null where none ever was, so that nothing is known of the lead.
+ */
+export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[]; error: string | null; readAt: number | null }
 
 /** The latest transition of one agent on one ticket, from `agent-msg work events`. */
 export type WorkLast = { role: string; status: string; at: number }
 
 /**
- * `relayError` is why the last read of the leads gave nothing: no list of leads, or no report of any lead. `listed` and
- * `unread` count the leads of that read and those whose report could not be read.
+ * `relayError` is why the last read of the leads gave nothing new: no list of leads, or no report of any lead.
+ * `listed` counts the leads that read asked.
  */
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; unread: number }
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number }
 
 /** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
 export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }

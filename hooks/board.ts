@@ -111,9 +111,17 @@ export type Refresh = {
   pending?: boolean
   /** true where the source error is inferred from refusals that could as well be a project's doing */
   unproven?: boolean
-  /** the tickets and activity of every status answer of the refresh, for the Work tab; absent from a refresh made before 0.8.0 */
+  /** the tickets and activity of every status answer of the refresh, for the Work tab; absent where none answered */
   board?: WorkBoard
+  /** the WORK_SHAPE of the build that made the refresh; absent from an older one */
+  work?: number
 }
+
+/**
+ * The version of what a refresh keeps for the Work tab. A cached refresh of another version, such as one a session
+ * running an older build wrote to the shared gate, is read again. Raise it when `board` gains something.
+ */
+export const WORK_SHAPE = 1
 
 /** A rate limit of Linear: it holds the whole workspace, so it is thrown for the gate to hold every call. */
 export class SourceFailure extends Error {
@@ -801,7 +809,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   for (const [ref, id] of twins) if (outcomes[projectKey(id)] !== undefined) outcomes[projectKey(ref)] = outcomes[projectKey(id)]!
   if (sourceError === null) for (const s of selectors) if (s.kind === 'milestone' || s.kind === 'ticket') outcomes[selectorKey(s)] ??= { ok: false, error: 'timed out' }
 
-  const refresh: Refresh = { at, roadmapError, sourceError, expansions, outcomes, blockers: statusAnswers === 0 || blockers === null ? null : (blockers as Set<string>).size, ...(pending ? { pending: true } : {}), ...(isUnproven ? { unproven: true } : {}), ...(answers.length > 0 ? { board: mergeBoards(answers) } : {}) }
+  const refresh: Refresh = { work: WORK_SHAPE, at, roadmapError, sourceError, expansions, outcomes, blockers: statusAnswers === 0 || blockers === null ? null : (blockers as Set<string>).size, ...(pending ? { pending: true } : {}), ...(isUnproven ? { unproven: true } : {}), ...(answers.length > 0 ? { board: mergeBoards(answers) } : {}) }
   if (sourceError !== null && RATE.test(sourceError)) {
     const limited = new SourceFailure(sourceError)
     limited.partial = refresh

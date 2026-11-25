@@ -58,7 +58,7 @@ export type Snapshot = {
 }
 
 /** What the Work view holds: the leads and how their last read went (see WorkMeta), and the focus statuses. */
-export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; unread: number; boards: readonly WorkBoard[] }
+export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; boards: readonly WorkBoard[] }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
 const DOWN_AFTER_SECS = 120
@@ -268,10 +268,15 @@ const relay = (s: Snapshot): Cell | null => {
 const work = (s: Snapshot): Cell | null => {
   const w = s.work
   if (w.at === null && w.relayError === null) return null // not asked yet
-  const { tickets, prsOpen, prsPartial, merged, mergedPartial } = workCounts(w.leads, w.boards, s.now, w.relayError === null)
+  const known = w.leads.filter(l => l.readAt !== null)
+  const unread = w.leads.length - known.length
+  const old = known.filter(l => l.error !== null).length
+  // With no report in hand, now or from an earlier read, nothing is known of the tickets.
+  const isKnown = known.length > 0 || (unread === 0 && w.relayError === null)
+  const { tickets, prsOpen, prsPartial, merged, mergedPartial } = workCounts(known, w.boards, s.now, isKnown)
   const dash = (n: number | null, isAtLeast = false) => (n === null ? '—' : `${isAtLeast ? '≥' : ''}${n}`)
-  // A lead whose report was not read may hold more tickets and PRs.
-  const isShort = w.unread > 0
+  // A lead whose report was never read may hold more tickets and PRs.
+  const isShort = unread > 0
   const parts: Part[] = [
     { text: `${dash(tickets, isShort)} ${tickets === 1 ? 'ticket' : 'tickets'}`, tone: tickets === null ? 'inactive' : undefined },
     { text: ` · ${dash(prsOpen, isShort || prsPartial)} ${prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
@@ -279,8 +284,10 @@ const work = (s: Snapshot): Cell | null => {
   ]
   // The merges and PRs are ix-board's: where it fails, the focus's own warning says why.
   const board = scoped(s).flatMap(f => f.warnings).find(x => x.kind === 'source')?.text
-  const unread = isShort ? `agent-msg work: ${w.unread} of ${w.listed} leads not read` : undefined
-  const alert = w.relayError === null ? (unread ?? board) : `agent-msg work: ${w.relayError}`
+  const failed = unread + old
+  const earlier = old > 0 ? `, ${old} shown from an earlier read` : ''
+  const partly = failed > 0 ? `agent-msg work: ${failed} of ${w.listed} leads not read${earlier}` : undefined
+  const alert = w.relayError === null ? (partly ?? board) : `agent-msg work: ${w.relayError}`
   return { id: 'work', pane: 'work', parts, alert }
 }
 

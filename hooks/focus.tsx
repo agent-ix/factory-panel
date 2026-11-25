@@ -4,7 +4,9 @@ import type { EngineInterface, On } from 'claude-code'
 import type { FocusInitiative, FocusMeta, FocusProject, FocusView, FocusWarning, SourceError } from '../types'
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
-import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar, runJson, runText } from './shared'
+import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar } from './shared'
+import { LEAD_REUSE_MS, listLeads, readLead } from './leads'
+import type { WorkReport } from './leads'
 import { REFRESH_BUDGET_MS, resetBoard, selectorsOfScope } from './board'
 import { loadProgress, progressKeyOf } from './progressview'
 import { holdBoard, keepBoards } from './work'
@@ -28,8 +30,6 @@ import type { Options } from './shared'
 const PANE = 'focus'
 const TITLE = 'Focus'
 export const PANE_SPEC = { id: PANE, title: TITLE }
-/** an agent-msg call is given up on after this long. */
-export const WORK_TIMEOUT_MS = 5_000
 export const NO_SELECTORS = 'no selectors'
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
@@ -46,31 +46,6 @@ const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as 
 const focusWarnings = atom({ plugin: 'factory-panel', key: 'focusWarnings' } as const, false)
 
 // ---------------------------------------------------------------- data
-
-export type WorkReport = {
-  binding?: { machine?: string; kind?: string; address?: string }
-  agents?: { name?: string; ticket?: string; role?: string; status?: string; reported_at_ms?: number }[]
-  scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number } | null
-  focus?: { summary?: string; reported_at_ms?: number } | null
-}
-
-/** The verified lead addresses `agent-msg who` lists; unverified rows start with `-`. */
-export async function listLeads($: EngineInterface): Promise<string[]> {
-  const text = await runText($, ['agent-msg', 'who'], WORK_TIMEOUT_MS)
-  return text
-    .split('\n')
-    .map(line => line.trim().split(/\s+/)[0] ?? '')
-    .filter(address => address.split(':').length === 3)
-}
-
-/** `agent-msg work show` prints `null` for a lead that has reported nothing: that is no report, not a failure. */
-export async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport | null } | { error: string }> {
-  try {
-    return { report: await runJson<WorkReport | null>($, ['agent-msg', 'work', '--lead', lead, 'show'], WORK_TIMEOUT_MS) }
-  } catch (error) {
-    return { error: errorText(error) }
-  }
-}
 
 type Entry = { view: FocusView; selectors: Selector[] }
 
@@ -92,9 +67,10 @@ const blank = (address: string): FocusView => ({
   notes: [],
 })
 
-const leadEntry = (lead: string, report: WorkReport): Entry => ({
+const leadEntry = (lead: string, report: WorkReport, note: string | null): Entry => ({
   view: {
     ...blank(report.binding?.address ?? lead),
+    notes: note === null ? [] : [note],
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
     summary: report.focus?.summary ?? '',
@@ -166,22 +142,29 @@ export async function focusDetailNow($: EngineInterface, sel: Selection): Promis
 let running: Promise<void> | null = null
 let again = false
 let againManual = false
+let againAnew = false
 
-export function pollFocus($: EngineInterface, manual = false): Promise<void> {
+/** Reads every focus. `anew` reads the leads' reports again even where the other view has just read them. */
+export function pollFocus($: EngineInterface, manual = false, anew = manual): Promise<void> {
   if (running !== null) {
     again = true
     againManual ||= manual
+    againAnew ||= anew
     return running
   }
   running = (async () => {
     try {
       let asManual = manual
+      let asAnew = anew
       do {
         again = false
         againManual = false
+        againAnew = false
         const how = asManual
-        await track($, 'focus', () => refreshFocus($, how))
+        const reuse = asAnew ? 0 : LEAD_REUSE_MS
+        await track($, 'focus', () => refreshFocus($, how, reuse))
         asManual = againManual
+        asAnew = againAnew
       } while (again)
     } finally {
       running = null
@@ -199,7 +182,7 @@ export const COMMAND_WAIT_MS = 5_000
  * reads for what is now selected; otherwise only a source that is due is read, and a read under way is waited for.
  */
 export async function readForCommand($: EngineInterface, changed: boolean): Promise<void> {
-  const reading = changed || isDue('focus', await $.clock.now()) ? pollFocus($) : running
+  const reading = changed || isDue('focus', await $.clock.now()) ? pollFocus($, false, changed) : running
   if (reading !== null) await Promise.race([reading, after($, COMMAND_WAIT_MS)])
 }
 
@@ -209,10 +192,11 @@ export function resetFocus(): void {
   running = null
   again = false
   againManual = false
+  againAnew = false
 }
 
 /** One refresh of every focus; false when the relay could not be read (ix-board's reads have their own gate). */
-async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolean> {
+async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number): Promise<boolean> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     // The scope needs to know who this session is before it knows which leads to read.
@@ -225,7 +209,7 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
 
     // Where the leads cannot be listed nothing is known of them: this read says nothing about what is absent.
     let listed = true
-    const gather = async (): Promise<{ lead: string; report: WorkReport }[]> => {
+    const gather = async (): Promise<{ lead: string; report: WorkReport; note: string | null }[]> => {
       let leads: string[]
       try {
         leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
@@ -235,8 +219,8 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
         sourceFailed('agent-msg work', errorText(error))
         return []
       }
-      const read = await Promise.all(leads.map(async lead => ({ lead, read: await readReport($, lead) })))
-      const failedReads = read.flatMap(r => ('error' in r.read ? [{ lead: r.lead, error: r.read.error }] : []))
+      const read = await Promise.all(leads.map(lead => readLead($, lead, reuseMs)))
+      const failedReads = read.flatMap(r => (r.error === null ? [] : [{ lead: r.address, error: r.error }]))
       // A failure is shown for the leads the scope is about: those inside the team filter, those whose address is
       // the name typed, and, when every lead is read, any lead if all of them failed (one with no live agent is normal there).
       const named = isName ? matchLeads(name, leads).map(a => a.toLowerCase()) : []
@@ -246,7 +230,9 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
         errors.push({ source: 'agent-msg work', text })
         sourceFailed('agent-msg work', text)
       } else sourceOk('agent-msg work', await $.clock.now())
-      return read.flatMap(r => ('report' in r.read && r.read.report !== null ? [{ lead: r.lead, report: r.read.report }] : []))
+      // A report that could not be read now is drawn as it was last read, and says so.
+      const now = await $.clock.now()
+      return read.flatMap(r => (r.report ? [{ lead: r.address, report: r.report, note: r.error === null ? null : `work report not read, as read ${ago(r.at, now)}` }] : []))
     }
     const lookup = async (): Promise<Resolved[]> => {
       if (!isName) return []
@@ -264,7 +250,7 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
 
     const leadEntries = reports
       .filter(r => selectorsOfScope(r.report.scope).length > 0 || Boolean(r.report.focus?.summary))
-      .map(r => leadEntry(r.lead, r.report))
+      .map(r => leadEntry(r.lead, r.report, r.note))
     let entries: Entry[]
     if (!isName) entries = leadEntries
     else if (defs.length > 0) entries = defs.map(definitionEntry)
