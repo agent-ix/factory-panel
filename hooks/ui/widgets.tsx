@@ -48,18 +48,24 @@ export function widgets({ Box, Text, Button }: Els) {
     </Box>
   )
 
-  /** One status chip: a colored mark, then a button named for the thing. The mark carries the state; a ▾ shows the open one. */
-  const statusChip = (key: string, name: string, hotkey: string, mark: string, color: Color, selected: boolean, onPress: () => void) => (
+  /** One status chip: `[name]`, grey brackets round a name in the state's color, pressable; a ▾ shows the open one. The hotkey sits on a hidden twin, since a plain Button that has one draws it as a prefix. */
+  const statusChip = (key: string, name: string, hotkey: string, color: Color, selected: boolean, onPress: () => void) => (
     <Box key={`${key}-chip`} flexDirection="row" gap={1}>
-      <Text color={color}>{mark}</Text>
-      <Button key={key} plain label={name} hotkey={hotkey} onPress={onPress} />
+      <Button key={key} plain label={name} onPress={onPress}>
+        <Text dimColor>[</Text>
+        <Text color={color}>{name}</Text>
+        <Text dimColor>]</Text>
+      </Button>
+      <Box display="none">
+        <Button key={`${key}-key`} plain label={name} hotkey={hotkey} onPress={onPress} />
+      </Box>
       {selected && <Text dimColor>▾</Text>}
     </Box>
   )
 
   /** Chips in one line. */
   const chipRow = (chips: readonly ReturnType<typeof statusChip>[]) => (
-    <Box flexDirection="row" gap={3}>
+    <Box flexDirection="row" gap={1}>
       {chips}
     </Box>
   )

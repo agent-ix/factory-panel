@@ -475,11 +475,14 @@ export function registerFactory(on: On, options: Options): void {
       (max, m) => (m.tempC !== null && (max === null || m.tempC > max) ? m.tempC : max),
       null,
     )
-    const errors = [f.prometheusError === null ? null : shortError('prometheus', f.prometheusError), f.herdrError, f.relayError].filter((t): t is string => t !== null)
+    // A Prometheus failure is said once, by the note under the title, so the footer leaves it out.
+    const errors = [f.herdrError, f.relayError].filter((t): t is string => t !== null)
     // A shortened Prometheus error keeps its full text for the open detail.
     const promFull = f.prometheusError !== null && shortError('prometheus', f.prometheusError) !== f.prometheusError ? f.prometheusError : null
     const stale = staleness(f, now)
     const isFresh = stale !== null && isCurrent(f, now) && errors.length === 0
+    const footer =
+      errors[0] ?? (f.prometheusError !== null ? '' : stale === null ? 'connecting…' : `updated ${ago(now - stale, now)}`)
     const statusColor = (status: string) =>
       status === 'working' ? 'claude' : status === 'idle' ? 'warning' : 'inactive'
     const statusMark = (status: string) =>
@@ -650,12 +653,8 @@ export function registerFactory(on: On, options: Options): void {
               )
             : []
 
-    const boardError = b.error !== null
-    const [boardMark, boardColor]: [string, 'success' | 'warning' | 'inactive'] = boardError
-      ? ['▲', 'warning']
-      : !f.boardBusy && b.agents.length > 0
-        ? ['●', 'success']
-        : ['◌', 'inactive']
+    const boardColor: ChipColor =
+      b.error !== null ? 'warning' : !f.boardBusy && b.agents.length > 0 ? 'success' : 'inactive'
     const detailSummary =
       open === 'herdr'
         ? `${herdrWorking} working · ${herdrIdle} idle · ${herdrDone} done`
@@ -672,9 +671,11 @@ export function registerFactory(on: On, options: Options): void {
             <Text weight="semibold" size="heading" color={Svg ? undefined : ACCENT}>
               Factory
             </Text>
-            <Text color={allUp ? 'success' : list.length > 0 ? 'error' : 'inactive'} size="caption">
-              {list.length > 0 ? `${up}/${list.length} up` : 'waiting for Prometheus'}
-            </Text>
+            {list.length === 0 && (
+              <Text color="inactive" size="caption">
+                waiting for Prometheus
+              </Text>
+            )}
           </Box>
           <Box flexDirection="row" gap={1} alignItems="center">
             <Link href={options.grafanaUrl} label="Grafana" />
@@ -701,9 +702,9 @@ export function registerFactory(on: On, options: Options): void {
         )}
 
         {chipRow([
-          statusChip('herdr', 'herdr', 'h', ...chipMark(f.herdrError, f.herdrAt, hv.running, '○', 'error'), open === 'herdr', () => void toggleDetail($, 'herdr')),
-          statusChip('relay', 'ix-relay', 'x', ...chipMark(f.relayError, f.relayAt, r.ok, '▲', 'warning'), open === 'relay', () => void toggleDetail($, 'relay')),
-          statusChip('board', 'ix-board', 'b', boardMark, boardColor, open === 'board', () => void toggleDetail($, 'board')),
+          statusChip('herdr', 'herdr', 'h', chipColor(f.herdrError, f.herdrAt, hv.running, 'error'), open === 'herdr', () => void toggleDetail($, 'herdr')),
+          statusChip('relay', 'ix-relay', 'x', chipColor(f.relayError, f.relayAt, r.ok, 'warning'), open === 'relay', () => void toggleDetail($, 'relay')),
+          statusChip('board', 'ix-board', 'b', boardColor, open === 'board', () => void toggleDetail($, 'board')),
         ])}
 
         {open !== 'none' && (
@@ -730,7 +731,7 @@ export function registerFactory(on: On, options: Options): void {
             {list.length > 0 && !f.nodeMetricsSeen ? 'CPU, memory and temperature appear once a node exporter is scraped.' : ''}
           </Text>
           <Text color={isFresh ? 'subtle' : 'warning'} size="caption" wrap="truncate-end">
-            {errors.length > 0 ? errors[0] : stale === null ? 'connecting…' : `updated ${ago(now - stale, now)}`}
+            {footer}
           </Text>
         </Box>
         {e.props.placement === 'inline' && (
@@ -743,11 +744,11 @@ export function registerFactory(on: On, options: Options): void {
   })
 }
 
-type ChipState = ['●' | '▲' | '○' | '◌', 'success' | 'warning' | 'error' | 'inactive']
+type ChipColor = 'success' | 'warning' | 'error' | 'inactive'
 
-/** A chip's mark: a failed read is ▲ first, a service not yet read is ◌, else up is ● and down is `downMark`. */
-function chipMark(error: string | null, readAt: number | null, isUp: boolean, downMark: '○' | '▲', downColor: 'error' | 'warning'): ChipState {
-  if (error !== null) return ['▲', 'warning']
-  if (readAt === null) return ['◌', 'inactive']
-  return isUp ? ['●', 'success'] : [downMark, downColor]
+/** A chip's color: a failed read warns, a service not yet read is inactive, else up is success and down is `downColor`. */
+function chipColor(error: string | null, readAt: number | null, isUp: boolean, downColor: 'error' | 'warning'): ChipColor {
+  if (error !== null) return 'warning'
+  if (readAt === null) return 'inactive'
+  return isUp ? 'success' : downColor
 }

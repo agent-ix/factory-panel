@@ -162,8 +162,8 @@ test('the pane draws machines, herdr, relay and board from seeded answers', { op
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
 
-    // node-b's watcher went silent 15 minutes ago: one of two machines is up.
-    expect((await ui.find({ type: 'Text', text: /1\/2 up/ }))?.text).toMatch(/1\/2 up/)
+    // node-b's watcher went silent 15 minutes ago: its row says so, and the header counts nothing.
+    expect(await ui.find({ type: 'Text', text: /1\/2 up/ })).toBeUndefined()
     expect((await ui.find({ type: 'Text', text: /● node-a/ }))?.text).toMatch(/node-a/)
     expect((await ui.find({ type: 'Text', text: /○ node-b/ }))?.text).toMatch(/node-b/)
     // node_exporter answered for node-a: its temperature shows, mapped from the instance.
@@ -231,20 +231,20 @@ test('the widget seat draws one glance line', async ($, on) => {
   await ui.unmount()
 })
 
-const marks = async (ui: { findAll: (q: { type: string; text: RegExp }) => Promise<{ text?: string }[]> }) =>
-  (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(n => n.text)
+const chipColors = async (ui: { findAll: (q: { type: string; text: RegExp }) => Promise<{ props: Record<string, unknown> }[]> }) =>
+  (await ui.findAll({ type: 'Text', text: /^(herdr|ix-relay|ix-board)$/ })).map(n => n.props.color)
 
-test('the herdr and relay chips show ◌ before the first read', async ($, on) => {
+test('the herdr and relay chips are inactive before the first read', async ($, on) => {
   engine(on, false)
   // No session.start: nothing has been read yet.
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect((await marks(ui)).slice(0, 2)).toEqual(['◌', '◌'])
+    expect((await chipColors(ui)).slice(0, 2)).toEqual(['inactive', 'inactive'])
     await ui.unmount()
   }
 })
 
-test('a failed herdr read and a relay that is not ok show ▲, with the error in the detail', async ($, on) => {
+test('a failed herdr read and a relay that is not ok warn, with the error in the detail', async ($, on) => {
   engine(on)
   on('http.fetch', (_, e) => {
     const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
@@ -260,7 +260,7 @@ test('a failed herdr read and a relay that is not ok show ▲, with the error in
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect((await marks(ui)).slice(0, 2)).toEqual(['▲', '▲'])
+    expect((await chipColors(ui)).slice(0, 2)).toEqual(['warning', 'warning'])
     const shown = (await ui.findAll({ type: 'Text', text: /herdr exited 1/ })).length
     await ui.press({ key: 'herdr' })
     expect((await ui.findAll({ type: 'Text', text: /herdr exited 1/ })).length).toBe(shown + 1)
@@ -283,7 +283,7 @@ test('the terminal gauge draws whole-cell blocks', async ($, on) => {
   await ui.unmount()
 })
 
-test('a Prometheus timeout shows one short footer line, with the full text in the open detail', async ($, on) => {
+test('a Prometheus timeout is said once, with the full text in the open detail', async ($, on) => {
   engine(on)
   const long = 'Prometheus query failed: no complete answer within 30000ms'
   on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ status: 'error', error: long }) } }))
@@ -297,12 +297,8 @@ test('a Prometheus timeout shows one short footer line, with the full text in th
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    const footer = (await ui.find({ type: 'Text', text: /^prometheus: timed out$/ }))?.text
-    expect(footer).toBe('prometheus: timed out')
-    // The raw error would not fit 40 columns; the footer does, and the text is clipped rather than wrapped.
-    expect(long.length).toBeGreaterThan(40)
-    expect(footer?.length).toBeLessThanOrEqual(40)
-    expect((await ui.find({ type: 'Text', text: /^prometheus: timed out$/ }))?.props.wrap).toBe('truncate-end')
+    const said = (await ui.findAll({ type: 'Text', text: /prometheus: timed out/ })).map(n => n.text)
+    expect(said).toEqual(['Metrics unavailable: prometheus: timed out'])
     expect(await ui.find({ type: 'Text', text: /30000ms/ })).toBeUndefined()
     // Opening a chip shows the full error for diagnosis.
     await ui.press({ key: 'herdr' })
