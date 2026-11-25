@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLast, WorkLead, WorkPr, WorkRoleEvent } from '../types'
+import type { WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLead, WorkPr, WorkRoleEvent } from '../types'
 
 // The model of the Work tab: what each lead has in hand, from the relay's work reports, joined with what
 // ix-board's focus status says of the tickets and of what was merged lately.
@@ -179,10 +179,11 @@ export function issuesOf(answer: unknown): WorkIssue[] {
 export type WorkTicket = {
   id: string
   title: string
-  /** null where ix-board has not said (no focus status read, or the ticket is not in it) */
-  state: string | null
+  /** why there is no title, where ix-board has answered or failed: unknown to Linear, or not read; else null */
+  why: string | null
   badges: string[]
-  lastAction: { what: string; at: number } | null
+  /** when the ticket was last acted on or named; null where nothing says */
+  at: number | null
 }
 
 /** `tickets` are those in hand, `finished` those whose agents have all finished. */
@@ -249,19 +250,19 @@ const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): stri
 
 /**
  * Joins the leads' agents with the ticket facts. Only tickets a lead's agents report are listed under it; a started
- * ticket no lead reports is already on the Focus tab. The last action is the latest transition of an agent on the ticket,
- * else the latest report of one.
+ * ticket no lead reports is already on the Focus tab. A ticket's time is that of the latest transition of an agent on
+ * it, else of the latest report of one.
  */
-export function composeWork(leads: readonly WorkLead[], last: Record<string, WorkLast>, boards: readonly WorkBoard[]): WorkView {
+export function composeWork(leads: readonly WorkLead[], last: Record<string, number>, boards: readonly WorkBoard[]): WorkView {
   const board = mergeBoards(boards)
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
   const unknown = new Set(boards.flatMap(b => b.unknown ?? []))
   const isUnread = boards.some(b => b.ticketsOnly === true && b.at === null)
   // The tickets the read of single tickets asked for: one left out of it was not read.
   const asked = boards.find(b => b.ticketsOnly === true)?.asked
-  /** The state drawn for a ticket: Linear's, or why there is none where ix-board has answered that. */
-  const stateOf = (id: string, issue: WorkIssue | undefined): string | null => {
-    if (issue !== undefined) return issue.state === '' ? null : issue.state
+  /** Why a ticket has no title, where ix-board has answered that or failed. */
+  const whyOf = (id: string, issue: WorkIssue | undefined): string | null => {
+    if (issue !== undefined) return null
     if (unknown.has(id)) return 'not in Linear'
     return isUnread || (asked !== undefined && TICKET_ID.test(id) && !asked.includes(id)) ? 'state not read' : null
   }
@@ -269,15 +270,13 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
     const tickets = ticketsOf(lead).map((id): WorkTicket => {
       const agents = lead.agents.filter(a => a.ticket === id)
       const issue = byId.get(id)
-      const event = last[`${lead.address}\u0000${id}`]
-      const newest = agents.reduce<WorkAgent | null>((m, a) => (a.reportedAt !== null && (m === null || a.reportedAt > (m.reportedAt ?? 0)) ? a : m), null)
+      const reports = agents.flatMap(a => a.reportedAt ?? [])
       // A ticket only the focus names is as old as the focus.
-      const said = lead.focus?.tickets.includes(id) ? lead.focus.at : null
-      const named = said === null ? null : { what: 'focus', at: said }
-      const action = event !== undefined ? { what: `${event.role} ${event.status}`, at: event.at } : newest === null ? named : { what: `${newest.role} ${newest.status}`, at: newest.reportedAt! }
-      return { id, title: issue?.title ?? '', state: stateOf(id, issue), badges: badgesOf(agents, issue), lastAction: action }
+      const named = lead.focus?.tickets.includes(id) ? lead.focus.at : null
+      const at = last[`${lead.address}\u0000${id}`] ?? (reports.length === 0 ? named : Math.max(...reports))
+      return { id, title: issue?.title ?? '', why: whyOf(id, issue), badges: badgesOf(agents, issue), at }
     })
-    tickets.sort((a, b) => (b.lastAction?.at ?? 0) - (a.lastAction?.at ?? 0) || a.id.localeCompare(b.id))
+    tickets.sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || a.id.localeCompare(b.id))
     const finished = tickets.filter(t => isFinished(lead, t.id))
     return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets: tickets.filter(t => !finished.includes(t)), finished, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
   })
@@ -285,18 +284,16 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
   return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.some(isAnswer) }
 }
 
-/** The latest agent transition per (lead, ticket) of an `agent-msg work events` page, merged into `into`. */
-export function lastOfEvents(events: readonly unknown[], into: Record<string, WorkLast>): void {
+/** The time of the latest agent transition per (lead, ticket) of an `agent-msg work events` page, merged into `into`. */
+export function lastOfEvents(events: readonly unknown[], into: Record<string, number>): void {
   for (const e of events) {
     const event = obj(e)
     const at = typeof event?.at_ms === 'number' ? event.at_ms : null
     const address = str(obj(event?.binding)?.address)
-    const agent = obj(obj(event?.change)?.agent)
-    const ticket = str(agent?.ticket)
+    const ticket = str(obj(obj(event?.change)?.agent)?.ticket)
     if (at === null || address === '' || ticket === '') continue
     const key = `${address}\u0000${ticket}`
-    const had = into[key]
-    if (had === undefined || at >= had.at) into[key] = { role: str(agent?.role) || 'agent', status: str(agent?.status), at }
+    into[key] = Math.max(at, into[key] ?? at)
   }
 }
 

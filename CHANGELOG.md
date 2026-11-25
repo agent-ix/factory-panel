@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A Work tab ticket row reads id, title, badges, age. The role and status words (`coder running`, `reviewer done`, `focus`) and the Linear state are gone, the ages stand in one column and the title takes the freed width. A ticket with no title because Linear has no record of it, or it could not be read, still says so.
+
 ## 0.9.0
 
 Review events and a work cell, role evaluations, fleet capacity and daily velocity. Team keys, the daily rows and tile coverage need ix-board 0.12.0; roles, and the capacity’s deficit and output, need an ix-board newer than 0.11.0. Until one is installed and its exporter runs, those say why they read `—` or what they lack.

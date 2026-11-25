@@ -349,7 +349,7 @@ async function fullscreen(s) {
   const work = (await s.phase(worked)).counts
   check('fullscreen: the Work tab reads the leads’ work reports and events', has(work, ['agent-msg work']), json(work))
   check('fullscreen: the lead and its ticket are on screen', /draco:QSL:code/.test(s.screen()) && /QSL-1/.test(s.screen()), s.screen().slice(0, 600))
-  check('fullscreen: the ticket no focus status names was read from ix-board issues and drawn with its state', has(work, ['ix-board issues']) && /QSL-3 Specced/.test(s.screen()), s.screen().slice(0, 900))
+  check('fullscreen: the ticket no focus status names was read from ix-board issues and drawn with its title', has(work, ['ix-board issues']) && /QSL-3 Stand-in/.test(s.screen()), s.screen().slice(0, 900))
   check('fullscreen: the lead with no report is counted in one line', /▸ 1 lead reports no work/.test(s.screen()), s.screen().slice(0, 900))
   check('fullscreen: the Recent toggle can be clicked', s.click(/()a all/))
   check('fullscreen: Recent then lists the review that started', await s.waitFor(t => /review start\s+QSL-1/.test(t), 10000), s.screen())

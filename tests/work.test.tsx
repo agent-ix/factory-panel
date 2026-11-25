@@ -106,9 +106,9 @@ test('the tickets a lead’s focus names are listed under it once, with the focu
     w.leads.set(LEAD, focused(LEAD, 'landing', ['QSL-1240', 'QSL-1251', 'QSL-9'], 780, [agent('c', 'QSL-1251', 'coder', 'running', 12)]))
   })
   const d = await draw($)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 Coding .*\[pr\] {2}focus 13h$/)
-  expect(ticketRow(d, 'QSL-1251')).toMatch(/coder running 12m$/)
-  expect(ticketRow(d, 'QSL-9')).toMatch(/reviewer done 30m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 proof gate .*\[pr\] {3}13h$/)
+  expect(ticketRow(d, 'QSL-1251')).toMatch(/ 12m$/)
+  expect(ticketRow(d, 'QSL-9')).toMatch(/^ {3}QSL-9 +30m$/)
   expect(d.lines.filter(l => l.trim().startsWith('QSL-1251'))).toHaveLength(1)
   expect(d.lines).not.toContain('   no ticket reported')
   await d.unmount()
@@ -164,16 +164,20 @@ test('one lead that reports nothing is named where no lead reported work', async
   await d.unmount()
 })
 
-test('a lead is listed with its status mark and age, and its tickets with state, title, badges and last action', async ($, on) => {
+test('a lead is listed with its status mark and age, and its tickets with id, title, badges and age and no role, status or state word', async ($, on) => {
   trace("FR-028-AC-1")
   await setup($, on, rich(), events([LEAD, 'QSL-1240', 'coder', 'running', 4], [LEAD, 'QSL-1240', 'reviewer', 'running', 2]))
   const d = await draw($)
   expect(d.lines).toContain(LEAD)
   expect(d.lines).toContain(IDLE)
   // The latest transition of an agent on the ticket, 2 minutes ago.
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 Coding proof gate ?… +\[pr\]\[review×2\] {2}reviewer 2m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 proof gate checks[^ ]*.*… {2}\[pr\]\[review×2\] {4}2m$/)
   // No event for QSL-1251: the latest agent report (12 minutes ago) stands in.
-  expect(ticketRow(d, 'QSL-1251')).toMatch(/Specced residual ?… +\[spec\] {2}spec-author done 12m$/)
+  expect(ticketRow(d, 'QSL-1251')).toMatch(/^ {3}QSL-1251 residual defects +\[spec\] {3}12m$/)
+  // The ages keep one column, and no row says what an agent or Linear says of the ticket.
+  const rows = d.lines.filter(l => /^ {3}QSL-/.test(l))
+  expect(rows.map(l => l.length)).toEqual(rows.map(() => 60))
+  expect(rows.join('\n')).not.toMatch(/coder|reviewer|spec-author|focus|running|done|waiting|Coding|Specced/)
   // The lead's age is its newest report (5 minutes) and a mark leads the row.
   expect(d.lines).toContain('◐')
   expect(d.lines).toContain('5m')
@@ -218,7 +222,7 @@ test('a lead collapses to its ticket count and expands again, and ticket rows fi
   await d.press(`toggle-${LEAD}`)
   expect(ticketRow(d, 'QSL-1240')).not.toBe('')
   await d.unmount()
-  expect(ticketLine({ id: 'QSL-1', title: 'x'.repeat(200), state: 'Coding', badges: ['[pr]', '[review×2]'], lastAction: { what: 'coder running', at: NOW - 4 * MIN } }, NOW, 60).length).toBeLessThanOrEqual(60)
+  expect(ticketLine({ id: 'QSL-1', title: 'x'.repeat(200), why: null, badges: ['[pr]', '[review×2]'], at: NOW - 4 * MIN }, NOW, 60)).toBe(`   QSL-1 ${'x'.repeat(28)}…  [pr][review×2]    4m`)
 })
 
 // ---------------------------------------------------------------- FR-028 old and finished work
@@ -266,7 +270,7 @@ test('the widget says it is reading, or that the leads could not be read, and co
 
 const single = (identifier: string, state: string, prs: unknown[], complete = true) => ({ id: `id-${identifier}`, identifier, title: `single ${identifier}`, state: 'x', state_name: state, state_type: 'started', attachments_complete: complete, pull_requests: prs })
 
-test('a ticket no focus status names gets its state, title and [pr] from one read of ix-board', async ($, on) => {
+test('a ticket no focus status names gets its title and [pr] from one read of ix-board', async ($, on) => {
   trace("FR-028-AC-24")
   const w = world(on, true)
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('a', 'QSL-1240', 'coder', 'running', 9), agent('b', 'QSL-7', 'coder', 'running', 9), agent('c', 'QSL-8', 'coder', 'running', 9), agent('d', 'not a ticket', 'coder', 'running', 9)] })
@@ -275,9 +279,9 @@ test('a ticket no focus status names gets its state, title and [pr] from one rea
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(60_000)
   const rows = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(rows.find(l => l.trim().startsWith('QSL-7 '))).toMatch(/QSL-7 Specify single .*\[pr\]/)
+  expect(rows.find(l => l.trim().startsWith('QSL-7 '))).toMatch(/QSL-7 single QSL-7 +\[pr\]/)
   // Where the attachments are cut short nothing is said of its PRs.
-  expect(rows.find(l => l.trim().startsWith('QSL-8 '))).toMatch(/QSL-8 Specced single /)
+  expect(rows.find(l => l.trim().startsWith('QSL-8 '))).toMatch(/QSL-8 single QSL-8 /)
   expect(rows.find(l => l.trim().startsWith('QSL-8 '))).not.toMatch(/\[pr\]/)
   // Asked once, of the identifiers no focus status names and no other word.
   expect(board.calls.filter(c => c.startsWith('issues'))).toEqual(['issues QSL-7 QSL-8'])
@@ -352,7 +356,7 @@ test('an ix-board without activity and PRs shows the tickets without a PR badge 
   await setup($, on, old())
   const d = await draw($)
   expect(d.text).toMatch(/needs ix-board ≥0\.9\.0/)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/Coding proof g/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/QSL-1240 proof gate/)
   expect(ticketRow(d, 'QSL-1240')).not.toMatch(/\[pr\]/)
   await d.unmount()
 })
@@ -372,7 +376,7 @@ test('where the events cannot be read the tickets show with the age of the lates
   trace("FR-028-AC-8")
   await setup($, on, rich(), () => out('', 1, 'redis down'))
   const d = await draw($)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/reviewer (running )?5m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/ 5m$/)
   expect(d.buttons.find(b => b.key === 'warnings-toggle')?.label).toBe('1')
   await d.press('warnings-toggle')
   expect(d.text).toMatch(/agent-msg work events: redis down/)
@@ -401,7 +405,7 @@ test('Work follows Focus in the dock and /factory work opens it', async ($, on) 
 test('the latest event of each lead and ticket wins, an answer is merged once and activity is newest first', () => {
   const last: Record<string, { role: string; status: string; at: number }> = {}
   lastOfEvents(JSON.parse(events([LEAD, 'QSL-1', 'coder', 'running', 10], [LEAD, 'QSL-1', 'reviewer', 'done', 3], [LEAD, 'QSL-1', 'coder', 'running', 8])).events, last)
-  expect(last[`${LEAD}\u0000QSL-1`]).toEqual({ role: 'reviewer', status: 'done', at: NOW - 3 * MIN })
+  expect(last[`${LEAD}\u0000QSL-1`]).toBe(NOW - 3 * MIN)
   const a = boardOf(JSON.parse(rich()))
   const merged = mergeBoards([a, a, boardOf(JSON.parse(old()))])
   expect(merged.activity!.map(x => x.identifier)).toEqual(['QSL-1251', 'QSL-1238', 'QSL-1199', 'QSL-1111'])
@@ -416,7 +420,7 @@ const eventCalls = (w: World) => w.ran.filter(l => l.startsWith('agent-msg work 
 
 const afterOf = (argv: string[]) => argv[argv.indexOf('--after') + 1]!
 
-test('the events are read page after page by their cursor, and the last action is the newest of all pages', async ($, on) => {
+test('the events are read page after page by their cursor, and a ticket’s age is that of the newest event of all pages', async ($, on) => {
   trace("FR-028-AC-12")
   const pages: Record<string, string> = {
     '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 30]], 'c1', true),
@@ -425,11 +429,11 @@ test('the events are read page after page by their cursor, and the last action i
   const w = await setup($, on, rich(), argv => out(pages[afterOf(argv)] ?? page([], afterOf(argv), false)))
   expect(eventCalls(w).map(l => l.split(' --after ')[1])).toEqual(['0-0', 'c1'])
   const d = await draw($)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/reviewer 2m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/ 2m$/)
   await d.unmount()
 })
 
-test('the next read asks only for what came after the last cursor and keeps the earlier last actions', async ($, on) => {
+test('the next read asks only for what came after the last cursor and keeps the earlier ages', async ($, on) => {
   trace("FR-028-AC-12")
   const pages: Record<string, string> = {
     '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 3], [LEAD, 'QSL-1251', 'spec-author', 'running', 3]], 'c1', false),
@@ -442,8 +446,8 @@ test('the next read asks only for what came after the last cursor and keeps the 
   // QSL-1251, whose only agent is done, is among the finished.
   await ui.press({ key: `finished-${LEAD}` })
   const rows = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(rows.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/reviewer \d+m$/)
-  expect(rows.find(l => l.trim().startsWith('QSL-1251'))).toMatch(/spec-author \d+m$/)
+  expect(rows.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/ [12]m$/)
+  expect(rows.find(l => l.trim().startsWith('QSL-1251'))).toMatch(/ [45]m$/)
   await ui.unmount()
 })
 
@@ -718,7 +722,7 @@ for (const [title, entry, backoff] of [
 
 // ---------------------------------------------------------------- FR-028 what is missing says why
 
-test('a ticket Linear has no record of, or that ix-board could not be asked for, says so in place of a state', async ($, on) => {
+test('a ticket Linear has no record of, or that ix-board could not be asked for, says so in place of a title', async ($, on) => {
   trace("FR-028-AC-28")
   let fails = true
   const w = world(on, true)
@@ -728,10 +732,10 @@ test('a ticket Linear has no record of, or that ix-board could not be asked for,
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const row = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').find(l => l.trim().startsWith('QSL-404'))
   await w.clock!.advance(MIN)
-  expect(await row()).toMatch(/QSL-404 state not read +coder running/)
+  expect(await row()).toMatch(/QSL-404 state not read +\d+m$/)
   fails = false
   await w.clock!.advance(40 * MIN)
-  expect(await row()).toMatch(/QSL-404 not in Linear +coder running/)
+  expect(await row()).toMatch(/QSL-404 not in Linear +\d+m$/)
   await ui.unmount()
 })
 
@@ -744,7 +748,7 @@ test('where Linear has none of the asked tickets, ix-board exits 3 with its answ
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(MIN)
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 not in Linear +coder running/)
+  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 not in Linear +\d+m$/)
   // The read did not fail: the warnings say nothing of an exit.
   await ui.press({ key: 'warnings-toggle' })
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('\n')).not.toMatch(/ix-board exited|ix-board issues/)
@@ -760,7 +764,7 @@ test('exit 3 of ix-board issues with a message is a failure', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(MIN)
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 state not read +coder running/)
+  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 state not read +\d+m$/)
   await ui.unmount()
 })
 
@@ -780,9 +784,9 @@ test('of more than 100 tickets no focus names, those in hand are asked for first
   expect(asked).not.toContain('AAA-199')
   await ui.press({ key: `finished-${LEAD}` })
   const rows = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(rows.find(l => l.trim().startsWith('QSL-1 '))).toContain('QSL-1 Specced')
+  expect(rows.find(l => l.trim().startsWith('QSL-1 '))).toContain('QSL-1 single QSL-1')
   expect(rows.find(l => l.trim().startsWith('AAA-199 '))).toContain('AAA-199 state not read')
-  expect(rows.find(l => l.trim().startsWith('AAA-198 '))).toContain('AAA-198 Specced')
+  expect(rows.find(l => l.trim().startsWith('AAA-198 '))).toContain('AAA-198 single AAA-198')
   await ui.unmount()
 })
 

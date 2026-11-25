@@ -38,12 +38,14 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - The listed leads of the selected teams that answered with no report SHALL be counted in one line under the leads, `▸ N leads report no work`, which shows and hides their addresses.
 - Leads that another session is reading, and of which nothing is at hand, SHALL be counted in a line of their own.
 - A badge SHALL count only agents that are running or waiting.
-- A ticket row SHALL show its id, the Linear state and title where ix-board names the ticket (see [Data and drawing](#data-and-drawing)), its badges, and its last action as `<role> <status> <age>`.
-- A ticket that only a focus names, with no transition in the events, SHALL read `focus <age>` as its last action, with the age of the focus report.
-- The last action SHALL be the latest transition of an agent on that ticket in `agent-msg work events`. The stream starts at its oldest event, so the mod SHALL read it in pages of 1000 after a cursor it keeps between reads, at most 5 pages per read, so that a later read asks only for newer events; where more than 5 pages are behind it SHALL warn and carry on at the next read; where the events cannot be read it SHALL be the latest report of an agent on the ticket.
+- A ticket row SHALL show, in this order, its id, its title where ix-board names the ticket (see [Data and drawing](#data-and-drawing)), its badges and its age.
+- A ticket row SHALL NOT show a role, an agent status, the word `focus` or a Linear state.
+- The ages SHALL be right-aligned in one column at the right edge of the row, and the title SHALL take the width the id, badges and age leave, cut with `…`.
+- The age of a ticket that only a focus names, with no agent and no transition in the events, SHALL be that of the focus report.
+- The age SHALL be that of the latest transition of an agent on that ticket in `agent-msg work events`. The stream starts at its oldest event, so the mod SHALL read it in pages of 1000 after a cursor it keeps between reads, at most 5 pages per read, so that a later read asks only for newer events; where more than 5 pages are behind it SHALL warn and carry on at the next read; where the events cannot be read it SHALL be the latest report of an agent on the ticket.
 - The badges SHALL be `[pr]` for a ticket with an open or draft PR, `[review×N]` for N agents in a reviewer role on the ticket (`[review]` when N is 1), `[spec]` for a spec role or the state Specify or Specced, and `[gate]` for a gate role.
 - A ticket that is in progress in the focus status but that no lead reports SHALL NOT be listed under a lead.
-- A ticket with no state drawn SHALL say why where ix-board has answered or failed: `not in Linear` where the tickets read names it as unknown, which it may say by exiting 3 with its answer and no message, and `state not read` where that read never succeeded or did not ask for it.
+- A ticket ix-board gives nothing of SHALL say why in the place of its title, where ix-board has answered or failed: `not in Linear` where the tickets read names it as unknown, which it may say by exiting 3 with its answer and no message, and `state not read` where that read never succeeded or did not ask for it.
 - A lead SHALL collapse to one row that says how many tickets it has in hand, and expand again, by the arrow beside it.
 
 ### Recent
@@ -85,17 +87,17 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-028-AC-1 | A lead of `agent-msg who` is listed with its status mark and age, and under it each ticket of its agents with state, title, badges and last action from the events. | Test |
+| FR-028-AC-1 | A lead of `agent-msg who` is listed with its status mark and age, and under it each ticket of its agents as id, title, badges and the age from the events, with the ages in one column and no role, status or state word. | Test |
 | FR-028-AC-2 | `[pr]` shows for an open or draft PR and not for a merged one; `[review×2]` for two reviewer agents and `[review]` for one; `[spec]` for a spec role or the state Specified; `[gate]` for a gate role. | Test |
 | FR-028-AC-3 | A ticket in progress in the focus status that no lead reports is not listed. | Test |
-| FR-028-AC-4 | A lead collapses to `(N tickets)`, the number it has in hand, and expands again; a ticket row is at most 60 columns wide. | Test |
+| FR-028-AC-4 | A lead collapses to `(N tickets)`, the number it has in hand, and expands again; a ticket row is at most 60 columns wide, its title cut to the room left. | Test |
 | FR-028-AC-5 | Recent lists merged activity newest first with repository, PR number, ticket and title; `a` shows closed and opened entries and the role events too and toggles back. | Test |
 | FR-028-AC-6 | With a focus status that has no `activity` and no `prs`, Recent says `needs ix-board ≥0.9.0` and the tickets show without a PR badge. | Test |
 | FR-028-AC-7 | An answer wrapped in `result` gives the same tickets and activity; beside the focus status call of the Focus read, the Work view makes one ix-board call, for the tickets no focus status names. | Test |
 | FR-028-AC-8 | Where the events cannot be read the tickets still show with the age of the latest agent report, events already held stay listed, and the footer shows one warning. | Test |
 | FR-028-AC-9 | The widget says `N leads · M tickets · K merged 24h`, M the tickets in hand and K a lower bound where the activity is cut inside the day. | Test |
 | FR-028-AC-10 | The Work tab follows Focus in the dock order, and `/factory work` opens it. | Test |
-| FR-028-AC-12 | The events are read after the cursor of the page before, a later read asks only for events after the last cursor and keeps earlier last actions, and five full pages with more behind give one warning and are carried on at the next read. | Test |
+| FR-028-AC-12 | The events are read after the cursor of the page before, a later read asks only for events after the last cursor and keeps earlier ages, and five full pages with more behind give one warning and are carried on at the next read. | Test |
 | FR-028-AC-11 | In a real session the tab shows the leads, their tickets with badges, today's merges and, under `a`, the role events of the bus. | Demonstration |
 | FR-028-AC-13 | Recent lists no role event until `a`; then it lists review, spec and gate starts and finishes with ticket, lead and age, newest first among the merged, closed and opened entries. | Test |
 | FR-028-AC-14 | A repeated report and a resume after `waiting` add no event; `running` after `done`, `failed`, `canceled` or removal is a new start; `failed`, `canceled` and other roles add none; the newest 200 events are kept. | Test |
@@ -103,12 +105,12 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-16 | A review reported while the view is on screen is listed within 60 seconds. | Test |
 | FR-028-AC-17 | With no `activity` in the focus status, `a` lists the role events and says `needs ix-board ≥0.9.0`. | Test |
 | FR-028-AC-18 | Under `a`, 5 role events show beside 40 newer activity entries, and rows either kind does not fill go to the other, listed together newest first. | Test |
-| FR-028-AC-19 | A ticket the focus of a lead names is listed under it once, also where it has no agent, with `focus <age>` where no agent or transition speaks of it, and is counted with the tickets. | Test |
+| FR-028-AC-19 | A ticket the focus of a lead names is listed under it once, also where it has no agent, with the age of the focus report where no agent or transition speaks of it, and is counted with the tickets. | Test |
 | FR-028-AC-20 | A lead with no ticket says `no ticket reported` and the summary of its focus. | Test |
 | FR-028-AC-21 | The leads of the selected teams that answer with no report are counted in one line that shows and hides their addresses, and a lead that could not be read is not among them. | Test |
 | FR-028-AC-22 | A ticket whose agents are all done or canceled and that no focus names is folded under its lead behind `▸ N finished` and is not counted; one the focus names is counted. | Test |
 | FR-028-AC-23 | Before the first read of the leads the widget says they are being read, and after a failed one with none drawn that they could not be read, with no count in either. | Test |
-| FR-028-AC-24 | A reported ticket no focus status names is drawn with the state, title and `[pr]` of one `ix-board issues` answer; no PR is claimed where its attachments are cut short, and a word that is no identifier is not asked for. | Test |
+| FR-028-AC-24 | A reported ticket no focus status names is drawn with the title and `[pr]` of one `ix-board issues` answer; no PR is claimed where its attachments are cut short, and a word that is no identifier is not asked for. | Test |
 | FR-028-AC-25 | The tickets answer is read again after 5 minutes where a ticket was not asked for, else after 30 minutes. | Test |
 | FR-028-AC-26 | A failed ix-board read is a warning on the footer, and an answer more than 35 minutes old says its age in Recent, with no claim that nothing merged lately. | Test |
 | FR-028-AC-27 | A lead whose report is more than 2 hours old has the hollow mark and reads `old <age>`, and the widget counts its tickets apart. | Test |

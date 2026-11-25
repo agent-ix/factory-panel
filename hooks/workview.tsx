@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { TicketsAnswer, WorkAgent, WorkFeed, WorkLast, WorkLead, WorkMeta } from '../types'
+import type { TicketsAnswer, WorkAgent, WorkFeed, WorkLead, WorkMeta } from '../types'
 import { CALL_TIMEOUT_MS, limited } from './board'
 import { focusWasRead } from './focus'
 import { gatedBoard } from './linear'
@@ -17,7 +17,7 @@ import type { RecentEntry, WorkTicket } from './work'
 import type { Options } from './shared'
 
 // The Work pane: who works on what right now. One block per code lead, from the relay's work reports
-// (`agent-msg who`, `agent-msg work --lead <a> show`), with each ticket's state, title and PRs from the focus status
+// (`agent-msg who`, `agent-msg work --lead <a> show`), with each ticket's title and PRs from the focus status
 // ix-board already answers for the Focus pane, then what happened lately: the merges, and on `a` every ticket event
 // and the review, spec and gate starts and finishes of `agent-msg work events`.
 
@@ -34,7 +34,7 @@ const TICKETS_AGAIN_MS = 5 * 60 * 1000
 const TICKETS_MAX = 100
 
 const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
-const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, WorkLast>, { shape: 'workLast-1' })
+const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, number>, { shape: 'workLast-2' })
 const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0 } as WorkMeta, { shape: 'workMeta-5' })
 const EMPTY_FEED: WorkFeed = { events: [], phase: {}, error: null }
 const workFeed = atom({ plugin: 'factory-panel', key: 'workFeed' } as const, EMPTY_FEED, { shape: 'workFeed-1' })
@@ -79,15 +79,15 @@ const STREAM_START = '0-0'
 /** Where the last read of the event stream ended: the next read asks only for what came after. */
 let eventCursor = STREAM_START
 
-type Read = { last: Record<string, WorkLast>; feed: Pick<WorkFeed, 'events' | 'phase'>; cursor: string; truncated: boolean }
+type Read = { last: Record<string, number>; feed: Pick<WorkFeed, 'events' | 'phase'>; cursor: string; truncated: boolean }
 
 /**
- * The latest transition of each (lead, ticket), folded into `prior`, and the role events, folded into `held`. The
+ * The time of the latest transition of each (lead, ticket), folded into `prior`, and the role events, folded into `held`. The
  * stream starts at its oldest event, so a read resumes after the cursor the last one ended at, at most EVENT_PAGES
  * pages at a time. Where the cap is reached with more to come, `truncated` is true and the next read carries on from
  * where this one stopped.
  */
-async function readEvents($: EngineInterface, prior: Record<string, WorkLast>, held: WorkFeed): Promise<Read> {
+async function readEvents($: EngineInterface, prior: Record<string, number>, held: WorkFeed): Promise<Read> {
   const last = { ...prior }
   // A read from the start of the stream tells the whole story again: nothing held is added to.
   let feed: Pick<WorkFeed, 'events' | 'phase'> = eventCursor === STREAM_START ? EMPTY_FEED : held
@@ -146,7 +146,7 @@ async function runIssues($: EngineInterface, ids: string[]): Promise<TicketsAnsw
   return { at: await $.clock.now(), asked: ids, issues: issuesOf(answer), unknown: unknownOf(answer) }
 }
 
-/** Reads the state and PRs of the reported tickets no focus status names; false when that failed. */
+/** Reads the titles, states and PRs of the reported tickets no focus status names; false when that failed. */
 export function pollTickets($: EngineInterface): Promise<boolean> {
   return track($, 'tickets', async () => {
     const [meta, leads, boards, isFocusRead] = await Promise.all([read($, workMeta), read($, workLeads), focusBoards($), focusWasRead($)])
@@ -273,21 +273,21 @@ export function recentLine(row: RecentEntry, now: number): string {
 
 const clip = (t: string, cells: number): string => (t.length > cells ? `${t.slice(0, Math.max(1, cells - 1))}…` : t)
 
+/** The columns of the age at the right of a ticket row. */
+const AGE_CELLS = 4
+
 /**
- * One ticket line: `   QSL-1240 Coding proof gate…  [pr][review×2]  reviewer running 4m`, the title taking the room left. Where the
- * full last action leaves the title less than 10 cells it is cut to the role and the age.
+ * One ticket line: `   QSL-1240 Coding proof gate…  [pr][review×2]    4m`. The age keeps a column at the right, the badges
+ * stand before it and the title takes the room left. A ticket with no title says why in its place.
  */
 export function ticketLine(t: WorkTicket, now: number, width: number): string {
-  const left = `   ${t.id}${t.state === null ? '' : ` ${t.state}`} `
-  const make = (action: string): string => [t.badges.join(''), action].filter(Boolean).join('  ')
-  const age = t.lastAction === null ? '' : agoShort(t.lastAction.at, now)
-  const full = t.lastAction === null ? '' : `${t.lastAction.what} ${age}`
-  const short = t.lastAction === null ? '' : `${t.lastAction.what.split(' ')[0]} ${age}`
-  let right = make(full)
-  if (width - left.length - right.length - 2 < 10) right = make(short)
-  const room = width - left.length - right.length - 2
-  const title = t.title === '' ? '' : room >= 6 ? clip(t.title, room).padEnd(room) : ''
-  return `${left}${title}${title === '' && right !== '' ? '' : '  '}${right}`.trimEnd()
+  const left = `   ${t.id} `
+  const age = t.at === null ? '' : agoShort(t.at, now)
+  const badges = t.badges.length === 0 ? '' : `  ${t.badges.join('')}`
+  const right = `${badges}  ${age.padStart(AGE_CELLS)}`
+  const room = Math.max(0, width - left.length - right.length)
+  const text = room >= 6 ? clip(t.title || (t.why ?? ''), room) : ''
+  return `${left}${text.padEnd(room)}${right}`.trimEnd()
 }
 
 async function toggleCollapsed($: EngineInterface, address: string): Promise<void> {

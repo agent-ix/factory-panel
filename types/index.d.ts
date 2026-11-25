@@ -298,9 +298,6 @@ export type WorkLead = { address: string; status: string; reportedAt: number | n
 /** What a lead last said it is doing: the summary, the tickets it named, and when. */
 export type WorkLeadFocus = { summary: string; tickets: string[]; at: number | null }
 
-/** The latest transition of one agent on one ticket, from `agent-msg work events`. */
-export type WorkLast = { role: string; status: string; at: number }
-
 /**
  * `relayError` is why the last read of the leads gave nothing new: no list of leads, or no report of any lead.
  * `listed` counts the leads that read asked, `silent` names those that answered with no report, and `pending` counts
@@ -359,7 +356,7 @@ declare module 'claude-code' {
       rolesOpen: string[]
       capacity: Shaped<CapacityView | null>
       workLeads: Shaped<WorkLead[]>
-      workLast: Shaped<Record<string, WorkLast>>
+      workLast: Shaped<Record<string, number>>
       workMeta: Shaped<WorkMeta>
       workFeed: Shaped<WorkFeed>
       workBoards: Shaped<Record<string, WorkBoard>>
