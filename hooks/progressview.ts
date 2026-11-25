@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { FocusView } from '../types'
-import { compose, hasFailure, membershipsOf, projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
+import { SourceFailure, compose, hasFailure, membershipsOf, projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
 import type { Refresh, Selector } from './board'
 import { gatedBoard } from './linear'
 import { mergeInitiatives, mergeRecords, readFile, saveFile } from './progress'
@@ -20,13 +20,18 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
   const key = `focus:${selectors.map(selectorKey).join(' ')}`
   const disk = await readFile($)
   let ran = false
+  let partial: Refresh | null = null
   // A refresh with a failure in it is shown and held for 5 minutes: the next poll after them asks again, r asks now.
   const read = await gatedBoard(
     $,
     key,
     () => {
       ran = true
-      return refreshProgress($, selectors, disk, endsAt)
+      return refreshProgress($, selectors, disk, endsAt).catch((error: unknown) => {
+        // A rate limit holds every call, but what was answered before it is still drawn and recorded.
+        if (error instanceof SourceFailure) partial = error.partial
+        throw error
+      })
     },
     { manual, keep: (r: Refresh) => !hasFailure(r) },
   )
@@ -34,7 +39,7 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
   const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
   if (read.data === null && sourceError === null) return null
   // After a failed read the cached result is an old one: only the records and the cached membership speak.
-  const refresh = read.error !== null ? null : read.data
+  const refresh = partial ?? (read.error !== null ? null : read.data)
   const success: Records = recordsOf(refresh, now, disk.records)
   const memberships = membershipsOf(selectors, refresh, disk.initiatives, now)
   // The file as it is now: another session may have written a record newer than this answer while it was awaited.

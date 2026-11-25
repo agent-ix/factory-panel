@@ -122,7 +122,8 @@ test('a source that never returns does not hold back the others, and the first v
   await w.clock!.advance(100)
   await w.clock!.advance(900)
   shows(await paneLines($), /^Release train summary$/)
-  await w.clock!.advance(1000)
+  // Let the refresh end at its budget inside the test.
+  await w.clock!.advance(61_000)
   await started$
 })
 
@@ -198,8 +199,7 @@ test('/factory show gives the age of ix-board projects from progress.json and of
   expect(none).toMatch(/^ {2}agent-msg work: no live agent$/m)
 })
 
-test('/factory show prints the totals, each initiative and each project with remaining, ready and blocked, a dash where the answer lacks the key', async ($, on) => {
-  trace("FR-023-AC-2", "FR-023-AC-3", "FR-022-AC-1", "FR-022-AC-11", "FR-022-AC-5")
+async function showScenario($: Parameters<TestBody>[0], on: Parameters<typeof world>[0]): Promise<string> {
   const w = world(on, true)
   lead(w, { initiatives: ['A', '674ffba8-fe0d-47e3-82b1-c0aa40787357'], projects: ['Loose'] })
   const calls = new Map<string, ReturnType<typeof out>>([
@@ -216,13 +216,28 @@ test('/factory show prints the totals, each initiative and each project with rem
     return prior?.(argv, init)
   }
   await started($, w)
-  const text = await shownText($)
-  expect(text).toMatch(/^ {2}total: .*3 of 4 projects.*partial.*1 initiative not expanded$/m)
-  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · .*partial$/m)
+  return shownText($)
+}
+
+test('/factory show prints each project with remaining, ready and blocked, and a dash where the answer lacks the key', async ($, on) => {
+  trace("FR-023-AC-2", "FR-023-AC-3")
+  const text = await showScenario($, on)
   expect(text).toMatch(/^ {4}P1: 10\/25 · remaining 15 · ready 3 · blocked 3$/m)
   expect(text).toMatch(/^ {4}P3: 1\/4 · remaining 3 · ready - · blocked -$/m)
   expect(text).toMatch(/^ {4}P2: failed, no counts$/m)
+})
+
+test('/factory show prints the X of Y projects, partial and not expanded wording of the initiatives and the header', async ($, on) => {
+  trace("FR-022-AC-1", "FR-022-AC-11")
+  const text = await showScenario($, on)
+  expect(text).toMatch(/^ {2}total: .*3 of 4 projects.*partial.*1 initiative not expanded$/m)
+  expect(text).toMatch(/^ {2}initiative A: 2 of 3 projects · 11\/29 done · remaining 18 · ready 3 · blocked 3 · partial$/m)
   expect(text).toMatch(/^ {2}initiative initiative 674ffba8: projects unknown$/m)
+})
+
+test('/factory show lists a project in no selected initiative apart', async ($, on) => {
+  trace("FR-022-AC-5")
+  const text = await showScenario($, on)
   expect(text).toMatch(/^ {2}not in a selected initiative:$/m)
   expect(text).toMatch(/^ {4}Loose: 2\/4 · remaining 2/m)
 })

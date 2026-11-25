@@ -86,7 +86,7 @@ export type Expansion = {
   /** the id when the selector is a UUID, else the name */
   collapseKey: string
   name: string
-  via: 'roadmap' | 'rule3' | 'memory' | 'none'
+  via: 'roadmap' | 'rule3' | 'memory' | 'none' | 'identified'
   /** Set when the initiative could not be expanded: `projects unknown` or `initiative not found`. */
   reason: string | null
   error: string | null
@@ -104,15 +104,20 @@ export type Refresh = {
 }
 
 /** A rate limit of Linear: it holds the whole workspace, so it is thrown for the gate to hold every call. */
-export class SourceFailure extends Error {}
+export class SourceFailure extends Error {
+  /** What the refresh had answered before the rate limit, so it is drawn and recorded. */
+  partial: Refresh | null = null
+}
 
 type StatusProject = { id?: string; identifier?: string; name?: string; progress?: { done?: number; total?: number }; in_progress?: unknown[]; open_by_state?: { state?: string; count?: number }[] }
 type Status = { fetched_at?: number; ready_queue?: { project?: string }[]; blocker_layers?: { classification?: string }[][]; projects?: StatusProject[] }
 
-const AUTH = /authenticat|authoris|authoriz|unauthori|forbidden|permission denied|credential|not logged in|api key|\b40[13]\b/i
+// Only explicit words: a ticket id such as QSL-403 is not an authorisation failure.
+const AUTH = /unauthori[sz]ed|forbidden|authenticat|authori[sz]ation|api key|\btoken\b|not logged in|credential/i
 const RATE = /rate limit/i
 const TIMEOUT = /timed out/i
-const NOT_FOUND_TEXT = /not found|no such initiative|unknown initiative/i
+/** Whether an initiative call's error says that the initiative itself is not found, and not some other thing that is. */
+const notFoundInitiative = (error: string): boolean => /initiative/i.test(error) && /not found|no such|unknown/i.test(error)
 
 const lastLine = (text: string): string => text.trim().split('\n').filter(Boolean).pop() ?? ''
 
@@ -221,6 +226,8 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   let sourceError: string | null = null
   let roadmapError: string | null = null
   let answered = 0
+  /** Names learned on the way (rule 4c) for projects whose own call may fail. */
+  const hints = new Map<string, Named>()
 
   type Result = { ok: true; stdout: string } | { ok: false; error: string }
   /** One ix-board process, within the call timeout and the budget; a source error is recorded and stops the rest. */
@@ -246,8 +253,9 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
       }
       const stderr = ran.stderr.trim()
       if (stderr === '') {
-        sourceError ??= `ix-board exited ${ran.exitCode}`
-        return { ok: false, error: sourceError }
+        // ix-board ran and refused with no text: that call failed; the text of its stdout is its error when it has one.
+        answered++
+        return { ok: false, error: lastLine(ran.stdout) || `ix-board exited ${ran.exitCode}` }
       }
       if (AUTH.test(stderr) || RATE.test(stderr)) {
         sourceError ??= lastLine(stderr)
@@ -272,7 +280,9 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
       if (sourceError !== null) return
       outcomes[key] ??= { ok: false, error: result.error }
       // A project nobody has ever named is asked for its name alone: project-chunk works where the status call does not.
-      if (selector.kind === 'project' && sourceError === null && nameFor(file, selector.ref) === undefined) {
+      const hinted = hints.get(selector.ref)
+      if (hinted !== undefined) outcomes[key] = { ok: false, error: result.error, named: hinted }
+      else if (selector.kind === 'project' && sourceError === null && nameFor(file, selector.ref) === undefined) {
         const named = await ask(['project-chunk', selector.ref])
         if (named.ok) {
           try {
@@ -340,7 +350,10 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
       else expansions.push(expandFromCache(s, memory, NOT_FOUND))
     }
 
-    /** The roadmap initiative that holds the project an initiative call's error names, when exactly one does. */
+  /**
+   * Rule 4c. The roadmap initiative that holds the project an initiative call's error names, only when it is the one
+   * initiative that holds it and is not itself selected. It is a guess, so it is drawn and never stored.
+   */
   const identify = async (s: Selector, error: string, list: RoadmapInitiative[]): Promise<Expansion | null> => {
     const named = /in project ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(error)
     if (named === null) return null
@@ -353,10 +366,18 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
       return null
     }
     if (!text(name)) return null
-    const holders = list.filter(i => projectsOf(i).some(p => p.name === name))
+    // An initiative holds the project when it lists it, or another initiative lists it as also_in this one.
+    const holds = (i: RoadmapInitiative): boolean => (i.projects ?? []).some(p => p.name === name) || list.some(o => (o.projects ?? []).some(p => p.name === name && Array.isArray(p.also_in) && (p.also_in as unknown[]).includes(i.name)))
+    const holders = list.filter(holds)
     if (holders.length !== 1) return null
     const found = holders[0]!
-    return { key: selectorKey(s), collapseKey: isUuid(s.ref) ? s.ref : String(found.name), name: s.label ?? String(found.name), via: 'roadmap', reason: null, error: null, projects: projectsOf(found) }
+    if (selectors.some(o => o.kind === 'initiative' && o.ref !== s.ref && matchRoadmap(list, o.ref) === found)) return null
+    hints.set(name, { id: named[1]!, identifier: null, name })
+    const projects = projectsOf(found)
+    for (const o of list)
+      for (const p of o.projects ?? [])
+        if (text(p.name) && Array.isArray(p.also_in) && (p.also_in as unknown[]).includes(found.name) && !projects.some(q => q.name === p.name)) projects.push({ ref: p.name, id: '', name: p.name })
+    return { key: selectorKey(s), collapseKey: isUuid(s.ref) ? s.ref : String(found.name), name: s.label ?? String(found.name), via: 'identified', reason: null, error: null, projects }
   }
 
   // Rule 3: one initiative call for each selector the roadmap cannot place; its projects come with their progress.
@@ -380,13 +401,15 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
               for (const k of [r.id, r.identifier, r.name]) if (k !== null) outcomes[projectKey(k)] ??= ok
             }
             const names = new Set(rows.map(r => r.name))
-            const named = (roadmap ?? []).find(i => projectsOf(i).length === names.size && projectsOf(i).every(p => names.has(p.name)))
+            // The roadmap names the initiative only where exactly one initiative has the very projects of the answer.
+            const equal = (roadmap ?? []).filter(i => projectsOf(i).length === names.size && projectsOf(i).every(p => names.has(p.name)))
+            const named = equal.length === 1 ? equal[0] : undefined
             third.set(selectorKey(s), { key: selectorKey(s), collapseKey: isUuid(s.ref) ? s.ref : s.ref, name: s.label ?? (named !== undefined ? String(named.name) : initiativeName(s)), via: 'rule3', reason: null, error: null, projects })
             return
           }
         }
         const error = result.ok ? 'ix-board printed text that is not JSON' : result.error
-        const remembered = expandFromCache(s, memory, NOT_FOUND_TEXT.test(error) ? NOT_FOUND : null)
+        const remembered = expandFromCache(s, memory, notFoundInitiative(error) ? NOT_FOUND : null)
         // Rule 4c: the error names the project with the dangling milestone; the initiative that holds a project of that name is this one.
         const identified = remembered.via === 'none' && roadmap !== null ? await identify(s, error, roadmap) : null
         third.set(selectorKey(s), identified ?? { ...remembered, error })
@@ -410,7 +433,11 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   if (sourceError === null) await all(calls)
 
   const at = await $.clock.now()
-  if (sourceError !== null && RATE.test(sourceError)) throw new SourceFailure(sourceError)
+  if (sourceError !== null && RATE.test(sourceError)) {
+    const held = new SourceFailure(sourceError)
+    held.partial = { at, roadmapError, sourceError, expansions, outcomes }
+    throw held
+  }
   // A project unanswered at the end of the budget has failed.
   if (sourceError === null) for (const ref of refs) outcomes[projectKey(ref)] ??= { ok: false, error: 'timed out' }
   if (sourceError === null) for (const s of selectors) if (s.kind === 'milestone' || s.kind === 'ticket') outcomes[selectorKey(s)] ??= { ok: false, error: 'timed out' }
@@ -466,7 +493,7 @@ export function membershipsOf(selectors: readonly Selector[], refresh: Refresh |
       if (memory[s.ref] !== undefined) mine[s.ref] = { ...memory[s.ref]!, seen_ms: now }
       continue
     }
-    if (e.via === 'none') continue
+    if (e.via === 'none' || e.via === 'identified') continue
     const members: Member[] = e.projects.map(p => {
       const row = answerOf(refresh, p)
       return { id: row?.id ?? p.id, name: p.name }
@@ -592,7 +619,6 @@ export function compose(selectors: readonly Selector[], refresh: Refresh | null,
       if (r.id !== null) inInitiative.ids.add(r.id)
       inInitiative.names.add(r.name)
     }
-    if (e.error !== null) warned.set(`initiative:${s.ref}`, { kind: 'initiative', name, text: e.error, id: null })
     const counted = rows.filter(r => !r.failed)
     const olds = counted.filter(r => r.old && r.at !== null).map(r => r.at!)
     initiatives.push({
@@ -618,7 +644,7 @@ export function compose(selectors: readonly Selector[], refresh: Refresh | null,
   for (const s of selectors) {
     if (s.kind === 'project') {
       const row = project({ ref: s.ref, id: isUuid(s.ref) ? s.ref : '', name: s.label ?? `project ${short(s.ref)}` }, s.label)
-      if (!((row.id !== null && inInitiative.ids.has(row.id)) || (!row.failed && inInitiative.names.has(row.name)))) loose.push(row)
+      if (!((row.id !== null && inInitiative.ids.has(row.id)) || (row.id === null && inInitiative.names.has(row.name)))) loose.push(row)
     } else if (s.kind === 'milestone' || s.kind === 'ticket') {
       const key = selectorKey(s)
       const outcome = refresh?.outcomes[key]
@@ -632,7 +658,6 @@ export function compose(selectors: readonly Selector[], refresh: Refresh | null,
         row = rowFrom(s.label ?? found.name ?? selectorName(s), key, s.ref, recordRow(found), null, found.at_ms, true)
       } else row = { ...rowFrom(selectorName(s), key, s.ref, { done: 0, total: 0, inProgress: 0, ready: null, blocked: null }, null, null, false), failed: true }
       if (fail !== null) warned.set(`unit:${key}`, { kind: 'project', name: row.name, text: fail, id: null })
-      identities.set(`unit:${key}`, row)
       loose.push(row)
     }
   }

@@ -47,7 +47,7 @@ Note: `ix-board focus status --help` states that `--project` accepts a UUID, an 
 | FR-026-AC-1 | Given project selectors by id, by identifier and by name, each is passed verbatim to `--project`, a milestone to `--milestone` alone and a ticket to `--issue`. | Test |
 | FR-026-AC-2 | Given one of 18 project calls exits non-zero with `issue QSL-3236 references unavailable milestone m1 in project p1`, the other 17 are drawn with their counts and the failed project is named with that text. | Test |
 | FR-026-AC-3 | Given ix-board is missing, the mod shows one ix-board error and makes no further call in that refresh. | Test |
-| FR-026-AC-4 | Given a call times out, the mod shows one ix-board error and makes no further call in that refresh. | Test |
+| FR-026-AC-4 | Given the first call of a refresh times out, the mod shows one ix-board error and makes no further call in that refresh. | Test |
 | FR-026-AC-5 | Given a call exits with stderr `authentication failed`, the mod shows one ix-board error and makes no further call in that refresh. | Test |
 | FR-026-AC-6 | Given a call exits with `Linear rate limited; retry in 60s`, the mod shows one ix-board error, makes no further call, and makes no call for 60 seconds. | Test |
 | FR-026-AC-7 | Given 10 distinct project selectors and no initiative, at most 10 calls are made. | Test |

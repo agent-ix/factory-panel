@@ -231,6 +231,8 @@ test('initiative A whose 4 projects all fail reads 0 of 4 with no total, B is dr
   expect(p.initiatives[0]).toMatchObject({ counted: 0, enumerated: 4, total: 0 })
   expect(p.initiatives[1]).toMatchObject({ counted: 1, enumerated: 1, done: 2, total: 4 })
   expect(p.header).toMatchObject({ done: 2, total: 4, partial: true })
+  expect(p.warnings).toHaveLength(4)
+  expect(p.warnings.every(x => x.kind === 'project')).toBe(true)
 })
 
 test('a record whose success is 24 hours 1 minute old does not draw a failing project, which is failed and not counted', async ($, on) => {
@@ -351,7 +353,7 @@ test('records of 0.6.0 under project:<uuid> are used, records keyed by name, foc
   })
   ix(w, { projects: { [id]: 'P is broken', Payments: 'Payments is broken' } })
   const p = (await progress(w, [proj(id), proj('Payments')])).progress!
-  expect(p.loose.map(x => [x.name, x.old, x.done])).toEqual([[`project ${id.slice(0, 8)}`.length > 0 ? p.loose[0]!.name : '', true, 10], ['project Payments', false, 0]])
+  expect(p.loose.map(x => [x.name, x.old, x.done])).toEqual([[`project ${id.slice(0, 8)}`, true, 10], ['project Payments', false, 0]])
   expect(p.loose[1]!.failed).toBe(true)
   const file = saved(w)
   expect(Object.keys(file).sort()).toEqual([`project:${id}`, 'focus:draco:QSL:code:project:A', 'initiative:X', 'project:Payments'].sort())
@@ -818,12 +820,12 @@ test('a failing initiative call that names a project, with no cache, takes the o
   expect(b.calls.filter(c => c.startsWith('focus status --project '))).toHaveLength(18)
   expect(b.calls).toContain(`project-chunk ${BAD}`)
   expect(shown.progress!.warnings.map(x => x.name)).toEqual([STABILITY])
-  expect(saved(w).initiatives[HARD]).toMatchObject({ name: 'FSL Hardening' })
-  expect(saved(w).initiatives[HARD].projects).toHaveLength(18)
-  // The next refresh finds the cached name and membership, and the row reads FSL Hardening.
+  // The identity is a guess: it is not stored, and the next refresh works it out again.
+  expect(saved(w).initiatives?.[HARD]).toBeUndefined()
   await w.clock!.advance(6 * MIN)
   const again = await progress(w, [initiative(HARD)])
   expect(again.progress!.initiatives[0]).toMatchObject({ name: 'FSL Hardening', enumerated: 18 })
+  expect(saved(w).initiatives?.[HARD]).toBeUndefined()
 })
 
 test('with two roadmap initiatives that list the project, or none, the failing initiative is projects unknown', async ($, on) => {
@@ -838,4 +840,118 @@ test('with two roadmap initiatives that list the project, or none, the failing i
   const w2 = world(on, true)
   ix(w2, { roadmap: [{ name: 'Elsewhere', projects: [{ name: 'Other' }] }], initiatives: { [HARD]: BAD_MILESTONE }, other: args => (args[0] === 'project-chunk' ? chunkOf(STABILITY) : out('', 1, 'not stubbed')) })
   expect((await progress(w2, [initiative(HARD)])).progress!.initiatives[0]).toMatchObject({ failed: 'projects unknown' })
+})
+
+// ---------------------------------------------------------------- review rulings
+
+test('a ticket identifier such as QSL-403 in an error is no source error, and a call with no stderr text fails alone', async ($, on) => {
+  trace("FR-016-AC-17")
+  const w = world(on, true)
+  const text = 'issue QSL-403 references unavailable milestone m1 in project p1'
+  const b = ix(w, { projects: { A: text, B: project('B', 1, 2), C: () => out('stdout says why', 1, ''), D: () => out('', 3, ''), E: project('E', 1, 2) } })
+  const shown = await progress(w, ['A', 'B', 'C', 'D', 'E'].map(proj))
+  const p = shown.progress!
+  expect(p.warnings.every(x => x.kind === 'project')).toBe(true)
+  expect(p.warnings.map(x => x.text).sort()).toEqual([text, 'stdout says why', 'ix-board exited 3'].sort())
+  expect(b.calls.filter(c => c.startsWith('focus status')).length).toBe(5)
+  expect(p.loose.filter(x => !x.failed).map(x => x.name)).toEqual(['B', 'E'])
+})
+
+test('the first call timing out is one source error, and a call timing out after another answered is only that project', async ($, on) => {
+  trace("FR-016-AC-16")
+  const w = world(on, true)
+  const hang = (init: { timeoutMs?: number } | undefined) => w.clock!.sleep(init?.timeoutMs ?? 20_000).then(() => Promise.reject(new Error(`timed out after ${init?.timeoutMs}ms`)))
+  ix(w, { projects: { A: hang, B: hang } })
+  const first = await progress(w, [proj('A'), proj('B')], { advance: 21_000 })
+  expect(first.progress!.warnings.map(x => x.kind)).toEqual(['source'])
+  const w2 = world(on, true)
+  ix(w2, { projects: { A: project('A', 1, 2), B: hang2(w2) } })
+  const second = await progress(w2, [proj('A'), proj('B')], { advance: 21_000 })
+  expect(second.progress!.warnings.map(x => [x.kind, x.text])).toEqual([['project', 'timed out']])
+})
+const hang2 = (w: ReturnType<typeof world>) => (init: { timeoutMs?: number } | undefined) => w.clock!.sleep(init?.timeoutMs ?? 20_000).then(() => Promise.reject(new Error(`timed out after ${init?.timeoutMs}ms`)))
+
+test('two direct projects of the same name and different ids both show, and a direct project is hidden from the loose rows by name only when its id is unknown', async ($, on) => {
+  trace("FR-026-AC-12")
+  const w = world(on, true)
+  const [a, b2] = [pid('twin-a'), pid('twin-b')]
+  ix(w, { projects: { [a]: project('Twin', 1, 4, { id: a }), [b2]: project('Twin', 2, 6, { id: b2 }) } })
+  const p = (await progress(w, [proj(a), proj(b2)])).progress!
+  expect(p.loose.map(x => x.id)).toEqual([a, b2])
+  expect(p.header).toMatchObject({ counted: 2, enumerated: 2, done: 3, total: 10 })
+  // Another project of the same name in an initiative does not hide a direct project whose id is known.
+  const w2 = world(on, true)
+  ix(w2, { roadmap: [{ name: 'A', projects: [{ name: 'Twin' }] }], projects: { Twin: project('Twin', 1, 4, { id: a }), [b2]: project('Twin', 2, 6, { id: b2 }) } })
+  const q = (await progress(w2, [initiative('A'), proj(b2)])).progress!
+  expect(q.loose.map(x => x.id)).toEqual([b2])
+})
+
+test('a rule 4c guess is not made when two initiatives hold the project, when the holder is itself selected, or when also_in adds a holder', async ($, on) => {
+  trace("FR-021-AC-11")
+  const chunk = (args: string[]) => (args[0] === 'project-chunk' ? chunkOf(STABILITY) : out('', 1, 'not stubbed'))
+  const w = world(on, true)
+  ix(w, { roadmap: [{ name: 'FSL Hardening', projects: [{ name: STABILITY }] }, { name: 'Other', projects: [{ name: 'X' }] }], initiatives: { [HARD]: BAD_MILESTONE }, projects: { [STABILITY]: project(STABILITY, 1, 2) }, other: chunk })
+  // The holder is itself selected by name.
+  expect((await progress(w, [initiative(HARD), initiative('FSL Hardening')])).progress!.initiatives[0]).toMatchObject({ failed: 'projects unknown' })
+  // A second holder through also_in.
+  const w2 = world(on, true)
+  ix(w2, { roadmap: [{ name: 'FSL Hardening', projects: [{ name: STABILITY, also_in: ['Another'] }] }, { name: 'Another', projects: [{ name: 'Y' }] }], initiatives: { [HARD]: BAD_MILESTONE }, other: chunk })
+  expect((await progress(w2, [initiative(HARD)])).progress!.initiatives[0]).toMatchObject({ failed: 'projects unknown' })
+})
+
+test('an initiative from an initiative call is named only when exactly one roadmap initiative has the very projects of the answer', async ($, on) => {
+  trace("FR-021-AC-3")
+  const specs = [project('P1', 1, 2), project('P2', 1, 2)]
+  const w = world(on, true)
+  ix(w, { roadmap: [{ name: 'One', projects: [{ name: 'P1' }, { name: 'P2' }] }], initiatives: { [FSL]: specs } })
+  expect((await progress(w, [initiative(FSL)])).progress!.initiatives[0]!.name).toBe('One')
+  const w2 = world(on, true)
+  ix(w2, { roadmap: [{ name: 'One', projects: [{ name: 'P1' }, { name: 'P2' }] }, { name: 'Two', projects: [{ name: 'P2' }, { name: 'P1' }] }], initiatives: { [FSL]: specs } })
+  expect((await progress(w2, [initiative(FSL)])).progress!.initiatives[0]!.name).toBe('initiative efb47f87')
+})
+
+test('only an error about the initiative itself is initiative not found, and an initiative expanded from its memory adds no warning of its own', async ($, on) => {
+  trace("FR-021-AC-7")
+  const w = world(on, true)
+  ix(w, { roadmap: [{ name: 'Elsewhere', projects: [{ name: 'Other' }] }], initiatives: { [HARD]: 'project p9 not found' } })
+  expect((await progress(w, [initiative(HARD)])).progress!.initiatives[0]!.failed).toBe('projects unknown')
+  const w2 = world(on, true)
+  const id = pid('P')
+  seed(w2, { initiatives: { [HARD]: { at_ms: T0 - MIN, seen_ms: T0 - MIN, projects: [{ id, name: 'P' }] } } })
+  ix(w2, { roadmap: [{ name: 'Elsewhere', projects: [{ name: 'Other' }] }], initiatives: { [HARD]: BAD_MILESTONE }, projects: { [id]: project('P', 1, 2, { id }) } })
+  const p = (await progress(w2, [initiative(HARD)])).progress!
+  expect(p.initiatives[0]).toMatchObject({ failed: null, counted: 1 })
+  expect(p.warnings).toEqual([])
+})
+
+test('the header counts projects only: a loose milestone or ticket row is drawn but not summed', async ($, on) => {
+  trace("FR-022-AC-8")
+  const w = world(on, true)
+  ix(w, { projects: { P: project('P', 3, 6) }, other: () => out(statusJson([project('Touched', 1, 4)])) })
+  const p = (await progress(w, [proj('P'), { kind: 'ticket', ref: 'QSL-9' }])).progress!
+  expect(p.loose).toHaveLength(2)
+  expect(p.header).toMatchObject({ done: 3, total: 6, counted: 1, enumerated: 1 })
+})
+
+test('a Linear rate limit keeps the projects answered before it, records them, and still holds every call', async ($, on) => {
+  trace("FR-026-AC-6")
+  const w = world(on, true)
+  const slow = () => w.clock!.sleep(1000).then(() => out('', 4, 'Linear rate limited; retry in 60s'))
+  ix(w, { projects: { A: project('A', 1, 2), B: slow } })
+  const shown = await progress(w, [proj('A'), proj('B')], { advance: 2000 })
+  expect(shown.progress!.loose.map(p => [p.name, p.failed])).toEqual([['A', false], ['project B', true]])
+  expect(saved(w)[`project:${pid('A')}`]).toMatchObject({ done: 1, total: 2 })
+  expect(shown.progress!.warnings.map(x => x.kind)).toEqual(['source'])
+})
+
+test('a project named by project-chunk through its name keeps a name-only record under the id, so it is not asked again', async ($, on) => {
+  trace("FR-025-AC-3")
+  const w = world(on, true)
+  const id = pid('Named')
+  const b = ix(w, { projects: { Named: BAD_MILESTONE }, other: args => (args[0] === 'project-chunk' ? out(JSON.stringify({ identifier: id, name: 'Named', goal: '', milestones: [], open_tickets: [], blocker_layers: [] })) : out('', 1, 'not stubbed')) })
+  await progress(w, [proj('Named')])
+  expect(saved(w)[`project:${id}`]).toMatchObject({ name: 'Named', unknown: true })
+  await w.clock!.advance(6 * MIN)
+  await progress(w, [proj('Named')])
+  expect(b.calls.filter(c => c.startsWith('project-chunk'))).toHaveLength(1)
 })
