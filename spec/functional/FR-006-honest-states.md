@@ -5,12 +5,16 @@ type: FR
 relationships:
   - target: "ix://agent-ix/factory-panel/US-005"
     type: implements
+  - target: "ix://agent-ix/factory-panel/FR-016"
+    type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-018"
+    type: traces_to
 ---
 # FR-006: Honest states
 
 ## Description
 
-The mod SHALL show a missing, stale or failed source as missing, with its reason, in the band and in the detail views.
+The mod SHALL show a missing, failed or old source as missing, or as old with its age, with its reason, in the band and in the detail views.
 
 ## Behavior
 
@@ -35,7 +39,9 @@ The mod SHALL show a missing, stale or failed source as missing, with its reason
 | FR-006-AC-7 | An ix-board error is shown by the lanes cell. | Test |
 | FR-006-AC-8 | With no machines and a metrics error, the band shows "hosts —" and the metrics error. | Test |
 | FR-006-AC-9 | When the metrics service does not answer, the Factory view says the metrics are unavailable, gives the reason, and shows any earlier value marked as old. | Test |
+| FR-006-AC-10 | A failed ix-board selector with an earlier record is shown old with its age, as FR-016-AC-2 and FR-017-AC-2 assert. | Test |
 
 ## Dependencies
 
 - **Upstream**: [US-005](../usecase/US-005-trust-what-i-see.md)
+- **See also**: [FR-016](FR-016-isolated-selectors.md), [FR-018](FR-018-errors-visible-not-fatal.md)

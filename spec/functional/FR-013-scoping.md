@@ -9,6 +9,8 @@ relationships:
     type: implements
   - target: "ix://agent-ix/factory-panel/FR-020"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-019"
+    type: traces_to
 ---
 # FR-013: Scoping hosts, focus and teams
 
@@ -54,3 +56,4 @@ The mod SHALL narrow the hosts, focuses and lanes it shows to the scope selected
 ## Dependencies
 
 - **Upstream**: [US-007](../usecase/US-007-own-focus.md), [US-008](../usecase/US-008-coordinator-teams.md)
+- **See also**: [FR-019](FR-019-focus-mode-banner.md), [FR-020](FR-020-named-focus-resolution.md)

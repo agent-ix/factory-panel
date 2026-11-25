@@ -18,13 +18,15 @@ The mod SHALL show the error of each failing source in one place so that no fail
 
 ## Behavior
 
-- The sources SHALL be ix-board (one per selector), `agent-msg work`, and Prometheus.
-- The mod SHALL show each failing source's own error text on the card error line of the module that uses it, as [FR-006](./FR-006-honest-states.md) requires.
-- `/factory show` SHALL list every failing source with its error text and the age of its last success.
-- The mod SHALL ask the sources independently, so that a failure or a wait on one source does not delay or remove another source's data.
+- The sources SHALL be ix-board (one per selector), `agent-msg work`, `agent-msg focuses`, and Prometheus.
+- The mod SHALL show each failing source's error text on the card error line of the module that uses it, as [FR-006](./FR-006-honest-states.md) requires.
+- `/factory show` SHALL list every failing source with its error text.
+- `/factory show` SHALL give the age of the last success for ix-board selectors from the record of [FR-017](./FR-017-last-good-progress.md) and for the other sources from memory.
+- The mod SHALL start the sources independently, so that the answer time of one source does not change the time at which another source's data is drawn.
 - The mod SHALL paint the first view before any source answers.
-- Where the failing source has a last good value, the view SHALL show it as [FR-017](./FR-017-last-good-progress.md) says.
-- The mod SHALL NOT throw an error to the engine because a source failed.
+- Where the failing source has a last good value, the mod SHALL show it as [FR-017](./FR-017-last-good-progress.md) says.
+- The mod SHALL catch every source failure.
+- The mod SHALL raise no source failure to the engine.
 
 ## Acceptance Criteria
 
@@ -33,9 +35,10 @@ The mod SHALL show the error of each failing source in one place so that no fail
 | FR-018-AC-1 | Given ix-board fails and `agent-msg work` and Prometheus answer, the Focus card shows the ix-board error on its error line and the summary and metrics are drawn. | Test |
 | FR-018-AC-2 | Given `agent-msg work` fails and ix-board answers, the progress is drawn and the work error is shown. | Test |
 | FR-018-AC-3 | Given Prometheus does not answer, the Focus pane and lanes are drawn and the Factory view says the metrics are unavailable with the reason. | Test |
-| FR-018-AC-4 | Given ix-board fails for one selector and Prometheus fails, `/factory show` lists both with their error text and age of last success. | Test |
-| FR-018-AC-5 | Given a source that never returns, the first view is painted within the NFR-001 target and the other sources are drawn when they answer. | Test |
-| FR-018-AC-6 | Given every source fails, the mod raises no error to the engine and each module shows its source's error. | Test |
+| FR-018-AC-4 | Given ix-board fails for one selector and Prometheus fails, `/factory show` lists both with their error text and the age of each last success where one exists. | Test |
+| FR-018-AC-5 | Given one source that never returns and the others answering after 100 ms, the answering sources are drawn within 1 second of their answers and the first view is painted within the NFR-001 target. | Test |
+| FR-018-AC-6 | Given every source fails, no exception reaches the engine and each module shows its source's error. | Test |
+| FR-018-AC-7 | Given `agent-msg focuses list` fails, the error is listed under `agent-msg focuses` in `/factory show` and the Focus pane still draws. | Test |
 
 ## Dependencies
 

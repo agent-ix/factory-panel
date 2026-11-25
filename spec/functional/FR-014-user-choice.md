@@ -7,6 +7,10 @@ relationships:
     type: implements
   - target: "ix://agent-ix/factory-panel/FR-010"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-019"
+    type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-020"
+    type: traces_to
 ---
 # FR-014: User choice of display
 
@@ -58,4 +62,4 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 ## Dependencies
 
 - **Upstream**: [US-010](../usecase/US-010-choose-display.md)
-- **See also**: [FR-010](FR-010-features.md)
+- **See also**: [FR-010](FR-010-features.md), [FR-019](FR-019-focus-mode-banner.md), [FR-020](FR-020-named-focus-resolution.md)
