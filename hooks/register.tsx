@@ -1,15 +1,18 @@
 import type { EngineInterface, Register, RenderViewport } from 'claude-code'
 
 import { PANE_SPEC as ESCALATIONS_PANE, registerEscalations, startEscalations } from './escalations'
-import { PANE_SPEC as FACTORY_PANE, pollBoard, registerFactory, startFactory } from './factory'
-import { PANE_SPEC as FOCUS_PANE, pollFocus, registerFocus, resetFocus, startFocus } from './focus'
+import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './factory'
+import { PANE_SPEC as FOCUS_PANE, registerFocus, resetFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { resolveEndpoints } from './endpoints'
-import { renderBand, startBand, syncStatus } from './band'
-import { getSelection, refreshSelection, resetSelection } from './selection'
+import { bandPlan, renderBand, startBand, syncStatus } from './band'
+import { resetSchedule, setRefresh } from './schedule'
+import { resetSelection } from './selection'
 import { registerRouter } from './router'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
+import { isViewId } from './views'
+import { HEARTBEAT_MS, bandSources, drawn, paneSources, refreshScope, resetVisible } from './visible'
 
 // Each pane lives in its own file; open panes show as tabs beside the chat.
 const PANES = [FACTORY_PANE, FOCUS_PANE, ESCALATIONS_PANE, RELAY_PANE, TEAM_PANE]
@@ -22,8 +25,8 @@ const everOpened = new Set<string>()
 // layouts open them, any other layout leaves them to /factory (an open the person asked for).
 let isInteractive = false
 let isLayoutDecided = false
-// The selection's refresh timer is started once per process, however often a session starts.
-let isSelectionTimed = false
+// The heartbeat is started once per process, however often a session starts.
+let isBeating = false
 
 const HINT = 'panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
 
@@ -43,12 +46,15 @@ function decideLayout($: EngineInterface, viewport: RenderViewport | undefined, 
   })
 }
 
-/** What the focus and lane scope reads: the focus value and the teams. */
-const scopeKey = (): string => `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
-let lastScope: string | undefined
-
 export const register: Register = (on, rawOptions) => {
   const options = readOptions(rawOptions as Record<string, unknown>)
+  setRefresh(options.refreshSeconds)
+
+  // Registered ahead of the views' own drawings, so it hears every draw of a pane and passes it on.
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
+    if (isViewId(e.requestId)) await drawn($, options, e.requestId, paneSources(e.requestId, e.props.placement === 'widget'), { client: e.surface, placement: e.props.placement })
+    return next(e)
+  })
   registerFactory(on, options)
   registerFocus(on, options)
   registerEscalations(on, options)
@@ -56,31 +62,22 @@ export const register: Register = (on, rawOptions) => {
   registerTeam(on, options)
   registerRouter(on, options)
 
-  // One session-start hook for the whole mod: each pane registers its command and polls (a
-  // failing one is logged, the others carry on). The panes are not opened here: see above.
+  // One session-start hook for the whole mod: each pane registers its command (a failing one is
+  // logged, the others carry on). Nothing is polled here: a view's sources are read while it is
+  // drawn (hooks/visible.ts). The panes are not opened here: see above.
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     resetSelection()
     resetFocus()
-    lastScope = undefined
+    resetSchedule()
+    resetVisible()
     // The band paints from the fallback at once; who the session is, what a skill declared and
     // what the user chose follow when `agent-msg whoami` and the files answer (never waited for).
-    const refresh = () =>
-      guarded($, 'Selection', async () => {
-        await refreshSelection($)
-        const now = scopeKey()
-        // A changed focus or teams value (a declaration written, a choice made elsewhere) re-reads the leads and lanes it now covers.
-        // The first refresh only records the scope: the first polls already wait for it.
-        if (lastScope !== undefined && lastScope !== now) {
-          void guarded($, 'Focus poll', () => pollFocus($))
-          void guarded($, 'Board poll', () => pollBoard($, options))
-        }
-        lastScope = now
-      }).then(() => $.ui.invalidate('ui.render'))
-    void refresh()
-    if (!isSelectionTimed) {
-      isSelectionTimed = true
-      $.clock.every(options.refreshSeconds * 1000, () => void refresh())
+    // A session with nobody at it draws nothing and asks nothing.
+    if (e.isInteractive) void guarded($, 'Selection', () => refreshScope($))
+    if (!isBeating) {
+      isBeating = true
+      $.clock.every(Math.min(HEARTBEAT_MS, options.refreshSeconds * 1000), () => $.ui.invalidate('ui.render'))
     }
     await guarded($, 'Endpoint discovery', () => resolveEndpoints($, options))
     await guarded($, 'Factory start', () => startFactory($, options))
@@ -101,6 +98,10 @@ export const register: Register = (on, rawOptions) => {
     // A classic layout has no dock, so the band is the compact view; fullscreen keeps its panes.
     // A layout the host has not reported counts as classic: a band is harmless, a blank is not.
     if (e.viewport?.isFullscreen !== true && (options.inlineView === 'band' || options.inlineView === 'status')) {
+      // A survey holds the whole slot, and a collapsed band draws nothing of its cells; the status line stays.
+      const isHidden = e.props.hasSurvey || (options.inlineView === 'band' && e.props.isCollapsed)
+      const plan = bandPlan(options)
+      if (!isHidden && !plan.off) await drawn($, options, 'band', bandSources(plan.ids), { client: e.surface })
       await syncStatus($, options, false)
       if (options.inlineView === 'band') {
         const band = await renderBand($, e, options)

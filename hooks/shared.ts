@@ -54,6 +54,21 @@ export const until = (at: number, now: number): string => ago(now, at).replace(/
 export const pausedText = (backoffUntil: number, now: number): string =>
   `Linear rate limit · paused ${until(backoffUntil, now)}`
 
+// ---------------------------------------------------------------- files
+
+/**
+ * Writes a file by writing a temporary file and renaming it, so another session reads the old file or the new one,
+ * never a part. Throws, leaving the old file, where it cannot.
+ */
+export async function writeWhole($: EngineInterface, path: string, text: string): Promise<void> {
+  const temp = `${path}.${Math.random().toString(36).slice(2, 10)}.tmp`
+  await $.fs.write(temp, text)
+  const moved = await $.process.run(['mv', '-f', temp, path], { timeoutMs: 5_000 })
+  if (moved.exitCode === 0) return
+  await $.process.run(['rm', '-f', temp], { timeoutMs: 5_000 })
+  throw new Error(moved.stderr.trim() || `could not write ${path}`)
+}
+
 // ---------------------------------------------------------------- Prometheus
 
 export type Sample = { metric: Record<string, string>; value: [number, string] }

@@ -123,11 +123,14 @@ const TEAM_RANGE = JSON.stringify({
 })
 const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', result: [] } })
 
+const shownViews = (placed: ReadonlyMap<string, boolean> = new Map()) =>
+  ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: placed.get(id) ?? true }))
+
 /** Stands in for the engine and the host: every command and fetch the mod makes is answered here. */
 function engine(
   on: Parameters<TestBody>[1],
   ran: string[][],
-  options: { files?: Map<string, string>; teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
+  options: { files?: Map<string, string>; teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; show?: Record<string, string>; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
 ): void {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   const opened = new Map<string, boolean>()
@@ -136,7 +139,8 @@ function engine(
     opened.set(e.id, result.isPlaced)
     return { value: result }
   })
-  on('ui.panes', () => ({ value: options.panes?.() ?? [...opened].map(([id, isPlaced]) => ({ id, title: id, isPlaced })) }))
+  // Unless a test says otherwise the host shows whichever view a test mounts.
+  on('ui.panes', () => ({ value: (options.panes?.() ?? shownViews(opened)) as never }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', (_, e) => {
     options.status?.(e.text)
@@ -146,6 +150,8 @@ function engine(
   on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('clock.now', () => ({ value: Date.UTC(2026, 10, 21, 10, 0) }))
   on('clock.every', () => ({ value: undefined }))
+  // The short wait between a view's first drawing and its read passes at once.
+  on('clock.after', () => ({ value: undefined }))
   const files = options.files ?? new Map<string, string>()
   on('fs.read', (_, e) => {
     const text = files.get(e.path)
@@ -172,6 +178,11 @@ function engine(
     const argv = [...e.argv]
     ran.push(argv)
     const line = argv.join(' ')
+    if (argv[0] === 'mv') {
+      files.set(argv[3]!, files.get(argv[2]!) ?? '')
+      files.delete(argv[2]!)
+      return ok('')
+    }
     if (line === 'printenv HOME') return ok('/home/test\n')
     if (line === 'agent-msg who') return ok(WHO)
     if (line === 'agent-msg work --lead hub:ENG:arch show') return ok(WORK)
@@ -180,6 +191,8 @@ function engine(
     if (line.startsWith('ix-board --json focus status --initiative 00000000'))
       return options.rateLimited ? fail('Linear rate limited; retry in 3600.005s') : ok(FOCUS_STATUS)
     if (line === 'agent-msg escalations') return ok(options.escalations?.() ?? ESCALATIONS)
+    const shown = line.startsWith('agent-msg escalation show ') ? options.show?.[argv[3] ?? ''] : undefined
+    if (shown) return ok(shown)
     if (line === 'agent-msg escalation show e30') return ok(SHOW_E30)
     if (line === 'agent-msg escalation show e28') return ok(SHOW_E28)
     if (line === 'agent-msg escalation show e31') return ok(SHOW_E31)
@@ -672,7 +685,7 @@ test('a pane the host leaves undrawn is reported with its reason, and opened aga
   expect(opens).toEqual([]) // session.start does not know the layout, so it opens nothing
   await drawBand($, FULLSCREEN)
   expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
-  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Relay, Team waiting \(below 144 columns \(now 100\)\)/)
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Message, Team waiting \(below 144 columns \(now 100\)\)/)
 
   placed = true
   await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
@@ -698,7 +711,7 @@ test('a throwing open is reported and never breaks startup', async ($, on) => {
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await drawBand($, FULLSCREEN)
-  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Relay, Team waiting \(.+\)/)
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Message, Team waiting \(.+\)/)
 
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
   await ui.unmount()
@@ -774,7 +787,7 @@ test('a closed pane is not reopened on attach, and the status names only panes s
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await drawBand($, FULLSCREEN)
   expect(opens).toEqual(['factory', 'focus', 'escalations', 'relay', 'team'])
-  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Relay, Team waiting/)
+  expect(statuses.at(-1)).toMatch(/Factory, Focus, Escalations, Message, Team waiting/)
 
   // Factory got placed, the person closed Relay (it is no longer listed), Focus and Team wait.
   listed = [entry('factory', true), entry('focus', false), entry('escalations', true), entry('team', false)]
@@ -806,7 +819,8 @@ test('the Team pane draws each tile’s six-hour series as braille dots on the t
 test('a failing gate file or home lookup never leaves the board busy and keeps the fetched agents', { options: { teams: 'ENG' } }, async ($, on) => {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: shownViews() as never }))
+  on('clock.after', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -830,11 +844,10 @@ test('a failing gate file or home lookup never leaves the board busy and keeps t
   })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('factory', 'Factory'), surface: 'terminal' })
-  // The fetched agent is shown although the gate file cannot be saved, and the chip is not stuck on ◌.
+  // The fetched agent is shown although the gate file cannot be saved, and the chip is not stuck inactive.
   await ui.press({ key: 'board' })
   expect((await ui.find({ type: 'Text', text: /1\/1 working/ }))?.text).toMatch(/1\/1 working/)
-  const marks = (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(t => t.text)
-  expect(marks.slice(0, 3)[2]).toBe('●')
+  expect((await ui.find({ type: 'Text', text: /^ix-board$/ }))?.props.color).toBe('success')
   await ui.unmount()
 })
 
@@ -865,4 +878,30 @@ test('the classic-layout band draws the selected modules as buttons, and a press
   const docked = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: BAND, viewport: FULLSCREEN })
   expect(await docked.find({ key: 'health' })).toBeUndefined()
   await docked.unmount()
+})
+
+test('a closed escalation row shows what a one-press resolve sends, and an unacted order is named for what it is', async ($, on) => {
+  const ran: string[][] = []
+  const list = `e40  waiting  -  hub:ENG:code  11-21 08:00\n${ESCALATIONS}`
+  const order = `id:             e40
+ticket:         -
+machine:        hub
+kind:           order
+status:         waiting
+context:
+  Order 17-0/1 from hub:ENG:arch to hub:ENG:code reached its ack deadline without an Acted receipt (last receipt: queued). It expects ticket ENG-200.
+recommendation:
+  check the lane
+`
+  engine(on, ran, { teamMetrics: false, escalations: () => list, show: { e40: order } })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('escalations', 'Escalations'), surface: 'terminal' })
+
+  expect((await ui.find({ key: 'sel-e40' }))?.text).toBe('Unacked order · ENG-200')
+  expect(await ui.find({ type: 'Text', text: 'hub:ENG:arch → hub:ENG:code (queued)' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '→ check the lane' })).toBeDefined()
+  // Resolve and hide sit side by side: both are direct children of the row's one action box.
+  const box = await ui.find({ key: 'actions-e40' })
+  expect((box as unknown as { children: { type: string }[] }).children.map(c => c.type)).toEqual(['Button', 'Button'])
+  await ui.unmount()
 })

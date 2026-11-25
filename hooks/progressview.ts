@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { FocusView } from '../types'
-import { SourceFailure, compose, hasFailure, membershipsOf, projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
+import { SourceFailure, compose, membershipsOf,projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
 import type { Refresh, Selector } from './board'
 import { gatedBoard } from './linear'
 import { mergeInitiatives, mergeRecords, readFile, saveFile } from './progress'
@@ -17,23 +17,24 @@ export type Progress = Pick<FocusView, 'initiatives' | 'loose' | 'header' | 'war
  * warnings by record key for `/factory show`. Returns null when another session is reading and has left nothing yet.
  */
 export async function loadProgress($: EngineInterface, selectors: Selector[], manual: boolean, endsAt: number, failed: Map<string, { name: string; error: string }>): Promise<Progress | null> {
-  const key = `focus:${selectors.map(selectorKey).join(' ')}`
+  const key = `progress:${selectors.map(selectorKey).join(' ')}`
   const disk = await readFile($)
   let ran = false
   let partial: Refresh | null = null
-  // A refresh with a failure in it is shown and held for 5 minutes: the next poll after them asks again, r asks now.
+  // A refresh is kept for the gate's interval, whatever failed in it; one a source error cut short (or that still waits
+  // for the roadmap) is held for 5 minutes only, and the next poll after them asks again. r asks now.
   const read = await gatedBoard(
     $,
     key,
     () => {
       ran = true
-      return refreshProgress($, selectors, disk, endsAt).catch((error: unknown) => {
+      return refreshProgress($, selectors, disk, endsAt, manual).catch((error: unknown) => {
         // A rate limit holds every call, but what was answered before it is still drawn and recorded.
         if (error instanceof SourceFailure) partial = error.partial
         throw error
       })
     },
-    { manual, keep: (r: Refresh) => !hasFailure(r) },
+    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true, repeats: (r: Refresh) => r.unproven === true },
   )
   const now = await $.clock.now()
   const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
@@ -57,6 +58,7 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
   else if (ran && refresh !== null) sourceOk('ix-board', now)
   for (const w of composed.warnings) if (w.kind !== 'source' || w.name !== 'ix-board') failed.set(projectKeyOfWarning(w), { name: w.name, error: w.text })
 
-  const held = read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again after 5 minutes, r asks now`] : []
+  const when = read.holdMs === undefined ? 'after 5 minutes, r asks now' : `after ${Math.round(read.holdMs / 60_000)} minutes, r asks after 60 seconds`
+  const held = read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again ${when}`] : []
   return { initiatives: composed.initiatives, loose: composed.loose, header: composed.header, warnings: composed.warnings, fetchedAt: composed.fetchedAt, notes: held }
 }

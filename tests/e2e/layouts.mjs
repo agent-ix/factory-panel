@@ -14,35 +14,39 @@
 //   FR-019-AC-1   /factory show says why these focuses are shown (here a typed name); the card itself holds no prose
 //   FR-008-AC-5   a first-time user, with only /factory help, opens a view, switches and chooses what to display
 //
-// The session runs with a temporary HOME (the Claude config is linked in), so the choice the check
-// makes is written to a temporary ~/.ix/factory-panel and never to the real one.
+// The session runs with a temporary HOME, so the choice the check makes is written to a temporary
+// ~/.ix/factory-panel and never to the real one. That home links to the real ~/.claude (the person's
+// settings and plugins) and ~/Library (the keychain) and holds a .claude.json with the login keys
+// only; it is removed when the check ends. The sessions run detached in tmux, so they switch the
+// mod's view check off (FACTORY_PANEL_VIEW_CHECK=off): detached, it would read nothing.
 //
 // These are Demonstration and capture criteria. Quire reads trace tags only from TypeScript, Python and
 // Rust symbols, not from .mjs, so they are deliberately NOT matrix-bound; the matrix shows them as
 // untagged and this script plus its evidence/ captures is their verification.
 //
 // Needs: node, tmux, claude on PATH, and the repository folder already trusted by Claude Code.
-// Run: node tests/e2e/layouts.mjs
+// Run: node tests/e2e/layouts.mjs [plugin-folder]
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+import { atEnd, endSession, makeHome } from './home.mjs'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const PLUGIN = resolve(process.argv[2] ?? ROOT)
+/** The tmux socket of the check's own. */
+const SOCKET = `fp-layouts-${process.pid}`
 const EVIDENCE = join(ROOT, 'tests', 'e2e', 'evidence')
 mkdirSync(EVIDENCE, { recursive: true })
 
-// A home of its own for the mod's files; the Claude config and keychain are the real ones, linked in.
-const FPHOME = mkdtempSync(join(tmpdir(), 'fp-e2e-home-'))
-symlinkSync(join(homedir(), '.claude'), join(FPHOME, '.claude'))
-symlinkSync(join(homedir(), 'Library'), join(FPHOME, 'Library'))
-if (existsSync(join(homedir(), '.claude.json'))) copyFileSync(join(homedir(), '.claude.json'), join(FPHOME, '.claude.json'))
+// A home of its own for the mod's files.
+const FPHOME = makeHome('fp-e2e-home-', ROOT, ['.claude', 'Library'])
 const CHOICES = join(FPHOME, '.ix', 'factory-panel', 'choices', 'default.json')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-const tmux = (...args) => execFileSync('tmux', args, { encoding: 'utf8' })
+const tmux = (...args) => execFileSync('tmux', ['-L', SOCKET, ...args], { encoding: 'utf8' })
 
 const results = []
 const check = (name, ok, detail = '') => {
@@ -55,7 +59,8 @@ class Session {
     this.layout = layout
     this.name = `fp-e2e-${layout}-${process.pid}`
     this.inputs = 0
-    tmux('new-session', '-d', '-s', this.name, '-x', '200', '-y', '50', '-c', ROOT, `env HOME=${FPHOME} CLAUDE_CODE_NO_FLICKER=${flicker} claude --plugin-dir ${ROOT}`)
+    this.forget = atEnd(() => endSession(SOCKET, this.name))
+    tmux('new-session', '-d', '-s', this.name, '-x', '200', '-y', '50', '-c', ROOT, `env HOME=${FPHOME} CLAUDE_CODE_NO_FLICKER=${flicker} FACTORY_PANEL_VIEW_CHECK=off claude --plugin-dir '${PLUGIN}'`)
   }
   capture(label) {
     const text = tmux('capture-pane', '-p', '-t', this.name).replace(/[ \t]+$/gm, '')
@@ -79,9 +84,8 @@ class Session {
     }
   }
   kill() {
-    try {
-      tmux('kill-session', '-t', this.name)
-    } catch {}
+    endSession(SOCKET, this.name)
+    this.forget()
   }
 }
 
@@ -105,8 +109,9 @@ function assertNotTrustPrompt(s, text) {
 }
 
 async function classic() {
-  const s = new Session('classic', 0)
+  let s
   try {
+    s = new Session('classic', 0)
     // NFR-001-M-1 / FR-001-AC-1,2: the band is there 5 seconds after launch with no key sent.
     await sleep(5000)
     const first = s.capture('1-after-5s')
@@ -182,14 +187,15 @@ async function classic() {
     check('classic: Esc closes the popup (1 key)', closed !== null)
     check('classic: the prompt has the keyboard after Esc', await promptHasKeyboard(s, '7-prompt-after-close'))
   } finally {
-    s.kill()
+    s?.kill()
   }
 }
 
 async function fullscreen() {
-  const s = new Session('fullscreen', 1)
-  const tabs = /Factory\s+Focus\s+Escalations\s+Relay\s+Team/
+  let s
+  const tabs = /Factory\s+Focus\s+Escalations\s+Message\s+Team/
   try {
+    s = new Session('fullscreen', 1)
     // NFR-001-M-1 / FR-001-AC-5: the docked panel is there 5 seconds after launch with no key sent.
     await sleep(5000)
     const first = s.capture('1-after-5s')
@@ -209,9 +215,10 @@ async function fullscreen() {
     // NFR-003-M-2: switching is one command.
     s.type('/factory relay')
     s.key('Enter')
-    const relay = await s.waitFor(t => /│\s*Relay\s/.test(t) && !/│\s*Focus\b/.test(t))
+    // The Message pane has no heading of its own: its input says which pane is drawn.
+    const relay = await s.waitFor(t => /Type your message/.test(t) && !/│\s*Focus\b/.test(t))
     s.capture('4-switch-relay')
-    check('fullscreen: /factory relay switches the dock to Relay (1 command)', relay !== null)
+    check('fullscreen: /factory relay switches the dock to Message (1 command)', relay !== null)
 
     // NFR-003-M-3: Esc closes the focused tab, which only happens when the dock holds the keyboard.
     s.key('Escape')
@@ -220,7 +227,7 @@ async function fullscreen() {
     check('fullscreen: Esc closes the focused dock tab (1 key)', closed !== null)
     check('fullscreen: the prompt has the keyboard after Esc', await promptHasKeyboard(s, '6-prompt-after-close'))
   } finally {
-    s.kill()
+    s?.kill()
   }
 }
 

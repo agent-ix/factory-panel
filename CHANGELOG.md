@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.1
+
+Fetch less.
+
+- A source is read only while a view that draws it is on screen, and read at once when the view comes back with data older than its interval. A session that is not interactive reads nothing. Prometheus follows `refreshSeconds`; herdr and `agent-msg doctor` are read once a minute; a source that fails or answers slowly is read less often, up to every 5 minutes.
+- Escalations pane reformatted: a line between rows, resolve and hide side by side on the title line, two lines of context and what a one-press resolve sends, a titled row for an unacted order, and a muted blue arrow in place of the `use` labels.
+- The Relay pane is now titled Message, with lines around the To row and no repeated headings or field label. `/factory relay` still opens it.
+- A source error inferred from refusals is held 5, 10, 20 and then 30 minutes while it repeats, and the refresh key asks after 60 seconds. What ix-board answered before a rate limit in the same level of a search is drawn and recorded. The queue cell shows `- ready` for a focus with no totals yet. A `TMUX_PANE` left over outside tmux no longer stops reads.
+- No reads while the session's pane is off view: behind another herdr tab or a zoomed pane, or in a tmux window no client is viewing. herdr or tmux is asked at most once every 15 seconds; where the answer is unknown the mod reads. With several clients on one herdr server the answer follows the client that last switched. `FACTORY_PANEL_VIEW_CHECK=off` turns the check off.
+- The `r` key of the Factory view reads `ix-board agents` too, 60 seconds after its last read at the earliest. A team is said to match nothing only when both the focus reports and the agents were read.
+- All healthy projects of a focus are asked in one `ix-board --json focus status --project <ref> --project <ref> ...` call instead of one call each. Simulated over 6 hours for a focus of 20 projects with one bad project and an initiative that cannot be expanded: 22 ix-board calls at every 6-minute refresh (1342 in all) before; one call every 30 minutes, 4 once an hour for the retries (34 in all) after.
+- A project that makes the combined call fail is found (from the id in the error, else by halves, in at most 12 further calls), remembered in `~/.ix/factory-panel/known-bad.json` for every session, left out of the combined call and asked alone at most once an hour or on the refresh key. An error of the source (ix-board missing or refusing, rate limit, a timed out combined call) is never blamed on a project.
+- Linear-backed reads (progress, roadmap, `ix-board agents`) run at most once every 30 minutes across all sessions; the refresh key still asks after 60 seconds. A failed project no longer shortens the interval; only an error of the source holds a read for 5 minutes, and a read that fails outright is now held too instead of being repeated at every poll.
+- An initiative's project list is used for 6 hours before the roadmap or an initiative call is asked again, the roadmap is read at most once every 30 minutes across all sessions, and an initiative that fails is tried again after an hour.
+- Changed numbers: a combined answer does not say which project a blocker belongs to, so a project asked with others shows `-` for Blocked, as do the initiatives that hold it; the header Blocked is now the number of distinct open blockers of the focus, no longer a sum that counted a shared blocker once per project. Done, total and Ready are as before.
+- A recorded value is drawn in the warning tone after 60 minutes (it was 30), since progress is now read every 30 minutes.
+- `/factory show` and the choice commands read the focuses (gated as ever) when no view has, say `focus data: not read yet` instead of `no focus reported` or `no focus matches` before a read has ended, and otherwise print the age of the data.
+- Where no status call of a refresh answers and the errors do not name every project, ix-board is taken to be at fault: a source error, nothing remembered, another try after 5 minutes. Two bad projects that fail in the same words are found while any other call answers or in the first two levels of the search.
+- Ready of an initiative, the header and the queue cell is `-` while any counted project's Ready is unknown, and an unknown Ready is no longer recorded as 0.
+- `linear-gate.json` is written whole (temporary file and rename) and drops entries unused for a day, and the unused keys of 0.7.0.
+
 ## 0.7.0
 
 - The Focus card draws each initiative with its projects nested under it, each project with its own bar, `done/total`, Remaining, Ready and Blocked, and a header total over every counted project with the stage counts from `open_by_state`. The totals are honest: an initiative reads `X of Y projects`, is marked partial only when a project is missing, says `includes old data (oldest 5m)` when a counted project comes from a record, and a header with a missing or old part or an initiative that could not be expanded is never drawn as complete.

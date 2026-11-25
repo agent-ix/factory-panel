@@ -15,12 +15,19 @@ type $t = Parameters<TestBody>[0]
 
 const MILESTONE = 'issue QSL-3215 references unavailable milestone 871dbc77 in project a31003a8'
 
+/** Puts the Focus pane on screen long enough for its first read, then takes it away: nothing is read off screen (FR-027). */
+async function firstRead($: $t, w: World): Promise<void> {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(1000)
+  await ui.unmount()
+}
+
 async function setup($: $t, on: Parameters<TestBody>[1], scope: { initiatives?: string[]; projects?: string[] }, served: Served) {
   const w = world(on, true)
   w.leads.set(LEAD, report(LEAD, 'QSL layer 4', ['running'], scope))
   ix(w, served)
   await startSession($)
-  await w.clock!.advance(1000)
+  await firstRead($, w)
   return w
 }
 
@@ -80,7 +87,7 @@ test('an initiative is drawn with its projects indented beneath it, each with a 
 
 
 test('a project shows Remaining, Ready and Blocked from its own answer in the footer expansion, and not in the body', async ($, on) => {
-  trace("FR-023-AC-2", "FR-023-AC-3")
+  trace("FR-023-AC-3", "FR-023-AC-9")
   await setup($, on, { initiatives: ['A'] }, {
     roadmap: [{ name: 'A', projects: [{ name: 'P1' }, { name: 'P2' }, { name: 'P3' }, { name: 'Z' }] }],
     projects: { P1: project("P1", 10, 25, { ready: 3, layers: { open: 3, completed: 1 } }), Z: MILESTONE, P2: project('P2', 1, 4, { ready: 0 }), P3: project('P3', 1, 4, { ready: null }) },
@@ -88,8 +95,9 @@ test('a project shows Remaining, Ready and Blocked from its own answer in the fo
   const d = await draw($)
   expect(prose(d)).not.toMatch(/left|ready|blocked|remaining/)
   await d.press('warnings-toggle')
-  expect(d.text).toMatch(m(/^A \/ P1: 15 remaining · ready 3 · blocked 3$/))
-  expect(d.text).toMatch(m(/^A \/ P2: 3 remaining · ready 0 · blocked 0$/))
+  // P1 and P2 were answered by one call, which does not say whose a blocker is; P3 was answered alone.
+  expect(d.text).toMatch(m(/^A \/ P1: 15 remaining · ready 3 · blocked -$/))
+  expect(d.text).toMatch(m(/^A \/ P2: 3 remaining · ready 0 · blocked -$/))
   expect(d.text).toMatch(m(/^A \/ P3: 3 remaining · ready - · blocked 0$/))
   await d.unmount()
 })
@@ -263,7 +271,7 @@ test('a failed project drawn from a 5 minute old record counts, is a warning, an
   w.files.set('/home/test/.ix/factory-panel/progress.json', JSON.stringify({ [`project:${id}`]: { at_ms: T0 - 5 * 60_000, seen_ms: T0 - 60_000, done: 2, total: 4, inProgress: 0, ready: 0, id, name: 'P2' } }))
   ix(w, { roadmap: [{ name: 'A', projects: [{ name: 'P1' }, { name: 'P2', id }] }], projects: { P1: project('P1', 3, 4), [id]: MILESTONE } })
   await startSession($)
-  await w.clock!.advance(1000)
+  await firstRead($, w)
   const d = await draw($)
   expect(d.text).toMatch(m(/^5\/8$/))
   expect(warnCount(d)).toBe(1)
@@ -345,7 +353,7 @@ test('with problems the card body holds no error text', async ($, on) => {
 
 test('pressing the warning shows the full messages with ids and names, and a second press hides them', async ($, on) => {
   trace("FR-024-AC-4")
-  await setup($, on, { initiatives: ['A'] }, { roadmap: [{ name: 'A', projects: [{ name: 'P1' }] }], projects: { P1: MILESTONE } })
+  await setup($, on, { initiatives: ['A'] }, { ...TWO, projects: { P1: MILESTONE, P2: project('P2', 1, 2) } })
   const d = await draw($)
   expect(d.buttons.find(b => b.key === 'warnings-toggle')!.hotkey).toBeUndefined()
   await d.press('warnings-toggle')
@@ -357,7 +365,7 @@ test('pressing the warning shows the full messages with ids and names, and a sec
 
 test('an error text with no milestone expands to the parts it has', async ($, on) => {
   trace("FR-024-AC-5")
-  await setup($, on, { initiatives: ['A'] }, { roadmap: [{ name: 'A', projects: [{ name: 'P1' }] }], projects: { P1: 'timed out' } })
+  await setup($, on, { initiatives: ['A'] }, { ...TWO, projects: { P1: 'timed out', P2: project('P2', 1, 2) } })
   const d = await draw($)
   await d.press('warnings-toggle')
   expect(d.text).toMatch(/P1.*timed out/)
@@ -413,7 +421,7 @@ test('top-level bars share one column, child bars share a second one inside it, 
     projects: { P1: project('P1', 3, 4), 'A much longer project name': project('A much longer project name', 1, 9), Gone: MILESTONE, [id]: MILESTONE, Q1: project('Q1', 1, 2), Direct: project('Direct', 5, 6) },
   })
   await startSession($)
-  await w.clock!.advance(1000)
+  await firstRead($, w)
   const first = await columns($)
   const W = PANE.props.bodyColumns
   const COUNT = 12
@@ -451,17 +459,17 @@ test('an old row shows a dim age after its counts, a stale one the age in the wa
   const T0 = Date.UTC(2026, 10, 24, 12, 0)
   const rec = (n: string, id: string, minutes: number) => [`project:${id}`, { at_ms: T0 - minutes * 60_000, seen_ms: T0 - 60_000, done: 2, total: 4, inProgress: 0, ready: 0, id, name: n }] as const
   const ids = ['00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000b2']
-  w.files.set('/home/test/.ix/factory-panel/progress.json', JSON.stringify(Object.fromEntries([rec('Recent', ids[0]!, 13), rec('Stale', ids[1]!, 40)])))
+  w.files.set('/home/test/.ix/factory-panel/progress.json', JSON.stringify(Object.fromEntries([rec('Recent', ids[0]!, 13), rec('Stale', ids[1]!, 70)])))
   ix(w, { roadmap: [{ name: 'A', projects: [{ name: 'Recent', id: ids[0] }, { name: 'Stale', id: ids[1] }] }], projects: { [ids[0]!]: MILESTONE, [ids[1]!]: MILESTONE } })
   await startSession($)
-  await w.clock!.advance(1000)
+  await firstRead($, w)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const ages = (await ui.findAll({ type: 'Text' })).filter(t => /^ \d+[mh]$/.test(t.text ?? ''))
   const by = (t: string) => ages.find(a => a.text === t)!.props as { dimColor?: boolean; color?: string }
-  expect(ages.map(a => a.text)).toEqual([' 13m', ' 40m'])
+  expect(ages.map(a => a.text)).toEqual([' 13m', ' 1h'])
   expect(by(' 13m').color).toBeUndefined()
   expect(by(' 13m').dimColor).toBe(true)
-  expect(by(' 40m').color).toBe('warning')
+  expect(by(' 1h').color).toBe('warning')
   await ui.unmount()
 })
 
@@ -481,7 +489,8 @@ test('initiative A whose 4 projects all fail reads as a failed row, B is drawn, 
       { name: 'A', projects: [{ name: 'A1' }, { name: 'A2' }, { name: 'A3' }, { name: 'A4' }] },
       { name: 'B', projects: [{ name: 'B1' }, { name: 'B2' }] },
     ],
-    projects: { A1: MILESTONE, A2: MILESTONE, A3: MILESTONE, A4: MILESTONE, B1: project('B1', 3, 4), B2: project('B2', 1, 2) },
+    // Each fails with a text of its own: two halves failing alike would read as ix-board itself failing.
+    projects: { A1: `${MILESTONE} (A1)`, A2: `${MILESTONE} (A2)`, A3: `${MILESTONE} (A3)`, A4: `${MILESTONE} (A4)`, B1: project('B1', 3, 4), B2: project('B2', 1, 2) },
   })
   const d = await draw($)
   expect(warnCount(d)).toBe(4)

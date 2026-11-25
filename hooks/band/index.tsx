@@ -7,7 +7,7 @@ import { errorText } from '../shared'
 import type { Options } from '../shared'
 import { showView, isViewId } from '../views'
 import { buildCells, digitFor, scopeNotes } from './modules'
-import type { Cell, Part, Snapshot, Tone } from './modules'
+import type { Cell, ModuleId, Part, Snapshot, Tone } from './modules'
 
 // The band: one row above the prompt for sessions that are not in the fullscreen layout, where a
 // pane can only sit over the chat. Each module is a Button with a digit hotkey, so a bare digit at
@@ -40,7 +40,7 @@ export async function startBand($: EngineInterface): Promise<void> {
   }
 }
 
-type ModuleState = { off: boolean; ids: readonly string[] }
+type ModuleState = { off: boolean; ids: readonly ModuleId[] }
 
 /** The modules the selection lists, with the host list first where the hosts scope is `all`. */
 export const bandPlan = (options: Options): ModuleState => ({
@@ -76,6 +76,7 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     scope: scopeOf(getSelection()),
     teamViews: list(tms),
     focusesLoaded: fmeta?.at !== undefined && fmeta.at !== null,
+    boardLoaded: fresh?.boardAt !== undefined && fresh.boardAt !== null,
     prometheusError: fresh?.prometheusError ?? null,
     relayAt: fresh?.relayAt ?? null,
     relayError: fresh?.relayError ?? null,

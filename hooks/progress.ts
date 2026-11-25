@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { factoryDir } from './selection'
+import { writeWhole } from './shared'
 
 // The last good progress of each selector: one file, `~/.ix/factory-panel/progress.json`,
 // shared by every session on the machine. A refresh of a selector that fails shows its record,
@@ -13,7 +14,8 @@ export type ProgressRecord = {
   done: number
   total: number
   inProgress: number
-  ready: number
+  /** Entries of the ready queue that are the project's; absent when the answer did not say. */
+  ready?: number
   /** Entries of the blocker layers not classified Completed; absent when the answer carried none. */
   blocked?: number
   /** Stage counts of the open work, by state, from `open_by_state`. */
@@ -32,8 +34,15 @@ export type Membership = { at_ms: number; seen_ms: number; projects: Member[]; /
 export type Initiatives = Record<string, Membership>
 export type ProgressFile = { records: Records; initiatives: Initiatives }
 
-/** A record older than this is labelled stale; exactly this old it is old and not stale. */
-export const STALE_MS = 30 * 60 * 1000
+/**
+ * A record older than this is labelled stale; exactly this old it is old and not stale. Progress is read every
+ * 30 minutes, so a record this old has missed a whole read.
+ */
+export const STALE_MS = 60 * 60 * 1000
+/** An initiative's remembered membership is used without asking ix-board for this long. */
+export const MEMBERSHIP_MS = 6 * 60 * 60 * 1000
+/** A known-bad selector is asked again at most once in this long, unless a person refreshes. */
+export const RETRY_MS = 60 * 60 * 1000
 /** A record not seen in a refresh for this long is deleted at the next write. */
 export const PRUNE_MS = 24 * 60 * 60 * 1000
 /** A record whose success is older than this is not used to draw a project. */
@@ -48,7 +57,7 @@ const str = (v: unknown): v is string => typeof v === 'string'
 const isRecord = (v: unknown): v is ProgressRecord => {
   if (typeof v !== 'object' || v === null) return false
   const o = v as Record<string, unknown>
-  return ['at_ms', 'seen_ms'].every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number)) && ['done', 'total', 'inProgress', 'ready'].every(k => count(o[k]))
+  return ['at_ms', 'seen_ms'].every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number)) && ['done', 'total', 'inProgress'].every(k => count(o[k])) && (o.ready === undefined || count(o.ready))
 }
 
 const isMembership = (v: unknown): v is Membership => {
@@ -193,21 +202,88 @@ export function pruneInitiatives(initiatives: Initiatives, now: number): Initiat
 export async function saveFile($: EngineInterface, now: number, mine: Records, initiatives: Initiatives = {}): Promise<ProgressFile> {
   const disk = await readFile($)
   const merged: ProgressFile = { records: prune(mergeRecords(disk.records, mine), now), initiatives: pruneInitiatives(mergeInitiatives(disk.initiatives, initiatives), now) }
-  try {
-    const path = `${await factoryDir($)}/${FILE}`
-    const temp = `${path}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    const body: Record<string, unknown> = { ...merged.records }
-    if (Object.keys(merged.initiatives).length > 0) body[INITIATIVES_KEY] = merged.initiatives
-    await $.fs.write(temp, `${JSON.stringify(body, null, 2)}\n`)
-    const moved = await $.process.run(['mv', '-f', temp, path], { timeoutMs: 5_000 })
-    if (moved.exitCode !== 0) {
-      await $.process.run(['rm', '-f', temp], { timeoutMs: 5_000 }).catch(() => undefined)
-      throw new Error(moved.stderr.trim() || 'mv failed')
-    }
-  } catch {
-    // The file is a convenience: a refresh that cannot save still shows what it read.
-  }
+  const body: Record<string, unknown> = { ...merged.records }
+  if (Object.keys(merged.initiatives).length > 0) body[INITIATIVES_KEY] = merged.initiatives
+  // The file is a convenience: a refresh that cannot save still shows what it read.
+  await replaceFile($, FILE, body)
   return merged
+}
+
+/** Writes a file of the mod's directory whole; a failure leaves the previous file. */
+async function replaceFile($: EngineInterface, file: string, body: unknown): Promise<void> {
+  try {
+    await writeWhole($, `${await factoryDir($)}/${file}`, `${JSON.stringify(body, null, 2)}\n`)
+  } catch {
+    // Nothing to do: the caller keeps what it holds.
+  }
+}
+
+// ---------------------------------------------------------------- known-bad selectors
+
+// A selector ix-board cannot answer (a project with a dangling milestone, say) is remembered in
+// `~/.ix/factory-panel/known-bad.json`, shared by every session: it is left out of the combined progress
+// call and asked again on its own at most once an hour, or when a person refreshes.
+
+export type ProjectRef = { ref: string; id: string; name: string }
+export type BadEntry = {
+  /** when the selector was last asked and failed, or was claimed for another try */
+  at_ms: number
+  seen_ms: number
+  error: string
+  /** the id and name of a project, so it is known under either */
+  id?: string
+  name?: string
+  /** an initiative that is not found */
+  notFound?: boolean
+  /** the roadmap initiative guessed for an initiative that cannot be expanded; a guess, so never in progress.json */
+  found?: { name: string; collapseKey: string; projects: ProjectRef[]; /** the project whose error gave the guess */ hint?: { id: string; name: string } }
+}
+/** By selector key: `project:<ref>`, `initiative:<ref>`, `milestone:<ref>:<project>`, `ticket:<ref>`. */
+export type Bad = Record<string, BadEntry>
+
+const BAD_FILE = 'known-bad.json'
+
+const isBad = (v: unknown): v is BadEntry => {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  return typeof o.at_ms === 'number' && typeof o.seen_ms === 'number' && typeof o.error === 'string'
+}
+
+export async function readBad($: EngineInterface): Promise<Bad> {
+  try {
+    const json = JSON.parse(await $.fs.read(`${await factoryDir($)}/${BAD_FILE}`)) as unknown
+    if (typeof json !== 'object' || json === null || Array.isArray(json)) return {}
+    return Object.fromEntries(Object.entries(json).filter((e): e is [string, BadEntry] => isBad(e[1])))
+  } catch {
+    return {}
+  }
+}
+
+/** The writes of the known-bad memory in this process run one after the other, so that none loses another's entries. */
+let badWrites: Promise<unknown> = Promise.resolve()
+
+/**
+ * Re-reads the file, sets and removes the given entries, marks the touched ones seen, drops those not seen for
+ * 24 hours, and writes it. Nothing is written when there is nothing to change.
+ */
+export function saveBad($: EngineInterface, now: number, change: BadChange): Promise<void> {
+  const write = () => writeBad($, now, change)
+  const next = badWrites.then(write, write)
+  badWrites = next.catch(() => undefined)
+  return next
+}
+
+type BadChange = { set?: Bad; clear?: readonly string[]; touch?: readonly string[] }
+
+async function writeBad($: EngineInterface, now: number, change: BadChange): Promise<void> {
+  const set = change.set ?? {}
+  const clear = change.clear ?? []
+  const touch = change.touch ?? []
+  if (Object.keys(set).length === 0 && clear.length === 0 && touch.length === 0) return
+  const merged: Bad = { ...(await readBad($)), ...set }
+  for (const key of clear) delete merged[key]
+  for (const key of touch) if (merged[key] !== undefined) merged[key] = { ...merged[key]!, seen_ms: now }
+  await replaceFile($, BAD_FILE, Object.fromEntries(Object.entries(merged).filter(([, e]) => now - e.seen_ms <= PRUNE_MS)))
 }
 
 export async function saveRecords($: EngineInterface, now: number, mine: Records, initiatives: Initiatives = {}): Promise<Records> {

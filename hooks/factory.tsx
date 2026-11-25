@@ -16,6 +16,7 @@ import { ACCENT, tempColor, usd } from './ui/glyphs'
 import { widgets } from './ui/widgets'
 import { gatedBoard } from './linear'
 import { sourceFailed, sourceOk } from './sources'
+import { intervalOf, track } from './schedule'
 import { getSelection, selectionReady } from './selection'
 import type { Options, Sample } from './shared'
 
@@ -108,7 +109,12 @@ const QUERIES = {
     'or node_thermal_temperature_celsius{sensor=~"PMU tdie.*"})',
 }
 
-async function pollPrometheus($: EngineInterface, options: Options): Promise<void> {
+/** Reads the machines from Prometheus; false when it failed. */
+export function pollPrometheus($: EngineInterface, options: Options): Promise<boolean> {
+  return track($, 'prometheus', () => readPrometheus($, options))
+}
+
+async function readPrometheus($: EngineInterface, options: Options): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const [lastSeen, leads, panes, spend, cpu, mem, temp] = await Promise.all([
@@ -165,9 +171,11 @@ async function pollPrometheus($: EngineInterface, options: Options): Promise<voi
       nodeMetricsSeen: cpu.length > 0 || mem.length > 0 || temp.length > 0,
     }))
     sourceOk('prometheus', now)
+    return true
   } catch (error) {
     sourceFailed('prometheus', errorText(error))
     await update($, freshness, f => ({ ...f, prometheusError: errorText(error) }))
+    return false
   }
 }
 
@@ -188,7 +196,12 @@ type HerdrSnapshot = {
   }
 }
 
-async function pollHerdr($: EngineInterface): Promise<void> {
+/** Reads the herdr snapshot; false when it failed. */
+export function pollHerdr($: EngineInterface): Promise<boolean> {
+  return track($, 'herdr', () => readHerdr($))
+}
+
+async function readHerdr($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const ran = await $.process.run(['herdr', 'api', 'snapshot'], { timeoutMs: 10_000 })
@@ -209,13 +222,20 @@ async function pollHerdr($: EngineInterface): Promise<void> {
     agents.sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3))
     await update($, herdr, () => ({ running: true, version: snapshot?.version ?? '', agents }))
     await update($, freshness, f => ({ ...f, herdrAt: now, herdrError: null }))
+    return true
   } catch (error) {
     await update($, herdr, h => ({ ...h, running: false }))
     await update($, freshness, f => ({ ...f, herdrError: errorText(error) }))
+    return false
   }
 }
 
-async function pollRelay($: EngineInterface): Promise<void> {
+/** Reads `agent-msg doctor`; false when it failed. A doctor that reports ill health is a read that answered. */
+export function pollDoctor($: EngineInterface): Promise<boolean> {
+  return track($, 'relay', () => readDoctor($))
+}
+
+async function readDoctor($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   try {
     const ran = await $.process.run(['agent-msg', 'doctor', '--json'], { timeoutMs: 30_000 })
@@ -246,8 +266,10 @@ async function pollRelay($: EngineInterface): Promise<void> {
       checks: checks.map(c => ({ ...c, message: c.message.slice(0, 160) })),
     }))
     await update($, freshness, f => ({ ...f, relayAt: now, relayError: null }))
+    return true
   } catch (error) {
     await update($, freshness, f => ({ ...f, relayError: errorText(error) }))
+    return false
   }
 }
 
@@ -275,13 +297,18 @@ const boardTeams = (options: Options): string[] => {
   return picked.length > 0 ? picked : options.teams
 }
 
-export async function pollBoard($: EngineInterface, options: Options): Promise<void> {
+/** Reads the agents of the teams in scope; false when ix-board failed. */
+export function pollBoard($: EngineInterface, options: Options, how: { manual?: boolean } = {}): Promise<boolean> {
+  return track($, 'board', () => readBoardState($, options, how))
+}
+
+async function readBoardState($: EngineInterface, options: Options, how: { manual?: boolean }): Promise<boolean> {
   await selectionReady()
   const teams = boardTeams(options)
-  if (teams.length === 0) return
+  if (teams.length === 0) return true
   await update($, freshness, f => ({ ...f, boardBusy: true }))
   try {
-    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams))
+    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams), { manual: how.manual })
     const now = await $.clock.now()
     const notes = read.data?.notes ?? []
     const error =
@@ -289,7 +316,9 @@ export async function pollBoard($: EngineInterface, options: Options): Promise<v
         ? pausedText(read.backoffUntil, now)
         : (read.error ?? (notes.length > 0 ? notes.join(' · ').slice(0, 200) : null))
     await update($, board, b => ({ teams, agents: read.data?.agents ?? b.agents, error }))
-    await update($, freshness, f => ({ ...f, boardAt: read.at }))
+    // No time without an answer: a read that has only ever failed has not been made.
+    await update($, freshness, f => ({ ...f, boardAt: read.data === null ? null : read.at }))
+    return read.error === null
   } finally {
     await update($, freshness, f => ({ ...f, boardBusy: false }))
   }
@@ -390,30 +419,33 @@ const staleness = (f: Freshness, now: number): number | null => {
   return ats.length === 0 ? null : now - Math.min(...ats)
 }
 
+/** True while no value is older than three of its own read intervals. */
+const isCurrent = (f: Freshness, now: number): boolean =>
+  ([['prometheus', f.prometheusAt], ['herdr', f.herdrAt], ['relay', f.relayAt]] as const).every(
+    ([id, at]) => at === null || now - at < intervalOf(id) * 3,
+  )
+
 // ---------------------------------------------------------------- register
 
+/**
+ * The Factory view's `r`: reads its sources now, whenever each was last read. `ix-board agents` reads
+ * Linear, so its gate still asks it at most once in 60 seconds.
+ */
 export async function refreshAll($: EngineInterface, options: Options): Promise<void> {
-  await Promise.all([pollPrometheus($, options), pollHerdr($), pollRelay($)])
+  await Promise.all([pollPrometheus($, options), pollHerdr($), pollDoctor($), pollBoard($, options, { manual: true })])
 }
 
 async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {
   await update($, detail, d => (d === which ? 'none' : which))
 }
 
-/** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
-export async function startFactory($: EngineInterface, options: Options): Promise<void> {
+/** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
+export async function startFactory($: EngineInterface, _options: Options): Promise<void> {
   await $.command.register({
     name: 'factory',
     description: 'Open more detail, and choose what the band shows. /factory help says how',
     argumentHint: 'help | focus | escalations | relay | team | use | teams | hosts | show | reset',
   })
-
-  void refreshAll($, options)
-  void pollBoard($, options)
-  $.clock.every(options.refreshSeconds * 1000, () => refreshAll($, options))
-  // The gate holds each ix-board read to once per BOARD_INTERVAL_MS across sessions; this only asks.
-  $.clock.every(60 * 1000, () => pollBoard($, options))
-
 }
 
 export function registerFactory(on: On, options: Options): void {
@@ -443,11 +475,14 @@ export function registerFactory(on: On, options: Options): void {
       (max, m) => (m.tempC !== null && (max === null || m.tempC > max) ? m.tempC : max),
       null,
     )
-    const errors = [f.prometheusError === null ? null : shortError('prometheus', f.prometheusError), f.herdrError, f.relayError].filter((t): t is string => t !== null)
+    // A Prometheus failure is said once, by the note under the title, so the footer leaves it out.
+    const errors = [f.herdrError, f.relayError].filter((t): t is string => t !== null)
     // A shortened Prometheus error keeps its full text for the open detail.
     const promFull = f.prometheusError !== null && shortError('prometheus', f.prometheusError) !== f.prometheusError ? f.prometheusError : null
     const stale = staleness(f, now)
-    const isFresh = stale !== null && stale < options.refreshSeconds * 3000 && errors.length === 0
+    const isFresh = stale !== null && isCurrent(f, now) && errors.length === 0
+    const footer =
+      errors[0] ?? (f.prometheusError !== null ? '' : stale === null ? 'connecting…' : `updated ${ago(now - stale, now)}`)
     const statusColor = (status: string) =>
       status === 'working' ? 'claude' : status === 'idle' ? 'warning' : 'inactive'
     const statusMark = (status: string) =>
@@ -618,12 +653,8 @@ export function registerFactory(on: On, options: Options): void {
               )
             : []
 
-    const boardError = b.error !== null
-    const [boardMark, boardColor]: [string, 'success' | 'warning' | 'inactive'] = boardError
-      ? ['▲', 'warning']
-      : !f.boardBusy && b.agents.length > 0
-        ? ['●', 'success']
-        : ['◌', 'inactive']
+    const boardColor: ChipColor =
+      b.error !== null ? 'warning' : !f.boardBusy && b.agents.length > 0 ? 'success' : 'inactive'
     const detailSummary =
       open === 'herdr'
         ? `${herdrWorking} working · ${herdrIdle} idle · ${herdrDone} done`
@@ -640,9 +671,11 @@ export function registerFactory(on: On, options: Options): void {
             <Text weight="semibold" size="heading" color={Svg ? undefined : ACCENT}>
               Factory
             </Text>
-            <Text color={allUp ? 'success' : list.length > 0 ? 'error' : 'inactive'} size="caption">
-              {list.length > 0 ? `${up}/${list.length} up` : 'waiting for Prometheus'}
-            </Text>
+            {list.length === 0 && (
+              <Text color="inactive" size="caption">
+                waiting for Prometheus
+              </Text>
+            )}
           </Box>
           <Box flexDirection="row" gap={1} alignItems="center">
             <Link href={options.grafanaUrl} label="Grafana" />
@@ -669,9 +702,9 @@ export function registerFactory(on: On, options: Options): void {
         )}
 
         {chipRow([
-          statusChip('herdr', 'herdr', 'h', ...chipMark(f.herdrError, f.herdrAt, hv.running, '○', 'error'), open === 'herdr', () => void toggleDetail($, 'herdr')),
-          statusChip('relay', 'ix-relay', 'x', ...chipMark(f.relayError, f.relayAt, r.ok, '▲', 'warning'), open === 'relay', () => void toggleDetail($, 'relay')),
-          statusChip('board', 'ix-board', 'b', boardMark, boardColor, open === 'board', () => void toggleDetail($, 'board')),
+          statusChip('herdr', 'herdr', 'h', chipColor(f.herdrError, f.herdrAt, hv.running, 'error'), open === 'herdr', () => void toggleDetail($, 'herdr')),
+          statusChip('relay', 'ix-relay', 'x', chipColor(f.relayError, f.relayAt, r.ok, 'warning'), open === 'relay', () => void toggleDetail($, 'relay')),
+          statusChip('board', 'ix-board', 'b', boardColor, open === 'board', () => void toggleDetail($, 'board')),
         ])}
 
         {open !== 'none' && (
@@ -698,7 +731,7 @@ export function registerFactory(on: On, options: Options): void {
             {list.length > 0 && !f.nodeMetricsSeen ? 'CPU, memory and temperature appear once a node exporter is scraped.' : ''}
           </Text>
           <Text color={isFresh ? 'subtle' : 'warning'} size="caption" wrap="truncate-end">
-            {errors.length > 0 ? errors[0] : stale === null ? 'connecting…' : `updated ${ago(now - stale, now)}`}
+            {footer}
           </Text>
         </Box>
         {e.props.placement === 'inline' && (
@@ -711,11 +744,11 @@ export function registerFactory(on: On, options: Options): void {
   })
 }
 
-type ChipState = ['●' | '▲' | '○' | '◌', 'success' | 'warning' | 'error' | 'inactive']
+type ChipColor = 'success' | 'warning' | 'error' | 'inactive'
 
-/** A chip's mark: a failed read is ▲ first, a service not yet read is ◌, else up is ● and down is `downMark`. */
-function chipMark(error: string | null, readAt: number | null, isUp: boolean, downMark: '○' | '▲', downColor: 'error' | 'warning'): ChipState {
-  if (error !== null) return ['▲', 'warning']
-  if (readAt === null) return ['◌', 'inactive']
-  return isUp ? ['●', 'success'] : [downMark, downColor]
+/** A chip's color: a failed read warns, a service not yet read is inactive, else up is success and down is `downColor`. */
+function chipColor(error: string | null, readAt: number | null, isUp: boolean, downColor: 'error' | 'warning'): ChipColor {
+  if (error !== null) return 'warning'
+  if (readAt === null) return 'inactive'
+  return isUp ? 'success' : downColor
 }

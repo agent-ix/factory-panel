@@ -64,6 +64,9 @@ export type World = {
   fetch: { value: ((url: string) => unknown) | undefined }
 }
 
+/** The five panes, each shown and placed. */
+export const SHOWN = ['factory', 'focus', 'escalations', 'relay', 'team'].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true }))
+
 export function world(on: On, withClock = false): World {
   resetSelection()
   resetSources()
@@ -75,7 +78,8 @@ export function world(on: On, withClock = false): World {
     w.opens.push({ id: e.id, focus: e.focus, closeOnEscape: e.closeOnEscape, rows: e.rows })
     return { value: { isPlaced: true } }
   })
-  on('ui.panes', () => ({ value: (w.listed.value ?? []) as never }))
+  // Unless a test lists its own, the host shows whichever view a test mounts.
+  on('ui.panes', () => ({ value: (w.listed.value ?? SHOWN) as never }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.close', (_, e) => (w.closes.push(e.id), { value: undefined }))
   on('ui.status', (_, e) => {
@@ -87,6 +91,8 @@ export function world(on: On, withClock = false): World {
   if (!withClock) {
     on('clock.now', () => ({ value: Date.UTC(2026, 10, 24, 12, 0) }))
     on('clock.every', () => ({ value: undefined }))
+    // The short wait between a view's first drawing and its read passes at once.
+    on('clock.after', () => ({ value: undefined }))
   }
   on('store.get', (_, e) => ({ value: w.store.get(e.key) }))
   on('store.set', (_, e) => {
@@ -331,3 +337,23 @@ export const showJson = (name: string, team: string, include: Members, exclude: 
 export const NEVER = (): Promise<never> => new Promise<never>(() => undefined)
 /** A call that stays out until its own timeout passes on the moving clock, then fails as the host does. */
 export const hangs = (w: World, init: Init): Promise<never> => w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => { throw new Error(`timed out after ${init?.timeoutMs}ms`) })
+
+/** The `--project` refs of an ix-board argv, in order. */
+export const projectRefs = (args: readonly string[]): string[] => args.flatMap((a, i) => (a === '--project' ? [args[i + 1]!] : []))
+
+/**
+ * The answer of one combined `focus status` call made of the answers its projects would give alone: like ix-board, the
+ * whole call fails with the first failing project's text; else the projects, ready queues and blocker layers are one.
+ */
+export function combine(runs: readonly Run[]): Run {
+  const failed = runs.find(r => r.exitCode !== 0)
+  if (failed !== undefined) return failed
+  if (runs.length === 1) return runs[0]!
+  const answers = runs.map(r => JSON.parse(r.stdout) as Record<string, unknown[] | undefined>)
+  const joined: Record<string, unknown> = { ...answers[0], projects: answers.flatMap(a => a.projects ?? []) }
+  for (const key of ['ready_queue', 'blocker_layers']) {
+    delete joined[key]
+    if (answers.some(a => a[key] !== undefined)) joined[key] = answers.flatMap(a => a[key] ?? [])
+  }
+  return out(JSON.stringify(joined))
+}

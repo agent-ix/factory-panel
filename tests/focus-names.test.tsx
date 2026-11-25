@@ -4,7 +4,7 @@ import { trace } from './trace'
 
 import { focusBanner } from '../hooks/band/modules'
 import { matchLeads } from '../hooks/namedfocus'
-import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, pageLines, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
+import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, onScreen, pageLines, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
 import { defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
 import type { World } from './world'
 
@@ -212,7 +212,8 @@ test('a list that exits non-zero or prints text that is not JSON shows a source 
   shows(lines, /^agent-msg focuses: list: agent-msg: relay store unavailable$/)
   shows(lines, /^Host one focus$/)
   mode = 'text'
-  await w.clock!.advance(2 * MIN + 1000)
+  // A source that failed is read after twice its interval (FR-027).
+  await w.clock!.advance(4 * MIN + 1000)
   lines = await pageLines($)
   shows(lines, /^agent-msg focuses: list: agent-msg focuses list --json printed text that is not JSON$/)
   shows(lines, /^Host one focus$/)
@@ -311,7 +312,8 @@ test('a show that fails or prints text that is not JSON shows a source error and
   shows(lines, new RegExp(`^agent-msg focuses: show ${BETA}: agent-msg: definition unreadable$`))
   shows(lines, /^Beta$/)
   mode = 'text'
-  await w.clock!.advance(2 * MIN + 1000)
+  // A source that failed is read after twice its interval (FR-027).
+  await w.clock!.advance(4 * MIN + 1000)
   lines = await pageLines($)
   shows(lines, /printed text that is not JSON/)
   shows(lines, /^Beta$/)
@@ -326,8 +328,10 @@ test('a list or show that never returns is given up on after 5 seconds and the l
   const prior = w.stub.value
   w.stub.value = (argv, init) => (argv[1] === 'focuses' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
   await startSession($)
-  await w.clock!.advance(4900)
-  hides(await pageLines($), /^Beta$/)
+  await onScreen($)
+  // A view is read once its drawing has stood for 150 ms.
+  await w.clock!.advance(150 + 4900)
+  hides(await paneLines($), /^Beta$/)
   await w.clock!.advance(200)
   const lines = await pageLines($)
   expect(timeouts).toEqual([5000])
@@ -360,12 +364,12 @@ test('when the members of the named definition change between refreshes the seco
   choose(w, 'Beta')
   let members = ['p1']
   named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))), { [BETA]: () => out(showJson('Beta', 'QSL', { projects: members })) })
-  board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
+  board(w, { combined: args => pageOf(args[1]!, 5, 10) })
   await started($, w)
   expect(statusCalls(w)).toEqual(['--project p1'])
   members = ['p1', 'p2']
   await w.clock!.advance(2 * MIN + 1000)
-  expect(statusCalls(w).slice(-2)).toEqual(['--project p1', '--project p2'])
+  expect(statusCalls(w).slice(-1)).toEqual(['--project p1 --project p2'])
 })
 
 test('two active definitions with the same name of one team are both shown and the pane says how many matched', async ($, on) => {
@@ -393,8 +397,10 @@ test('a show that never returns is given up on after 5 seconds, the error is sho
   const prior = w.stub.value
   w.stub.value = (argv, init) => (argv[2] === 'show' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
   await startSession($)
-  await w.clock!.advance(4900)
-  hides(await pageLines($), /^Beta$/)
+  await onScreen($)
+  // A view is read once its drawing has stood for 150 ms.
+  await w.clock!.advance(150 + 4900)
+  hides(await paneLines($), /^Beta$/)
   await w.clock!.advance(200)
   const lines = await pageLines($)
   expect(timeouts).toEqual([5000])

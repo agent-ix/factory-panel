@@ -59,21 +59,28 @@ test('glyph helpers draw bars, sparklines, colors and money', async () => {
   expect(bar(0.001, 6)).toBe('░░░░░░')
 })
 
-test('a status chip is a mark and a named button, with no counts, and marks the open one', async () => {
+test('a status chip is a bracketed name, the name in the state color, with no counts, and marks the open one', async () => {
   const el = (type: string) => (props: Record<string, unknown>) => ({ type, props })
   const { statusChip, chipRow } = widgets({ Box: el('Box'), Text: el('Text'), Button: el('Button') } as never)
   type Node = { type: string; props: { children?: unknown; [k: string]: unknown } }
   const kids = (n: Node) => (Array.isArray(n.props.children) ? n.props.children : [n.props.children]).filter(Boolean) as Node[]
   let pressed = 0
-  const closed = statusChip('relay', 'ix-relay', 'x', '▲', 'warning', false, () => pressed++) as unknown as Node
-  const [mark, button, ...rest] = kids(closed)
-  expect(mark.props).toMatchObject({ color: 'warning' })
-  expect([mark.props.children].flat()).toEqual(['▲'])
-  expect(button.props).toMatchObject({ label: 'ix-relay', hotkey: 'x' })
+  const closed = statusChip('relay', 'ix-relay', 'x', 'warning', false, () => pressed++) as unknown as Node
+  const [button, hidden, ...rest] = kids(closed)
+  // The drawn button has no hotkey, so no `x:` prefix; a hidden twin keeps the key.
+  expect(button.props).toMatchObject({ label: 'ix-relay', plain: true })
+  expect(button.props.hotkey).toBeUndefined()
+  const [open_, name, close_] = kids(button)
+  expect(kids(button).map(t => [t.props.children].flat().join(''))).toEqual(['[', 'ix-relay', ']'])
+  expect(name.props).toMatchObject({ color: 'warning' })
+  for (const bracket of [open_, close_]) expect(bracket.props).toMatchObject({ dimColor: true })
+  expect(hidden.props.display).toBe('none')
+  expect(kids(hidden)[0].props).toMatchObject({ hotkey: 'x' })
   expect(rest).toHaveLength(0)
   ;(button.props.onPress as () => void)()
-  expect(pressed).toBe(1)
-  const open = statusChip('relay', 'ix-relay', 'x', '●', 'success', true, () => {}) as unknown as Node
+  ;(kids(hidden)[0].props.onPress as () => void)()
+  expect(pressed).toBe(2)
+  const open = statusChip('relay', 'ix-relay', 'x', 'success', true, () => {}) as unknown as Node
   expect([kids(open)[2].props.children].flat()).toEqual(['▾'])
   expect(chipRow([closed as never, open as never]).props.flexDirection).toBe('row')
 })

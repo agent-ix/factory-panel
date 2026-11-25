@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
 import type { ModuleId, Scope } from './band/modules'
+import { isDue, track } from './schedule'
 import { errorText } from './shared'
 
 // What the panel shows is selected per feature: modules, hosts, focus and teams. Each feature
@@ -192,13 +193,15 @@ export async function factoryDir($: EngineInterface): Promise<string> {
   return `${await home($)}/.ix/factory-panel`
 }
 
-async function lookupIdentity($: EngineInterface): Promise<void> {
+/** Asks the relay who this session is; false when it could not say. */
+async function lookupIdentity($: EngineInterface): Promise<boolean> {
   try {
     const who = await $.process.run(['agent-msg', 'whoami'], { timeoutMs: WHOAMI_TIMEOUT_MS })
     identity = who.exitCode === 0 ? parseIdentity(who.stdout) : { status: 'unknown' }
   } catch {
     identity = { status: 'unknown' }
   }
+  return identity.status === 'detected'
 }
 
 const shown = (file: string, base: string): string => file.replace(base, '~/.ix/factory-panel')
@@ -236,21 +239,24 @@ async function readChoice($: EngineInterface, base: string, key: string): Promis
 /**
  * Reads the identity (until it is known), the declaration and the choices, and decides each
  * feature. Never throws and never waits on a missing file. The identity lookup gives up after
- * five seconds and leaves the session unidentified.
+ * five seconds and leaves the session unidentified. A `timed` refresh asks a relay that could not
+ * say less and less often; a refresh behind a command always asks.
  */
-export function refreshSelection($: EngineInterface): Promise<Selection> {
-  const refreshed = readSelection($)
+export function refreshSelection($: EngineInterface, timed = false): Promise<Selection> {
+  const refreshed = readSelection($, timed)
   // Whatever waits for the selection waits for the files too, not only for the identity.
   if (identity.status !== 'detected') ready = refreshed.then(() => undefined)
   return refreshed
 }
 
-async function readSelection($: EngineInterface): Promise<Selection> {
+async function readSelection($: EngineInterface, timed: boolean): Promise<Selection> {
   try {
-    if (identity.status !== 'detected') {
-      lookup ??= lookupIdentity($).finally(() => {
-        lookup = undefined
-      })
+    if (identity.status !== 'detected' && (lookup !== undefined || !timed || isDue('whoami', await $.clock.now()))) {
+      lookup ??= track($, 'whoami', () => lookupIdentity($))
+        .then(() => undefined)
+        .finally(() => {
+          lookup = undefined
+        })
       await lookup
     }
     const base = await factoryDir($)

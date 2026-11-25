@@ -37,6 +37,15 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 - `/factory reset` SHALL NOT change `default.json` or any other key's file.
 - `/factory show` SHALL print each feature with its value and the source that decided it, being `user`, `declaration` or `default`.
 - `/factory show` SHALL print the session's key and the third segment of its address verbatim.
+- `/factory show` and a choice command SHALL read the focuses before they print, although no view that draws them is on screen.
+- A read for a command SHALL pass the same gates as a view's reads, so that no command asks ix-board sooner than the 30 minute gate of [FR-025](./FR-025-per-project-last-good.md) allows.
+- A choice command SHALL read for what it has just chosen.
+- `/factory show` SHALL read the focuses only where they are due.
+- The mod SHALL print what it holds once that read ends, or after 5 seconds where it has not ended.
+- Where no read has ended for the focus and teams now selected, `/factory show` and a choice command SHALL print `focus data: not read yet`.
+- The mod SHALL NOT count a read in which the leads could not be listed as a read that has ended.
+- Where no such read has ended, `/factory show` and a choice command SHALL NOT say that no focus is reported or that no focus matches a name.
+- Where such a read has ended, they SHALL print `focus data: read <age>`, with the age of the oldest progress shown where there is progress.
 - The help SHALL list each choice command with one example.
 - The mod SHALL NOT register a command for these choices other than `/factory` and the aliases of [FR-003](./FR-003-one-command.md).
 
@@ -58,6 +67,10 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 | FR-014-AC-14 | Given a malformed key choice file and a `default.json` of choices, the choices of `default.json` apply, and after `/factory reset` the key has none and `default.json` is unchanged. | Test |
 | FR-014-AC-13 | For two sessions with the same key, a choice made in the first and then one in the second leaves the second's choice in effect for both. | Test |
 | FR-014-AC-12 | The plugin registers `/factory` and the aliases of FR-003 and no other command. | Test |
+| FR-014-AC-15 | With no view drawn nothing reads the focuses until `/factory show` is typed, which reads them once and prints their age; a second `/factory show` within 2 minutes reads nothing. | Test |
+| FR-014-AC-16 | With `agent-msg who` not answering, `/factory show` and `/factory focus Release Train` each print after 5 seconds that the focus data is not read yet, and neither says no focus is reported or matched; after a read, a name that matches nothing is said to match no focus. | Test |
+| FR-014-AC-17 | With the progress read less than 30 minutes ago, `/factory show` and a choice command make no ix-board `focus status` call. | Test |
+| FR-014-AC-18 | With `agent-msg who` failing, `/factory show` prints that the focus data is not read yet with that error, and does not say no focus is reported. | Test |
 
 ## Dependencies
 
