@@ -214,12 +214,10 @@ test('the same declaration twice gives the same band and a rewrite changes it at
   feature(w, { modules: ['queue', 'lanes'] })
   await startSession($)
   await w.clock!.advance(1000)
-  const cells = async () => {
-    const ui = await drawBand($, CLASSIC)
-    const ids = await bandCells(ui)
-    await ui.unmount()
-    return ids
-  }
+  // The band stays on screen: the files are re-read only while a view is drawn (FR-027).
+  const band = await drawBand($, CLASSIC)
+  await w.clock!.advance(1000)
+  const cells = () => bandCells(band)
   const first = await cells()
   feature(w, { modules: ['queue', 'lanes'] })
   await w.clock!.advance(15_000)
@@ -674,6 +672,7 @@ test('after a Linear gate refresh the cache is at ~/.ix/factory-panel/linear-gat
   const w = world(on)
   fullWorld(w)
   await startSession($)
+  await drawBand($, CLASSIC)
   await settle()
   expect(w.files.has(`${FP}/linear-gate.json`)).toBe(true)
   expect(w.writes.filter(p => p.includes('/.cache/') || p.includes('/.config/'))).toEqual([])
@@ -687,6 +686,8 @@ test('only an old cache is read once as the initial cache, later writes go to th
   const old = JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at: Date.UTC(2026, 10, 24, 11, 50), claimAt: null, data: { agents: [{ team: 'QSL', agent: 'draco:QSL:code', status: 'idle', machine: 'draco', paneId: '', title: '', lastTurnAgeSecs: 1 }], notes: [] } } } })
   w.files.set(`${HOME_CACHE}/linear-gate.json`, old)
   await startSession($)
+  const standing = await drawBand($, CLASSIC)
+  await w.clock!.advance(1000)
   await settle()
   // The old content answered: ix-board was not asked, and the cached agent shows (1 idle).
   expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual([])
@@ -694,8 +695,9 @@ test('only an old cache is read once as the initial cache, later writes go to th
   const ui = await drawBand($, CLASSIC)
   expect((await ui.find({ key: 'lanes' }))?.text).toBe('0 working · 1 idle')
   await ui.unmount()
+  expect(standing).toBeDefined()
   // Once the cached read is old enough the next read goes to the new path.
-  await w.clock!.advance(6 * 60_000)
+  await w.clock!.advance(21 * 60_000)
   await settle()
   expect(w.ran.filter(l => l.startsWith('ix-board')).length).toBeGreaterThan(0)
   expect(w.files.has(`${FP}/linear-gate.json`)).toBe(true)
@@ -771,12 +773,9 @@ test('a declaration that changes the focus scope re-reads the leads at the next 
   w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2'))
   await startSession($)
   await w.clock!.advance(1000)
-  const focusText = async () => {
-    const ui = await drawBand($, CLASSIC)
-    const text = (await ui.find({ key: 'focus' }))?.text
-    await ui.unmount()
-    return text
-  }
+  const band = await drawBand($, CLASSIC)
+  await w.clock!.advance(1000)
+  const focusText = async () => (await band.find({ key: 'focus' }))?.text
   expect(await focusText()).not.toMatch(/\+1$/)
   feature(w, { focus: 'team', teams: ['QSL', 'ENG'] })
   await w.clock!.advance(15_000)
@@ -799,11 +798,10 @@ test('a malformed declaration is noted on every draw of the first band until the
   // It stays on every draw until the next refresh, and that refresh counts it as shown.
   const again = await drawBand($, CLASSIC)
   expect(await bandLine(again)).toMatch(/not valid JSON/)
-  await again.unmount()
+  // The refresh comes while the band is on screen.
   await w.clock!.advance(15_000)
-  const later = await drawBand($, CLASSIC)
-  expect(await bandLine(later)).toBeUndefined()
-  await later.unmount()
+  expect(await bandLine(again)).toBeUndefined()
+  await again.unmount()
 })
 
 test('a malformed key declaration or choice file is treated as if it did not exist, so default.json is read', async () => {
