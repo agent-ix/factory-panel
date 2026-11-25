@@ -4,15 +4,16 @@ import type { EngineInterface, On } from 'claude-code'
 import type { RetroClass, RetroMeta, RetroView, TeamMeta, TeamMetric, TeamView } from '../types'
 import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
 import { ACCENT, dots } from './ui/glyphs'
-import type { Options } from './shared'
+import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
 import { focusTeams } from './band/modules'
 import { getSelection, home, scopeOf, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
 // The Team pane: coder velocity, review quality and flow per team, from the same ix_team_* series as
-// Grafana's "Team flow and effort" dashboard, each tile with six hours of history, and above them the
-// health of each selected team's departments from its stored retro snapshots.
+// Grafana's "Team flow and effort" dashboard, each tile with six hours of history and the closures and merges of
+// each of the last seven days, and above them the health of each selected team's departments from its stored
+// retro snapshots.
 
 const PANE = 'team'
 const TITLE = 'Team'
@@ -20,7 +21,7 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
-const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-1' })
+const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-2' })
 /** Teams whose health strip lists its regressing metrics. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
 const retro = atom({ plugin: 'factory-panel', key: 'retro' } as const, [] as RetroView[], { shape: 'retro-1' })
@@ -32,30 +33,38 @@ const teamMeta = atom(
   { shape: 'teamMeta-1' },
 )
 
-type Spec = Omit<TeamMetric, 'value' | 'history'> & { query: string }
+/** How the samples several exporter series of one team have at one time make one. */
+type Combine = 'sum' | 'max'
+type Spec = Omit<TeamMetric, 'value' | 'history'> & { series: string; combine: Combine }
 
-// Velocity and effort, then review quality, then flow and capacity. A series the exporter does not publish
-// stays in its row as a tile reading "—": it is never drawn as 0.
+// Velocity and effort, then review quality, then flow and capacity. Each tile is one series of the exporter, derived
+// from nothing else: one it does not publish stays in its row as a tile reading "—", never 0.
 const SPECS: Spec[] = [
-  { key: 'closures', group: 'velocity', label: 'Verified closures · 24h', unit: 'count', better: 'up', query: 'sum by (team_id) (ix_team_verified_path_closed_24h)' },
-  // The exporter's own series where it publishes one, else the execution time of the day over the verified closures.
-  { key: 'effort', group: 'velocity', label: 'Effort per closure', unit: 'seconds', better: 'down', query: 'max by (team_id) (ix_team_effort_per_verified_path_closure_seconds_24h) or (sum by (team_id) (increase(ix_team_execution_seconds_total[24h])) / (sum by (team_id) (ix_team_verified_path_closed_24h) > 0))' },
-  { key: 'merges', group: 'velocity', label: 'PR merges / hour', unit: 'rate', better: 'up', query: 'sum by (team_id) (ix_team_pr_merges_per_hour_24h)' },
-  { key: 'cycle', group: 'velocity', label: 'PR cycle · median', unit: 'seconds', better: 'down', query: 'max by (team_id) (ix_team_pr_cycle_median_seconds_24h)' },
-  { key: 'firstReview', group: 'review', label: 'First review · median', unit: 'seconds', better: 'down', query: 'max by (team_id) (ix_team_new_pr_first_review_median_seconds_24h)' },
-  { key: 'findingsShare', group: 'review', label: 'PRs with findings', unit: 'share', better: 'down', query: 'max by (team_id) (ix_team_review_prs_with_findings_share_24h)' },
-  { key: 'high', group: 'review', label: 'Confirmed findings · high', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_review_findings_confirmed_high_24h)' },
-  { key: 'medium', group: 'review', label: 'Confirmed findings · medium', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_review_findings_confirmed_medium_24h)' },
-  { key: 'low', group: 'review', label: 'Confirmed findings · low', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_review_findings_confirmed_low_24h)' },
-  // The exporter has no share series yet: the open PRs that carry a changes-requested review, over the open PRs.
-  { key: 'changes', group: 'review', label: 'Changes requested', unit: 'share', better: 'down', query: 'max by (team_id) (ix_team_pr_changes_requested_share) or (sum by (team_id) (ix_team_prs_changes_requested) / (sum by (team_id) (ix_team_prs_open) > 0))' },
-  { key: 'remaining', group: 'flow', label: 'Leaf work remaining', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_scope_leaf_remaining)' },
-  { key: 'wip', group: 'flow', label: 'Work in progress', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_wip_active)' },
-  { key: 'blocked', group: 'flow', label: 'Blocked', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_blocked_issues)' },
-  { key: 'unmerged', group: 'flow', label: 'Ready, unmerged PRs', unit: 'count', better: 'down', query: 'sum by (team_id) (ix_team_prs_ready_unmerged)' },
-  { key: 'oldest', group: 'flow', label: 'Oldest in a stage', unit: 'seconds', better: 'down', query: 'max by (team_id) (ix_team_stage_oldest_age_seconds)' },
-  { key: 'ready', group: 'flow', label: 'Ready issues', unit: 'count', better: 'up', query: 'sum by (team_id) (ix_team_ready_issues)' },
-  { key: 'agents', group: 'flow', label: 'Executing agents', unit: 'count', better: 'up', query: 'sum by (team_id) (ix_team_executing_agents)' },
+  { key: 'closures', group: 'velocity', label: 'Verified closures · 24h', unit: 'count', better: 'up', series: 'ix_team_verified_path_closed_24h', combine: 'sum' },
+  { key: 'effort', group: 'velocity', label: 'Effort per closure', unit: 'seconds', better: 'down', series: 'ix_team_effort_per_verified_path_closure_seconds_24h', combine: 'max' },
+  { key: 'merges', group: 'velocity', label: 'PR merges / hour', unit: 'rate', better: 'up', series: 'ix_team_pr_merges_per_hour_24h', combine: 'sum' },
+  { key: 'cycle', group: 'velocity', label: 'PR cycle · median', unit: 'seconds', better: 'down', series: 'ix_team_pr_cycle_median_seconds_24h', combine: 'max' },
+  { key: 'firstReview', group: 'review', label: 'First review · median', unit: 'seconds', better: 'down', series: 'ix_team_new_pr_first_review_median_seconds_24h', combine: 'max' },
+  { key: 'findingsShare', group: 'review', label: 'PRs with findings', unit: 'share', better: 'down', series: 'ix_team_review_prs_with_findings_share_24h', combine: 'max' },
+  { key: 'high', group: 'review', label: 'Confirmed findings · high', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_high_24h', combine: 'sum' },
+  { key: 'medium', group: 'review', label: 'Confirmed findings · medium', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_medium_24h', combine: 'sum' },
+  { key: 'low', group: 'review', label: 'Confirmed findings · low', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_low_24h', combine: 'sum' },
+  { key: 'changes', group: 'review', label: 'Changes requested', unit: 'share', better: 'down', series: 'ix_team_pr_changes_requested_share', combine: 'max' },
+  { key: 'remaining', group: 'flow', label: 'Leaf work remaining', unit: 'count', better: 'down', series: 'ix_team_scope_leaf_remaining', combine: 'sum' },
+  { key: 'wip', group: 'flow', label: 'Work in progress', unit: 'count', better: 'down', series: 'ix_team_wip_active', combine: 'sum' },
+  { key: 'blocked', group: 'flow', label: 'Blocked', unit: 'count', better: 'down', series: 'ix_team_blocked_issues', combine: 'sum' },
+  { key: 'unmerged', group: 'flow', label: 'Ready, unmerged PRs', unit: 'count', better: 'down', series: 'ix_team_prs_ready_unmerged', combine: 'sum' },
+  { key: 'oldest', group: 'flow', label: 'Oldest in a stage', unit: 'seconds', better: 'down', series: 'ix_team_stage_oldest_age_seconds', combine: 'max' },
+  { key: 'ready', group: 'flow', label: 'Ready issues', unit: 'count', better: 'up', series: 'ix_team_ready_issues', combine: 'sum' },
+  { key: 'agents', group: 'flow', label: 'Executing agents', unit: 'count', better: 'up', series: 'ix_team_executing_agents', combine: 'sum' },
+]
+
+const DAY_SECS = 86_400
+const DAYS = 7
+/** The daily rows. Each sample of these series covers the 24 hours before it; `per` makes it a count of that day. */
+const DAILY: { key: keyof TeamView['days']; label: string; series: string; per: number }[] = [
+  { key: 'closures', label: 'Closures', series: 'ix_team_verified_path_closed_24h', per: 1 },
+  { key: 'merges', label: 'Merges', series: 'ix_team_pr_merges_per_hour_24h', per: 24 },
 ]
 
 const GROUPS: { id: TeamMetric['group']; title: string }[] = [
@@ -69,28 +78,76 @@ export function pollTeam($: EngineInterface, options: Options): Promise<boolean>
   return track($, 'team', () => readTeam($, options))
 }
 
+/**
+ * The team each series belongs to: the `team_key` it carries, else the one key the other series of its exporter id
+ * carry, else the id itself, which is no team key.
+ */
+function teamNamer(series: readonly RangeSeries[]): (s: RangeSeries) => { team: string; keyed: boolean } {
+  const keys = new Map<string, Set<string>>()
+  const idOf = (s: RangeSeries) => s.metric.team_id ?? 'unknown'
+  for (const s of series) if (s.metric.team_key) keys.set(idOf(s), (keys.get(idOf(s)) ?? new Set<string>()).add(s.metric.team_key))
+  return s => {
+    const own = [...(keys.get(idOf(s)) ?? [])]
+    const key = s.metric.team_key || (own.length === 1 ? own[0] : undefined)
+    return key ? { team: key, keyed: true } : { team: idOf(s), keyed: false }
+  }
+}
+
+/** One team's samples, oldest first, from its series: at each time those with the team key are used where any has one. */
+function joined(series: readonly RangeSeries[], combine: Combine): [number, number][] {
+  const keyed = new Map<number, number>()
+  const keyless = new Map<number, number>()
+  for (const s of series) {
+    const into = s.metric.team_key ? keyed : keyless
+    for (const [time, text] of s.values) {
+      const value = Number(text)
+      if (!Number.isFinite(value)) continue
+      const had = into.get(time)
+      into.set(time, had === undefined ? value : combine === 'sum' ? had + value : Math.max(had, value))
+    }
+  }
+  return [...new Map([...keyless, ...keyed])].sort(([a], [b]) => a - b)
+}
+
+/** The counts of the last DAYS days, oldest first; `null` for a day with no sample. */
+function perDay(samples: readonly [number, number][], now: number, per: number): (number | null)[] {
+  const days = Array<number | null>(DAYS).fill(null)
+  for (const [time, value] of samples) {
+    const ago = Math.round((now - time) / DAY_SECS)
+    if (ago >= 0 && ago < DAYS) days[DAYS - 1 - ago] = Math.round(value * per)
+  }
+  return days
+}
+
 async function readTeam($: EngineInterface, options: Options): Promise<boolean> {
   const now = await $.clock.now()
+  const seconds = Math.floor(now / 1000)
   try {
-    const results = await Promise.all(
-      SPECS.map(async spec => ({ spec, series: await promRange($, options.prometheusUrl, spec.query, HISTORY_SECS, STEP_SECS) })),
-    )
+    const query = (promql: string, span: number, step: number) => promRange($, options.prometheusUrl, promql, span, step)
+    const [tiles, daily] = await Promise.all([
+      Promise.all(SPECS.map(async spec => ({ spec, series: await query(`${spec.combine} by (team_id, team_key) (${spec.series})`, HISTORY_SECS, STEP_SECS) }))),
+      // The last sample of the hour before each day's end, so that a missed scrape does not lose the day.
+      Promise.all(DAILY.map(async day => ({ day, series: await query(`sum by (team_id, team_key) (last_over_time(${day.series}[1h]))`, (DAYS - 1) * DAY_SECS, DAY_SECS) }))),
+    ])
+    const every = [...tiles, ...daily].flatMap(r => r.series)
+    const nameOf = teamNamer(every)
     // Every team any series names gets every tile: one the exporter lacks reads as unavailable, not as 0.
-    const byTeam = new Map<string, Map<string, TeamMetric>>()
-    for (const { spec, series } of results) {
-      for (const s of series) {
-        const team = s.metric.team_id ?? 'unknown'
-        const history = s.values.map(([, v]) => Number(v)).filter(v => Number.isFinite(v))
-        const metrics = byTeam.get(team) ?? new Map<string, TeamMetric>()
-        byTeam.set(team, metrics)
-        metrics.set(spec.key, { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value: history.length > 0 ? (history[history.length - 1] ?? null) : null, history })
-      }
-    }
-    const views: TeamView[] = [...byTeam.entries()]
-      .map(([team, have]) => ({
-        team,
-        metrics: SPECS.map((spec): TeamMetric => have.get(spec.key) ?? { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value: null, history: [] }),
-      }))
+    const named = new Map<string, boolean>()
+    for (const { team, keyed } of every.map(nameOf)) named.set(team, keyed || (named.get(team) ?? false))
+    const views: TeamView[] = [...named]
+      .map(([team, keyed]) => {
+        const of = (series: readonly RangeSeries[], combine: Combine) => joined(series.filter(s => nameOf(s).team === team), combine)
+        const metrics = tiles.map(({ spec, series }): TeamMetric => {
+          const samples = of(series, spec.combine)
+          const last = samples[samples.length - 1]
+          // A series that stopped has no current value, whatever it last said.
+          const value = last !== undefined && seconds - last[0] <= STEP_SECS ? last[1] : null
+          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value, history: samples.map(([, v]) => v) }
+        })
+        const days = { closures: [], merges: [] } as TeamView['days']
+        for (const { day, series } of daily) days[day.key] = perDay(of(series, 'sum'), seconds, day.per)
+        return { team, keyed, metrics, days }
+      })
       .sort((x, y) => x.team.localeCompare(y.team))
     await update($, teams, () => views)
     await update($, teamMeta, () => ({ at: now, error: null }))
@@ -207,6 +264,17 @@ const format = (m: TeamMetric): string => {
   return Math.round(m.value).toLocaleString('en-US')
 }
 
+/** How the newest day compares with the average of the earlier days that have a value; null where it has none. */
+function dayTrend(days: readonly (number | null)[]): { mark: string; color: string; text: string } | null {
+  const newest = days[days.length - 1]
+  if (newest === null || newest === undefined) return null
+  const earlier = days.slice(0, -1).filter((v): v is number => v !== null)
+  if (earlier.length === 0) return { mark: '', color: 'subtle', text: 'no earlier day' }
+  const average = earlier.reduce((a, b) => a + b, 0) / earlier.length
+  const [mark, color] = newest > average ? ['↑', 'success'] : newest < average ? ['↓', 'warning'] : ['=', 'subtle']
+  return { mark, color, text: `prior avg ${average.toFixed(1)}` }
+}
+
 /** The trend's colour: calm when it moves the right way or holds, amber when it moves the wrong way. */
 const trendInk = (m: TeamMetric): string => {
   const first = m.history[0]
@@ -231,11 +299,13 @@ export function registerTeam(on: On, options: Options): void {
     const dashboard = `${options.grafanaUrl.replace(/\/$/, '')}/d/ix-team-flow-effort`
 
     if (e.props.placement === 'widget') {
-      const closures = list.flatMap(t => t.metrics.filter(m => m.key === 'closures'))
-      const total = closures.reduce((s, m) => s + (m.value ?? 0), 0)
+      const closures = list.map(t => t.metrics.find(m => m.key === 'closures')?.value ?? null)
+      const known = closures.filter((v): v is number => v !== null)
+      // A team with no reading makes the sum a lower bound; with none at all it is unknown, not 0.
+      const total = known.length === 0 ? '—' : `${known.length < closures.length ? '≥' : ''}${Math.round(known.reduce((a, b) => a + b, 0))}`
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{list.length > 0 ? `${Math.round(total)} closures / 24h` : 'no team metrics'}</Text>
+          <Text weight="semibold">{list.length > 0 ? `${total} closures / 24h` : 'no team metrics'}</Text>
         </Box>
       )
     }
@@ -259,6 +329,25 @@ export function registerTeam(on: On, options: Options): void {
             />
           )}
         </Box>
+      </Box>
+    )
+
+    const dailyRows = (t: TeamView) => (
+      <Box key={`${t.team}-daily`} flexDirection="column">
+        <Text dimColor size="caption">Per day · last 7 days · verified closures, merged PRs</Text>
+        {DAILY.map(day => {
+          const trend = dayTrend(t.days[day.key])
+          return (
+            <Box key={`${t.team}-daily-${day.key}`} flexDirection="row" gap={1}>
+              <Box width={8}>
+                <Text dimColor>{day.label}</Text>
+              </Box>
+              <Text tabular>{t.days[day.key].map(v => (v === null ? '—' : String(v)).padStart(4)).join('')}</Text>
+              {trend !== null && trend.mark !== '' && <Text color={trend.color}>{trend.mark}</Text>}
+              {trend !== null && <Text dimColor>{trend.text}</Text>}
+            </Box>
+          )
+        })}
       </Box>
     )
 
@@ -317,13 +406,17 @@ export function registerTeam(on: On, options: Options): void {
 
         {list.map(t => (
           <Box key={t.team} flexDirection="column" gap={1}>
-            <Text weight="semibold">{t.team}</Text>
+            <Box flexDirection="row" gap={1} alignItems="center">
+              <Text weight="semibold">{t.team}</Text>
+              {!t.keyed && <Text dimColor size="caption">exporter id, no team key</Text>}
+            </Box>
             {GROUPS.map(g => (
               <Box key={g.id} flexDirection="column">
                 <Text dimColor size="caption">{g.title}</Text>
                 <Box flexDirection="row" flexWrap="wrap" gap={1}>
                   {t.metrics.filter(m => m.group === g.id).map(m => tile(t.team, m))}
                 </Box>
+                {g.id === 'velocity' && dailyRows(t)}
               </Box>
             ))}
           </Box>

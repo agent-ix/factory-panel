@@ -210,7 +210,15 @@ export type TeamMetric = {
   history: number[]
 }
 
-export type TeamView = { team: string; metrics: TeamMetric[] }
+export type TeamView = {
+  /** the Linear team key, else the exporter's team id */
+  team: string
+  /** whether `team` is a team key the series carry */
+  keyed: boolean
+  metrics: TeamMetric[]
+  /** the counts of each of the last 7 days, oldest first; null for a day with no sample */
+  days: { closures: (number | null)[]; merges: (number | null)[] }
+}
 
 export type TeamMeta = { at: number | null; error: string | null }
 

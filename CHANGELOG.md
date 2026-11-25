@@ -10,6 +10,8 @@
 - Under `a`, five of Recent's ten rows are held for review, spec and gate events, so a busy focus no longer crowds them out.
 - A progress answer that a session on an older build wrote to the shared gate is read again at once, instead of leaving PRs and merges unknown until it expired.
 - The Team tab’s health strip takes each metric’s class from the `class` field of `ix-board --json retro delta` instead of a table of its own, so a metric new to ix-board lands in its class. It needs ix-board 0.11.0: an older one reads `needs ix-board ≥0.11.0` with no marks. A team with fewer than two retro snapshots reads `no retro delta yet` instead of an empty strip.
+- The Team tab heads each team with its Linear team key, from the exporter’s `team_key` label (ix-board 0.12.0); without the label the exporter id is shown and marked. It no longer derives effort per closure or the changes-requested share from other series: they read `—` until the exporter publishes them. A series that has stopped reads `—` instead of its last value, and the one-line widget no longer counts an unknown number of closures as 0.
+- New per-team rows on the Team tab: verified closures and merged PRs for each of the last 7 days, with the newest day against the average of the earlier ones.
 - The health strip waits for the session to know its team before reading, instead of saying `no retro baseline` for 5 minutes where the Team view opened first, and reads again when the teams choice changes. It says when it is still reading and when no team is selected.
 
 ## 0.8.0
