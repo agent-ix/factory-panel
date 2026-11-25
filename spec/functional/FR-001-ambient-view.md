@@ -20,7 +20,7 @@ The mod SHALL show the ambient view without being asked: a one-row band above th
 - The mod SHALL draw the band at the first redraw after session start, with no key pressed.
 - While the terminal has not reported its layout, the mod SHALL draw the band.
 - The mod SHALL NOT open a pane over the chat that the person did not ask for.
-- When the layout is first reported as fullscreen, the mod SHALL open the five panes (Factory, Focus, Escalations, Relay, Team) once.
+- When the layout is first reported as fullscreen, the mod SHALL open the five panes (Factory, Focus, Escalations, Message, Team) once.
 - The mod SHALL NOT reopen a pane the person has closed.
 - In a non-interactive session the mod SHALL draw nothing and open nothing.
 

@@ -1,6 +1,6 @@
 # Style guide
 
-This is the style guide for the factory-panel plugin's panes. It fixes the colours, spacing, type, number formats and drawing helpers every pane uses, so the Factory, Focus, Relay and Team panes look like one product on the terminal and on desktop. The drawing helpers live in `hooks/ui/glyphs.ts` and `hooks/ui/widgets.tsx`; `hooks/factory.tsx` is the reference pane.
+This is the style guide for the factory-panel plugin's panes. It fixes the colours, spacing, type, number formats and drawing helpers every pane uses, so the Factory, Focus, Message and Team panes look like one product on the terminal and on desktop. The drawing helpers live in `hooks/ui/glyphs.ts` and `hooks/ui/widgets.tsx`; `hooks/factory.tsx` is the reference pane.
 
 ## Tokens
 

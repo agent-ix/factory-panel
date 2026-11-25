@@ -53,7 +53,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | Factory widget | Prometheus machines, `herdr api snapshot`, `agent-msg doctor` |
 | Focus pane | selection, focus |
 | Escalations pane | `agent-msg escalations` and `escalation show` |
-| Relay pane | `agent-msg log` and `agent-msg who` |
+| Message pane | `agent-msg log` and `agent-msg who` |
 | Team pane | Prometheus team series |
 | Band cells `health`, `local`, `agents`, `spend` | Prometheus machines |
 | Band cells `focus`, `queue` | focus |

@@ -15,7 +15,7 @@ The views behind the cells are:
 | Factory | Each machine's up or down, CPU, memory and temperature, agents by status, 24-hour spend, and the herdr, ix-relay and ix-board state |
 | Focus | One card per named focus: its initiatives with their projects nested under them, progress, Ready and Blocked, and one warning icon |
 | Escalations | What the leads escalated, open first, with context, options and recommendation |
-| Relay | Announcements to every lead or one lead, and the recent broadcasts |
+| Message (`/factory relay`) | A message to every lead or one lead, and the recent broadcasts |
 | Team | Velocity and quality tiles per team with six-hour history |
 
 ## How to use it
@@ -23,7 +23,7 @@ The views behind the cells are:
 - Open more: type `/factory`. It opens Focus when the focus cell is shown and Factory otherwise. `/factory focus`, `/factory escalations`, `/factory relay`, `/factory team` and `/factory factory` open one view directly.
 - Switch: with a view open in the classic layout, type a cell's number at an empty prompt. A number typed while the prompt holds text goes into the prompt. In the fullscreen layout, click a tab or type `/factory` and the view name.
 - Refresh and close: `r` refreshes the open view and Esc closes it and gives the keyboard back to the prompt.
-- Reading: the mod reads a source only while a view that draws it is on screen, and catches up when the view appears.
+- Reading: the mod reads a source only while a view that draws it is on screen, and catches up when the view appears. In herdr and tmux that excludes a session whose pane is off view.
 - Help: `/factory help` answers these questions in the words of your layout.
 - Older commands `/focuses`, `/escalations`, `/relay` and `/team` still work as aliases for one release.
 
@@ -97,7 +97,11 @@ All settings are optional and appear in the config menu.
 
 ix-board reads of Linear (progress, the roadmap and `ix-board agents`) share a gate across sessions on a machine. It keeps each read's result and any Linear retry time in `~/.ix/factory-panel/linear-gate.json`, runs each read at most once every 30 minutes (60 seconds for a manual refresh, 5 minutes after an error of the source) and calls ix-board again only after a Linear rate limit has passed. The file is replaced whole, and a write drops entries nobody has read for a day (those of 0.7.0, after an hour). A cache an earlier version left in `~/.cache/factory-panel/` is read once as the starting point and never written.
 
-A source that fails or answers slowly is read less often, up to every 5 minutes. The engine does not tell a mod whether the terminal itself can be seen, so the views of a detached or hidden terminal count as on screen.
+A source that fails or answers slowly is read less often, up to every 5 minutes.
+
+The engine draws into a terminal whether or not it can be seen, so before reading for a terminal view the mod asks herdr (`herdr api snapshot`) or tmux (`tmux display-message`), at most once every 15 seconds. Nothing is read while herdr shows another tab (or another pane zoomed over this one), or while no tmux client is viewing the window; reads resume within 15 seconds of coming back, and `r` always reads. Where the answer is unknown the mod reads: outside herdr and tmux, with tmux inside herdr, without herdr's Claude integration, or when the command fails. A terminal window that is hidden or covered counts as on screen.
+
+With two or more clients attached to one herdr server (a second window, or another machine's `herdr --machine`), herdr reports only the view of the client that last switched. A panel that only another client views stops reading until that client switches tab, also after the other clients leave. Set the environment variable `FACTORY_PANEL_VIEW_CHECK=off` to read wherever a view is drawn.
 
 ## Install
 
@@ -121,6 +125,7 @@ claude plugin validate .
 claude plugin test .
 node --test tests/e2e/static.check.ts
 node tests/e2e/layouts.mjs
+node tests/e2e/onscreen.mjs
 ```
 
-`static.check.ts` checks this README and the hotkeys against the plugin's source. `layouts.mjs` drives real sessions in tmux in both layouts and saves captures under `tests/e2e/evidence/`. Requirements and their tests are in `spec/`; see `docs/STYLE.md` for the colours, spacing and widgets the views share.
+`static.check.ts` checks this README and the hotkeys against the plugin's source. `layouts.mjs` drives real sessions in tmux in both layouts and saves captures under `tests/e2e/evidence/`. `onscreen.mjs [seconds-per-phase] [plugin-folder]` logs every read made while views are on and off screen, including behind another herdr tab (on a herdr server of its own) and in a tmux session nobody is attached to, against stand-in commands and a stand-in metrics service. Requirements and their tests are in `spec/`; see `docs/STYLE.md` for the colours, spacing and widgets the views share.
