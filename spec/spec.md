@@ -29,7 +29,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - The ambient view: a one-row band above the prompt in the classic terminal layout and docked panes in the fullscreen layout.
 - The detail views (Factory, Focus, Escalations, Relay, Team) and how a person opens, switches and closes them.
 - Features and scopes the ambient view can show, how an agent or the user selects them, and the automatic defaults taken from the relay.
-- The files under `~/.config/factory-panel/` that hold an agent's declaration and a user's choices.
+- The files under `~/.ix/factory-panel/` that hold an agent's declaration and a user's choices.
 - How the mod finds the factory's metrics endpoints.
 - The commands, help text and documentation a person uses to learn all of the above.
 

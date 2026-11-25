@@ -24,7 +24,7 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 - `/factory hosts <all|local>` SHALL set the hosts scope.
 - The mod SHALL reject a value that is not valid for a choice, name the valid values, and leave the choice unchanged.
 - The mod SHALL reject `/factory use` with no argument and name the valid modules.
-- The mod SHALL store a choice in `~/.config/factory-panel/choices/<key>.json`, using the key of [FR-011](./FR-011-feature-declaration.md).
+- The mod SHALL store a choice in `~/.ix/factory-panel/choices/<key>.json`, using the key of [FR-011](./FR-011-feature-declaration.md).
 - Where the key's choice file does not exist, the mod SHALL read `default.json` there.
 - `/factory reset` SHALL clear the user's choices for the session's key.
 - `/factory show` SHALL print each feature with its value and the source that decided it, being `user`, `declaration` or `default`.
