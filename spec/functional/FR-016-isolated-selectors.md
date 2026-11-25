@@ -38,8 +38,8 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - The mod SHALL classify any other non-zero exit with stderr text as a selector error.
 - Where a source error occurs, the mod SHALL make no further ix-board call in that refresh.
 - The mod SHALL run at most 4 ix-board processes at once per session, counted across every focus shown.
-- The mod SHALL give each ix-board call a timeout of 5 seconds.
-- The mod SHALL start the 30 second budget of a progress refresh when its first ix-board call begins, after the lookups of leads and definitions.
+- The mod SHALL give each ix-board call a timeout of 20 seconds.
+- The mod SHALL start the 60 second budget of a progress refresh when its first ix-board call begins, after the lookups of leads and definitions.
 - The mod SHALL end a progress refresh when that budget has passed.
 - The mod SHALL count each project still unanswered at the end of a refresh as failed with the error `timed out`.
 - The mod SHALL show the progress of every selector whose call succeeds.

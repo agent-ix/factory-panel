@@ -218,33 +218,92 @@ export async function bandLine(ui: Awaited<ReturnType<typeof drawBand>>): Promis
 
 // ---------------------------------------------------------------- ix-board and agent-msg focuses
 
+/** A project id for tests: a UUID made from a number, so ids are real in shape and distinct. */
+export const pid = (n: number | string): string => {
+  const hex = typeof n === 'number' ? n.toString(16) : [...n].reduce((h, c) => (Math.imul(h ^ c.charCodeAt(0), 0x01000193) >>> 0), 0x811c9dc5).toString(16)
+  return `00000000-0000-4000-8000-${hex.padStart(12, '0')}`
+}
+
+export type ProjectSpec = {
+  name: string
+  done: number
+  total: number
+  inProgress?: number
+  id?: string
+  /** `ready_queue` entries; null leaves the key out as an answer without it */
+  ready?: number | null
+  /** `blocker_layers` entries by classification; null leaves the key out */
+  layers?: { open: number; completed: number } | null
+  states?: { state: string; count: number }[]
+}
+
+const projectEntry = (p: ProjectSpec) => ({
+  id: p.id ?? pid(p.name),
+  identifier: p.id ?? pid(p.name),
+  in_progress: Array.from({ length: p.inProgress ?? 0 }, (_, i) => ({ id: `t${i}`, identifier: `QSL-${i}`, state: 'In Progress', title: 'a ticket' })),
+  membership: 'full_project',
+  milestones: [],
+  name: p.name,
+  open_by_state: p.states ?? [{ count: p.total - p.done, state: 'In Progress' }],
+  progress: { completed_percent: p.total === 0 ? 0 : (100 * p.done) / p.total, done: p.done, total: p.total },
+  target_date: null,
+  unmilestoned: { in_progress: [], open_by_state: [], progress: { done: p.done, total: p.total } },
+})
+
+const readyEntry = (project: string, i: number) => ({ identifier: `QSL-${100 + i}`, next_step: 'specify', project, reason: 'all recursive blockers are Completed', title: 'a ready ticket' })
+const layerEntry = (classification: string, i: number) => ({ classification, focus_root_ids: [], identifier: `QSL-${200 + i}`, state: classification === 'Completed' ? 'Done' : 'In Progress', title: 'a blocker' })
+
 /**
- * What `ix-board --json focus status` prints: the shape of a real answer (`projects` with `id`,
- * `identifier`, `progress`, `in_progress`, `membership`, `milestones`, `unmilestoned`, and `ready_queue`).
+ * What `ix-board --json focus status` prints: the keys of a real answer (`blocker_layers`, `excluded_ready_count`,
+ * `fetched_at`, `projects` with their `id`, `identifier`, `progress`, `open_by_state`, `in_progress`..., `ready_queue`,
+ * `work_milestones`). A project call holds one project and a ready queue of its own; an initiative call holds many.
  */
-export const statusJson = (projects: { name: string; done: number; total: number; inProgress?: number }[], ready = 0) =>
-  JSON.stringify({
-    blocker_layers: [],
+export const statusJson = (projects: ProjectSpec[], ready = 0) => {
+  const first = projects[0]
+  const layers = first?.layers === undefined ? [] : first.layers
+  const queue = projects.flatMap(p => (p.ready === null ? [] : Array.from({ length: p.ready ?? (projects.length === 1 ? ready : 0) }, (_, i) => readyEntry(p.name, i))))
+  const answer: Record<string, unknown> = {
     excluded_ready_count: 0,
     fetched_at: Math.floor(Date.UTC(2026, 10, 24, 11, 55) / 1000),
-    projects: projects.map((p, i) => ({
-      id: `00000000-0000-4000-8000-00000000000${i}`,
-      identifier: `00000000-0000-4000-8000-00000000000${i}`,
-      in_progress: Array.from({ length: p.inProgress ?? 0 }, () => ({})),
-      membership: 'partial_focus',
-      milestones: [],
-      name: p.name,
-      open_by_state: [],
-      progress: { completed_percent: p.total === 0 ? 0 : (100 * p.done) / p.total, done: p.done, total: p.total },
-      target_date: null,
-      unmilestoned: { in_progress: [], open_by_state: [], progress: { done: p.done, total: p.total } },
-    })),
-    ready_queue: Array.from({ length: ready }, () => ({})),
+    projects: projects.map(projectEntry),
     work_milestones: [],
+  }
+  if (!(projects.length === 1 && first?.ready === null)) answer.ready_queue = queue
+  if (layers !== null) answer.blocker_layers = [[...Array.from({ length: layers.open }, (_, i) => layerEntry('Open', i)), ...Array.from({ length: layers.completed }, (_, i) => layerEntry('Completed', layers.open + i))]]
+  return JSON.stringify(answer)
+}
+
+export type RoadmapSpec = { name: string; id?: string; projects: { name: string; id?: string; also_in?: string[] }[] }
+
+/** What `ix-board --json roadmap` prints: the envelope with `result.initiatives[].projects[]` (names, `also_in`, no ids unless given). */
+export const roadmapJson = (initiatives: RoadmapSpec[]) =>
+  JSON.stringify({
+    age_seconds: 0,
+    failure_reason: null,
+    last_full_reconciliation: 1795575673,
+    last_successful_sync: 1795576785,
+    rate_limit_until: null,
+    result: {
+      initiatives: initiatives.map(i => ({
+        health: null,
+        ...(i.id === undefined ? {} : { id: i.id }),
+        name: i.name,
+        projects: i.projects.map(p => ({ also_in: p.also_in ?? [], canceled: null, done: null, last_activity: null, ...(p.id === undefined ? {} : { id: p.id }), name: p.name, open: null, progress_percent: 50, progress_source: 'linear_native', status: 'Started' })),
+        status: 'Active',
+      })),
+      initiatives_without_projects: [],
+      missing_scope_initiatives: [],
+      missing_scope_projects: [],
+      project_membership_mismatches: [],
+      projects_in_multiple_initiatives: [],
+      projects_missing_from_scope: [],
+      unplaced_projects: [],
+    },
+    stale: false,
   })
 
-/** The error ix-board printed for the ticket that started 0.6.0. */
-export const BAD_MILESTONE = 'issue QSL-3215 references unavailable milestone m1 in project p1'
+/** The error ix-board prints for the dangling milestone (SWM-295), as captured for project a31003a8 and initiative 674ffba8. */
+export const BAD_MILESTONE = 'issue QSL-3236 references unavailable milestone 871dbc77-cb19-474d-bd13-4db7145e8ec8 in project a31003a8-790b-482e-b28d-78f1d26a1cbf'
 
 /** A row of `agent-msg focuses list --json` that decodes. */
 export const defRow = (focusId: string, name: string, team: string, state = 'active') => ({ focus_id: focusId, team, name, state, latest_revision: 1, owner_id: 'o1', owner_epoch: 1, owner_state: 'live' })
