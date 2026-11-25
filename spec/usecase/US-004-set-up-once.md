@@ -15,20 +15,20 @@ relationships:
 ## Story
 
 **As a** new user of the mod
-**I want** to answer one question about my role, once for each project, and to need no settings
-**So that** the view fits my work from then on without editing configuration.
+**I want** to need no settings and no questions
+**So that** the view fits my session from the relay without editing configuration.
 
 ## Context
 
-Roles differ per project, not per machine. The role can sometimes be read from the session's relay address, but not always. Metrics addresses were hard-coded to localhost, which was wrong on every factory host.
+The relay supplies the session identity; no question is asked. Metrics addresses were hard-coded to localhost, which was wrong on every factory host.
 
 ## Acceptance Examples (Illustrative)
 
-### US-004-EX-1: First `/factory` in a project
+### US-004-EX-1: First `/factory` in a session
 
-- **Given** the role cannot be detected and the user has not been asked in this project
+- **Given** the user has selected nothing for this session
 - **When** the user types `/factory`
-- **Then** the user is asked what they do in this session, and the answer is remembered for that project
+- **Then** the detail view opens and no question is asked
 
 ### US-004-EX-2: A host with no settings
 

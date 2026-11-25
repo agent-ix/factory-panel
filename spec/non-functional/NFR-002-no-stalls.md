@@ -23,8 +23,8 @@ The mod SHALL NOT show a dialog, ask a question or take the keyboard at session 
 
 ## Verification
 
-A test starts a session with no stored role and asserts that no question is asked and no pane is opened with the keyboard; the layout check confirms the prompt has the keyboard after start.
+A test starts a session with nothing selected and no relay answer and asserts that no question is asked and no pane is opened with the keyboard; the layout check confirms the prompt has the keyboard after start.
 
 ## Dependencies
 
-- **Upstream**: [FR-001](../functional/FR-001-ambient-view.md), [FR-005](../functional/FR-005-role-resolution.md)
+- **Upstream**: [FR-001](../functional/FR-001-ambient-view.md), [FR-005](../functional/FR-005-relay-identity.md)

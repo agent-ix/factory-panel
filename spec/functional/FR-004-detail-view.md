@@ -21,7 +21,7 @@ In the classic layout the mod SHALL open the detail as a popup above the prompt 
 - The mod SHALL open the popup with the keyboard and with close-on-Esc.
 - The mod SHALL leave the band visible while the popup is open, so the digits of [FR-009](./FR-009-band-cells.md) switch views.
 - The popup SHALL show the keys on screen: the band digits to switch, `r` to refresh and Esc to close.
-- In the fullscreen layout `/factory` SHALL focus the docked panel on the role's tab.
+- In the fullscreen layout `/factory` SHALL focus the docked panel on the tab that [FR-003](./FR-003-one-command.md) opens.
 - The mod SHALL NOT bind an arrow key to any action.
 
 ## Acceptance Criteria
