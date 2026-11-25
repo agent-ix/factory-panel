@@ -22,7 +22,7 @@ The mod SHALL decide each feature from the highest source that selects it.
 - The mod SHALL decide each feature separately.
 - The automatic defaults SHALL take identity, team, focus and status from `agent-msg whoami` and `agent-msg work`.
 - In the default view the focus module SHALL draw the summary and progress of the shown focus.
-- In the default view the lead module SHALL draw the status of the shown focus's lead, derived from the `agents` of its `agent-msg work` report: failed when any agent failed, else running when any is running, else waiting when any is waiting, else done when any is done, else unknown.
+- In the default view the lead module SHALL draw the status of the shown focus's lead, derived from the `agents` of its `agent-msg work` report: failed when any agent failed, else running when any is running, else waiting when any is waiting, else done when any is done, else unknown, an approximation derived from the lead's stage agents.
 - Where ix-board reports a status for the same lead, the lead module SHALL draw that status instead.
 - The mod SHALL NOT ask a question at session start or at a plain `/factory`.
 - Where `agent-msg whoami` fails, the automatic defaults SHALL apply the unknown-session scope of [FR-013](./FR-013-scoping.md).

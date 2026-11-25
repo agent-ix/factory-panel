@@ -27,7 +27,6 @@ const focusView = (address: string, summary: string, over: Partial<FocusView> = 
   address,
   machine: address.split(':')[0]!,
   kind: 'claude',
-  model: null,
   summary,
   status: 'working',
   scope: { initiatives: 0, projects: 1, tickets: 0 },
@@ -762,7 +761,6 @@ function snapshotOf() {
 // ---------------------------------------------------------------- review follow-ups
 
 test('a declaration that changes the focus scope re-reads the leads at the next refresh', async ($, on) => {
-  trace("FR-013-AC-2")
   const w = world(on, true)
   w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4'))
   w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2'))
@@ -781,7 +779,7 @@ test('a declaration that changes the focus scope re-reads the leads at the next 
   expect(await focusText()).toMatch(/\+1$/)
 })
 
-test('a malformed declaration is noted for the first band drawn, not consumed by a layout without one or by a command', async ($, on) => {
+test('a malformed declaration is noted on every draw of the first band until the next refresh, and not consumed by a layout without a band or by a command', async ($, on) => {
   trace("FR-011-AC-7")
   const w = world(on, true)
   feature(w, '{ not json')
@@ -793,9 +791,14 @@ test('a malformed declaration is noted for the first band drawn, not consumed by
   const ui = await drawBand($, CLASSIC)
   expect(await bandLine(ui)).toMatch(/not valid JSON/)
   await ui.unmount()
+  // It stays on every draw until the next refresh, and that refresh counts it as shown.
   const again = await drawBand($, CLASSIC)
-  expect(await bandLine(again)).toBeUndefined()
+  expect(await bandLine(again)).toMatch(/not valid JSON/)
   await again.unmount()
+  await w.clock!.advance(15_000)
+  const later = await drawBand($, CLASSIC)
+  expect(await bandLine(later)).toBeUndefined()
+  await later.unmount()
 })
 
 test('a malformed key declaration or choice file is treated as if it did not exist, so default.json is read', async () => {

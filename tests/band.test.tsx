@@ -28,7 +28,6 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
       address: 'hub:QSL:code',
       machine: 'draco',
       kind: 'claude',
-      model: null,
       summary: 'QSL layer 4',
       status: 'working',
       scope: { initiatives: 0, projects: 2, tickets: 0 },

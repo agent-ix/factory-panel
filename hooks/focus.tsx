@@ -96,8 +96,6 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport, man
     address: report.binding?.address ?? lead,
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
-    // The work report carries no model; the pane shows the harness kind.
-    model: null,
     summary: report.focus?.summary ?? '',
     status: statusOf(report.agents),
     scope: {
@@ -304,7 +302,7 @@ export function registerFocus(on: On, _options: Options): void {
 
           <Box flexDirection="row" justifyContent="space-between">
             <Text dimColor size="caption">
-              {modelName(f.model) ?? f.kind}
+              {f.kind}
             </Text>
             <Text dimColor size="caption" tabular>
               {[
@@ -378,14 +376,3 @@ export function registerFocus(on: On, _options: Options): void {
 
 /** An age without the "ago": 19h, 6m. */
 const age = (at: number, now: number): string => ago(at, now).replace(/ ago$/, '')
-
-/** A model id as people say it: claude-opus-5-5 → Opus 5.5, gpt-6.1-sol → GPT-6.1 Sol. */
-export const modelName = (id: string | null): string | null => {
-  if (!id) return null
-  const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1)
-  const claude = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
-  if (claude) return `${cap(claude[1] ?? '')} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
-  const gpt = /^gpt-([\d.]+)(?:-(.+))?$/.exec(id)
-  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map(cap).join(' ')}` : ''}`
-  return id
-}

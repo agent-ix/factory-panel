@@ -84,8 +84,6 @@ export type FocusView = {
   address: string
   machine: string
   kind: string
-  /** The model, when a source reports one; the work report does not, so it is null. */
-  model: string | null
   summary: string
   /** Derived from the agents of the lead's work report: failed, running, waiting, done or unknown. */
   status: string

@@ -148,7 +148,7 @@ const pendingSelection = (): Selection => decide({ status: 'pending' }, {}, {}, 
 let current: Selection = pendingSelection()
 let homeDir: string | undefined
 /** The note found by the latest refresh that no band has drawn yet, with the content it was found for. */
-let pendingNote: { key: string; text: string } | undefined
+let pendingNote: { key: string; text: string; drawn: boolean } | undefined
 /** The content of the last note a band drew, so an unchanged file does not repeat it. */
 let shownNoteKey = ''
 let ready: Promise<void> = Promise.resolve()
@@ -157,15 +157,14 @@ let lookup: Promise<void> | undefined
 
 export const getSelection = (): Selection => current
 /**
- * The note a band that is being drawn now shows, once: taking it marks that content as shown. A
- * refresh never clears a note nobody has drawn, and a layout without a band never takes it.
+ * The note a band that is being drawn now shows. It stays on every draw until the next refresh;
+ * a draw marks it drawn, and the refresh after that counts the content as shown. A refresh never
+ * clears a note nobody has drawn, and a layout without a band never draws it.
  */
 export function takeBandNote(): string | undefined {
-  const note = pendingNote
-  if (note === undefined) return undefined
-  shownNoteKey = note.key
-  pendingNote = undefined
-  return note.text
+  if (pendingNote === undefined) return undefined
+  pendingNote.drawn = true
+  return pendingNote.text
 }
 /** Resolves once the first identity lookup has answered or given up. */
 export const selectionReady = (): Promise<void> => ready
@@ -261,7 +260,8 @@ async function readSelection($: EngineInterface): Promise<Selection> {
     const notes = [...decl.notes, ...choice.parsed.notes]
     // A note is kept for the next band that is drawn, unless that content has already been shown.
     const noteKey = notes.length === 0 ? '' : `${declared.raw}\u0000${choice.raw}\u0000${notes.join('\n')}`
-    pendingNote = notes.length > 0 && noteKey !== shownNoteKey ? { key: noteKey, text: notes.join(' · ') } : undefined
+    if (pendingNote?.drawn === true) shownNoteKey = pendingNote.key
+    pendingNote = notes.length > 0 && noteKey !== shownNoteKey ? { key: noteKey, text: notes.join(' · '), drawn: false } : undefined
     if (notes.length === 0) shownNoteKey = ''
     current = decide(identity, choice.parsed.picked, decl.picked, notes, choice.any)
   } catch (error) {
