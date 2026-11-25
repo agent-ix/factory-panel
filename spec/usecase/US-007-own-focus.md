@@ -7,6 +7,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-013"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-005"
+    type: traces_to
 ---
 # US-007: See only my own focus
 

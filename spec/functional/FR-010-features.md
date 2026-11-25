@@ -7,29 +7,32 @@ relationships:
     type: implements
   - target: "ix://agent-ix/factory-panel/US-008"
     type: implements
+  - target: "ix://agent-ix/factory-panel/FR-014"
+    type: traces_to
 ---
 # FR-010: Features
 
 ## Description
 
-The mod SHALL expose the things it can show as features that can be selected independently.
+The mod SHALL expose what it can show as features that a skill, an agent or the user can select independently.
 
 ## Behavior
 
-- The mod SHALL offer the modules health, local, focus, queue, lead, lanes, attention, relay, team, agents and spend as selectable features.
-- The mod SHALL offer the scope choices hosts (all or this machine), focus (own, own and team, or a named focus) and teams (a list) as selectable features.
+- The mod SHALL offer each module in the module-to-view table of [FR-009](./FR-009-band-cells.md) as a selectable feature.
+- The mod SHALL offer the hosts scope (`all` or `local`), the focus scope (`own`, `team` or a focus name) and the `teams` list as selectable features.
 - The mod SHALL NOT use a role to decide what is displayed.
-- When no feature has been selected by anyone, the mod SHALL show the fallback modules local, focus, lead and lanes.
+- Where no feature has been selected by the user or by a declaration, the mod SHALL show the fallback modules of [FR-002](./FR-002-fallback-defaults.md).
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-010-AC-1 | Given each of the eleven module names selected, the band draws that module. | Test |
-| FR-010-AC-2 | Given a relay address that names a coordinator and nothing selected, the band shows the fallback modules, not a coordinator set. | Test |
-| FR-010-AC-3 | Given nothing selected and no relay answer, the band shows local, focus, lead and lanes. | Test |
-| FR-010-AC-4 | The source of the mod contains no role-to-module table that decides the display. | Inspection |
+| FR-010-AC-1 | Given each module of the FR-009 table selected in turn, the band draws that module's cell. | Test |
+| FR-010-AC-2 | Given the relay address `host1:ENG:arch` and nothing selected, the band shows the fallback modules and no other. | Test |
+| FR-010-AC-3 | Given nothing selected and `agent-msg whoami` failing, the band shows the fallback modules. | Test |
+| FR-010-AC-4 | The files `hooks/role.ts` and `hooks/band/roles.ts` do not exist, and `grep -rn "PRESETS" hooks/` finds nothing. | Inspection |
 
 ## Dependencies
 
 - **Upstream**: [US-009](../usecase/US-009-select-features.md), [US-008](../usecase/US-008-coordinator-teams.md)
+- **See also**: [FR-014](FR-014-user-choice.md)

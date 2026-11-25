@@ -18,25 +18,25 @@ relationships:
 
 ## Story
 
-**As a** program coordinator, code lead or planner working in a Claude Code session
+**As a** person who leads part of the factory, working in a Claude Code session
 **I want** the state of what I am responsible for to be in view the moment I start, without typing anything
 **So that** I notice trouble and see progress while I work, and I never have to remember a command to find out.
 
 ## Context
 
-Leaders keep a Claude Code pane open all day while the factory runs elsewhere. Today they have to open a panel to learn anything, and the panel only exists in one layout. What each role needs differs: a coordinator watches every host; a code lead cares about this machine and one project.
+Leaders keep a Claude Code pane open all day while the factory runs elsewhere. Today they have to open a panel to learn anything, and the panel only exists in one layout. What each person needs differs: someone who coordinates watches every host; a lead of one project cares about this machine and that project.
 
 ## Acceptance Examples (Illustrative)
 
-### US-001-EX-1: A code lead starts a session
+### US-001-EX-1: A lead starts a session
 
-- **Given** a code lead starts Claude Code in the classic layout
+- **Given** a lead of one project starts Claude Code in the classic layout
 - **When** the session opens
 - **Then** a line above the prompt already shows this machine's load, the project's progress and their orchestrator, with no command typed
 
-### US-001-EX-2: A coordinator starts a session
+### US-001-EX-2: Hosts after a skill selects them
 
-- **Given** a program coordinator starts Claude Code in the fullscreen layout
+- **Given** a skill has selected hosts `all` and the user starts Claude Code in the fullscreen layout
 - **When** the session opens
 - **Then** the panel is already docked at the right and shows the hosts
 

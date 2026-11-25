@@ -18,21 +18,22 @@ The mod SHALL decide each feature from the highest source that selects it.
 
 ## Behavior
 
-- The order of sources SHALL be the user's choice (a `/factory` choice or a plugin setting), then the agent's declaration file, then the automatic defaults.
-- The mod SHALL decide each feature separately, so that a user's choice of modules leaves the declaration's focus scope in effect.
-- The automatic defaults SHALL use the relay's `agent-msg whoami` and `agent-msg work` for identity, team, focus and status, and show relay status without any selection.
-- The mod SHALL NOT ask any question at session start or at a plain `/factory`.
-- When the relay cannot be read, the automatic defaults SHALL use the fallback modules and the scope rules of FR-013 for an unknown session.
+- The order of sources SHALL be the user's choice ([FR-014](./FR-014-user-choice.md)), then the declaration file ([FR-011](./FR-011-feature-declaration.md)), then the automatic defaults.
+- The mod SHALL decide each feature separately.
+- The automatic defaults SHALL take identity, team, focus and status from `agent-msg whoami` and `agent-msg work`.
+- In the default view the focus and lead modules SHALL draw the relay status of the shown focus.
+- The mod SHALL NOT ask a question at session start or at a plain `/factory`.
+- Where `agent-msg whoami` fails, the automatic defaults SHALL apply the unknown-session scope of [FR-013](./FR-013-scoping.md).
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-012-AC-1 | Given a user's choice of modules and a declaration naming other modules, the band shows the user's modules. | Test |
-| FR-012-AC-2 | Given a user's choice of modules and a declaration naming a focus scope, the band shows the user's modules at the declared scope. | Test |
-| FR-012-AC-3 | Given a declaration and the relay naming a different team, the declaration decides the teams. | Test |
-| FR-012-AC-4 | Given no choice and no declaration, the band shows relay status for this session without a prompt. | Test |
-| FR-012-AC-5 | A plain `/factory` in a directory with nothing selected asks no question. | Test |
+| FR-012-AC-1 | Given a user choice of modules and a declaration naming other modules, the band shows the user's modules. | Test |
+| FR-012-AC-2 | Given a user choice of modules and a declaration naming a focus scope, the band shows the user's modules at the declared scope. | Test |
+| FR-012-AC-3 | Given a declaration with `teams` of ENG and the relay address `host1:QSL:code`, lanes shows team ENG. | Test |
+| FR-012-AC-4 | Given nothing selected and the relay address `host1:QSL:code` with status from `agent-msg work`, the focus and lead cells show that status. | Test |
+| FR-012-AC-5 | A plain `/factory` in a session with nothing selected asks no question. | Test |
 
 ## Dependencies
 

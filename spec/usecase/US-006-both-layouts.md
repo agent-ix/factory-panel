@@ -30,7 +30,7 @@ Fullscreen docks panes and captures the mouse. Classic has neither. A command th
 
 - **Given** a leader in either layout
 - **When** they type `/factory`
-- **Then** they get the detail view for their role, seated the way that layout allows
+- **Then** they get the detail view, seated the way that layout allows
 
 ### US-006-EX-2: Help matches the screen
 

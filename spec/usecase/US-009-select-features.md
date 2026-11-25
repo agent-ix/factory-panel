@@ -14,18 +14,18 @@ relationships:
 
 ## Story
 
-**As a** author of an agent skill for a team role
-**I want** the skill's instructions to make the agent select the mod's features that the role cares about
-**So that** the role's view is defined with the role, and the mod needs no change when a role is added or altered.
+**As a** author of an agent skill
+**I want** the skill's instructions to make the agent select the mod's features that the skill's work needs
+**So that** the view is defined with the skill, and the mod needs no change when a skill is added or altered.
 
 ## Context
 
-The mod has features and no notion of role. A skill tells the agent which features to select (for example hosts for all machines, a focus scope, the attention module). The agent sets them; the mod only reads them.
+The mod has features and no notion of role; the mod never reads a skill's name. A skill tells the agent which features to select (for example hosts for all machines, a focus scope, the attention module). The agent sets them; the mod only reads them.
 
 ## Acceptance Examples (Illustrative)
 
-### US-009-EX-1: A new role
+### US-009-EX-1: A new skill
 
-- **Given** a skill for a new role that tells the agent to select the queue and lanes features
+- **Given** a new skill that tells the agent to select the queue and lanes features
 - **When** a session runs that skill
 - **Then** the band shows the queue and lanes modules, with no mod release

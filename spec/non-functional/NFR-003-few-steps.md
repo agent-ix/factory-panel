@@ -15,7 +15,7 @@ relationships:
 
 ## Statement
 
-The mod SHALL let a person open a detail view, switch to another and close it in at most two typed commands or key presses each, once the ambient view is on screen. The one-time role question is a setup step and is not counted.
+The mod SHALL let a person open a detail view, switch to another and close it in at most two typed commands or key presses each, once the ambient view is on screen.
 
 ## Measurement and Evaluation
 

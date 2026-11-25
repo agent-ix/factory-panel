@@ -20,7 +20,7 @@ security_critical: false
 
 ## 1. Purpose
 
-factory-panel is a Claude Code mod that keeps the state of an Agent IX factory in view of the people who lead it, while they work in a Claude Code session. A program coordinator, a code lead or a planner sees what is wrong and how far their project has come without leaving the chat, and opens more detail with one command.
+factory-panel is a Claude Code mod that keeps the state of an Agent IX factory in view of the people who lead it, while they work in a Claude Code session. A person who coordinates the factory, a code lead or a planner sees what is wrong and how far their project has come without leaving the chat, and opens more detail with one command.
 
 ## 2. Scope
 
@@ -29,6 +29,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - The ambient view: a one-row band above the prompt in the classic terminal layout and docked panes in the fullscreen layout.
 - The detail views (Factory, Focus, Escalations, Relay, Team) and how a person opens, switches and closes them.
 - Features and scopes the ambient view can show, how an agent or the user selects them, and the automatic defaults taken from the relay.
+- The files under `~/.config/factory-panel/` that hold an agent's declaration and a user's choices.
 - How the mod finds the factory's metrics endpoints.
 - The commands, help text and documentation a person uses to learn all of the above.
 
@@ -49,9 +50,11 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 
 ### 3.1 Users
 
-- **Program coordinator** (a skill that selects all hosts and team grouping): watches the whole factory (hosts, programs, escalations).
-- **Code lead**: owns one project or a few; cares about this machine's load, the project's progress, their orchestrator and their coders.
-- **Planner**: shapes and orders work; cares about progress, the ready queue and blockers.
+Users are described by what they look at, not by a role in the mod; a skill or the user selects the features that fit.
+
+- **Someone who coordinates**: watches the whole factory (all hosts, the teams and their leads, escalations).
+- **Someone who leads one project**: watches this machine, their own focus and their lanes.
+- **Someone who plans**: watches progress, the ready queue and blockers of their own focus.
 
 ### 3.2 Layouts and how a person engages
 
@@ -114,7 +117,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 
 ## 5. Verification
 
-Every acceptance criterion is verified by an automated test (`claude plugin test`) or by a demonstration in a real session of each layout (`tests/e2e/layouts.mjs`, driven through `tmux`). Tests bind to a criterion by carrying its id as a trace tag.
+Every acceptance criterion is verified by an automated test (`claude plugin test`), by inspection of the plugin source where the criterion says so, or by a demonstration in a real session of each layout (`tests/e2e/layouts.mjs`, driven through `tmux`). Tests bind to a criterion by carrying its id as a trace tag.
 
 ## 6. References
 

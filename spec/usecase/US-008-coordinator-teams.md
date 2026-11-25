@@ -7,6 +7,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/factory-panel/FR-011"
     type: traces_to
+  - target: "ix://agent-ix/factory-panel/FR-010"
+    type: traces_to
 ---
 # US-008: See the teams under me
 

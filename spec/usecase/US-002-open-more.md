@@ -19,7 +19,7 @@ relationships:
 ## Story
 
 **As a** leader who saw something in the ambient view
-**I want** one command that opens the detail for my role
+**I want** one command that opens the detail view
 **So that** I can look closer without knowing which of several commands or settings to use.
 
 ## Context
@@ -32,7 +32,7 @@ The mod used to offer `/band`, `/factory`, `/focuses`, `/escalations`, `/relay` 
 
 - **Given** the band shows a project bar and a machine's load
 - **When** the leader types `/factory`
-- **Then** a view opens on the tab their role looks at first, holds the keyboard, and says how to close it
+- **Then** a view opens on the tab `/factory` opens by default, holds the keyboard, and says how to close it
 
 ### US-002-EX-2: Jump to a specific view
 

@@ -20,13 +20,13 @@ relationships:
 
 ## Context
 
-The relay supplies the session identity; no role is asked for. Metrics addresses were hard-coded to localhost, which was wrong on every factory host.
+The relay supplies the session identity; no question is asked. Metrics addresses were hard-coded to localhost, which was wrong on every factory host.
 
 ## Acceptance Examples (Illustrative)
 
-### US-004-EX-1: First `/factory` in a project
+### US-004-EX-1: First `/factory` in a session
 
-- **Given** the user has selected nothing in this project
+- **Given** the user has selected nothing for this session
 - **When** the user types `/factory`
 - **Then** the detail view opens and no question is asked
 
