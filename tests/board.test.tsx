@@ -480,7 +480,7 @@ test('an authentication failure is one ix-board error and no further call', asyn
 })
 
 test('a Linear rate limit is one ix-board error, makes no further call, and no call is made for its 60 seconds', async ($, on) => {
-  trace("FR-026-AC-6", "FR-016-AC-13")
+  trace("FR-026-AC-6")
   const w = world(on, true)
   const b = ix(w, { projects: Object.fromEntries(['A', 'B', 'C', 'D', 'E', 'F'].map(r => [r, 'Linear rate limited; retry in 60s'])) })
   const sels = ['A', 'B', 'C', 'D', 'E', 'F'].map(proj)
