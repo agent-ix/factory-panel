@@ -38,7 +38,7 @@
     },
     "refreshSeconds": {
       "type": "number",
-      "description": "How often Prometheus and herdr are polled",
+      "description": "How often Prometheus is polled while a view that draws it is on screen",
       "default": 15,
       "title": "Refresh interval (seconds)"
     },
