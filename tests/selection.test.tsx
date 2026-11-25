@@ -23,6 +23,7 @@ const run = (w: World, args: string, full = false) => runFactory(fake$(w) as nev
 const written = (w: World, kind: 'features' | 'choices', key = KEY): unknown => JSON.parse(w.files.get(`${FP}/${kind}/${key}.json`) ?? 'null')
 const hasNoMark = (text: string) => !/\[(user|declaration|default)\]/.test(text)
 
+const row = (name: string, done: number, total: number, inProgress: number) => ({ key: `project:${name}`, ref: name, id: name, name, failed: false, done, total, inProgress, ready: 0, blocked: 0, at: null, old: false, stages: null })
 const focusView = (address: string, summary: string, over: Partial<FocusView> = {}): FocusView => ({
   address,
   machine: address.split(':')[0]!,
@@ -32,14 +33,12 @@ const focusView = (address: string, summary: string, over: Partial<FocusView> = 
   scope: { initiatives: 0, projects: 1, tickets: 0 },
   focusReportedAt: null,
   fetchedAt: null,
-  projects: [{ name: 'ledger', done: 5, total: 10, inProgress: 2, ready: 0, at: null, old: false, error: null }],
-  ready: 4,
-  error: null,
+  initiatives: [],
+  loose: [row('ledger', 5, 10, 2)],
+  header: { done: 5, total: 10, inProgress: 2, remaining: 5, ready: 4, blocked: 0, stages: [], counted: 1, enumerated: 1, notExpanded: 0, partial: false, oldestAt: null, complete: false },
+  warnings: [],
   title: null,
   via: null,
-  failures: [],
-  counts: null,
-  partial: false,
   notes: [],
   ...over,
 })
