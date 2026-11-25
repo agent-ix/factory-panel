@@ -33,8 +33,8 @@ The mod SHALL answer four questions in its help text and its README, in the word
 | FR-008-AC-2 | In the classic layout the help names the band digits, and in the fullscreen layout it names the docked panel and its tabs. | Test |
 | FR-008-AC-3 | The README has the sections of the Behavior list in that order. | Inspection |
 | FR-008-AC-4 | Every `/command` and every setting the README names is registered by the plugin. | Test |
-| FR-008-AC-6 | `/factory help` contains the declaration snippet and the choice commands. | Test |
 | FR-008-AC-5 | Given only the README and `/factory help`, a first-time user completes US-002, US-003 and US-010 in a real session. | Demonstration |
+| FR-008-AC-6 | `/factory help` contains the declaration snippet and the choice commands. | Test |
 
 ## Dependencies
 
