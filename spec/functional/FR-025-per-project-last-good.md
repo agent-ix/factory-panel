@@ -59,7 +59,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 | FR-025-AC-11 | Given a refresh cut short by a source error, polls in the next 5 minutes make no call and show the earlier outcome, the first poll after asks again, and a manual refresh asks at once. | Test |
 | FR-025-AC-12 | Given a gated read that fails outright, it is not made again for 5 minutes and its error is answered meanwhile. | Test |
 | FR-025-AC-13 | Given a gated read that succeeded, no session makes it again for 30 minutes, and the first after that does. | Test |
-| FR-025-AC-14 | Refreshes that keep ending in an inferred source error are called again after 5, 10, 20, 30 and 30 minutes, a manual refresh calls once 60 seconds have passed and not before, and the first such error after a refresh with none is held 5 minutes. | Test |
+| FR-025-AC-14 | Refreshes that keep ending in an inferred source error are called again after 5, 10, 20, 30 and 30 minutes, a manual refresh calls once 60 seconds have passed and not before, and the first such error after a refresh kept for the full interval is held 5 minutes. | Test |
 
 ## Superseded in 0.7.1
 
