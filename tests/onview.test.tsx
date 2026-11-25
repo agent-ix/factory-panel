@@ -95,6 +95,8 @@ test('tmux says off view for a session nobody is attached to, a window not viewe
   expect(tmuxOnView('1 0 0 [0]\n')).toBe(true)
   expect(tmuxOnView('1 1 1 [0]\n')).toBe(true)
   expect(tmuxOnView('2 0 1 [00]\n')).toBe(true)
+  // Two clients attached, one of them on another window (tmux 3.7's own answer): one viewer is enough.
+  expect(tmuxOnView('1 0 1 [00]\n')).toBe(true)
 })
 
 for (const [name, env, hide] of [
