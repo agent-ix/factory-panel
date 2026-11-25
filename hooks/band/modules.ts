@@ -138,11 +138,13 @@ export const scopeNotes = (s: Snapshot): string[] => {
   return notes
 }
 
-const progressOf = (f: FocusView): { done: number; total: number; inProgress: number } =>
-  f.projects.reduce(
-    (a, p) => ({ done: a.done + p.done, total: a.total + p.total, inProgress: a.inProgress + p.inProgress }),
-    { done: 0, total: 0, inProgress: 0 },
-  )
+const progressOf = (f: FocusView): { done: number; total: number; inProgress: number } => ({ done: f.header?.done ?? 0, total: f.header?.total ?? 0, inProgress: f.header?.inProgress ?? 0 })
+
+/** The one project a focus is made of, when it is one. */
+const onlyProject = (f: FocusView) => {
+  const all = [...f.initiatives.flatMap(i => i.projects), ...f.loose]
+  return f.initiatives.length === 0 && all.length === 1 ? all[0] : undefined
+}
 
 const health = (s: Snapshot): Cell | null => {
   const machines = hostsOf(s)
@@ -179,22 +181,22 @@ const focus = (s: Snapshot): Cell | null => {
   if (f === undefined) return null
   const { done, total } = progressOf(f)
   const share = total > 0 ? done / total : null
-  const label = f.projects.length === 1 ? (f.projects[0]?.name ?? f.address) : f.summary || f.address
+  const label = onlyProject(f)?.name ?? (f.summary || f.address)
   const parts: Part[] = [
     { text: `${fit(label, 18)} `, bold: true },
     { text: cellBar(share, 8), tone: 'claude' },
-    { text: share === null ? ' —' : f.partial ? ` ~${Math.min(99, Math.round(share * 100))}%` : ` ${Math.round(share * 100)}%` },
+    { text: share === null ? ' —' : f.header !== null && (f.header.partial || f.header.oldestAt !== null || f.header.notExpanded > 0) ? ` ~${Math.min(99, Math.round(share * 100))}%` : ` ${Math.round(share * 100)}%` },
   ]
   const count = scoped(s).length
   if (count > 1) parts.push({ text: ` +${count - 1}`, dim: true })
-  return { id: 'focus', pane: 'focus', parts, alert: f.error ?? undefined }
+  return { id: 'focus', pane: 'focus', parts, alert: f.warnings.find(w => w.kind === 'source')?.text }
 }
 
 const queue = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
   if (f === undefined) return null
   const { inProgress } = progressOf(f)
-  return { id: 'queue', pane: 'focus', parts: [{ text: `${f.ready} ready`, tone: f.ready > 0 ? 'warning' : undefined }, { text: ` · ${inProgress} doing`, dim: true }] }
+  return { id: 'queue', pane: 'focus', parts: [{ text: `${f.header?.ready ?? 0} ready`, tone: (f.header?.ready ?? 0) > 0 ? 'warning' : undefined }, { text: ` · ${inProgress} doing`, dim: true }] }
 }
 
 /** A lead's status from the agents of its work report: failed, else running, else waiting, else done, else unknown. */

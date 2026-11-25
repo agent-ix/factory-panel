@@ -46,17 +46,16 @@ export function lead(w: World, scope: { initiatives?: string[]; projects?: strin
   w.leads.set(LEAD, report(LEAD, summary, ['running'], scope))
 }
 
-/** One `ix-board` stub: `combined` answers the call over every selector, `single` the call for one. */
-export function board(w: World, answers: { combined: (args: string[], init?: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>>; single?: (args: string[], init: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>> }) {
+/** One `ix-board` stub: `combined` answers every `focus status` call (each is one project's), by its arguments after `focus status`. */
+export function board(w: World, answers: { combined: (args: string[], init?: { timeoutMs?: number } | undefined) => ReturnType<typeof out> | Promise<ReturnType<typeof out>> }) {
   const state = { inflight: 0, max: 0 }
   const prior = w.stub.value
   w.stub.value = (argv, init) => {
     if (argv[0] !== 'ix-board' || argv[2] !== 'focus') return prior?.(argv, init)
     const args = argv.slice(4)
-    const run = args.length > 2 ? answers.combined : (answers.single ?? answers.combined)
     state.inflight++
     state.max = Math.max(state.max, state.inflight)
-    return Promise.resolve(run(args, init)).finally(() => void state.inflight--)
+    return Promise.resolve(answers.combined(args, init)).finally(() => void state.inflight--)
   }
   return state
 }
@@ -94,3 +93,16 @@ export function named(w: World, list: () => ReturnType<typeof out> | Promise<Ret
 
 /** Sets the choice the session would hold: `/factory focus <name>` written to its choice file. */
 export const choose = (w: World, focus: string, key = 'draco_QSL_code') => void w.files.set(`${FP}/choices/${key}.json`, JSON.stringify({ focus }))
+
+/**
+ * Every line the Focus view and its explanations give: the pane body, the footer warning expansion (opened when the
+ * icon is drawn) and the lines of `/factory show`. The body alone is `paneLines`.
+ */
+export async function pageLines($: Parameters<TestBody>[0]): Promise<string[]> {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  if ((await ui.find({ type: 'Button', key: 'warnings-toggle' })) !== undefined) await ui.press({ key: 'warnings-toggle' })
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  await ui.unmount()
+  const shown = ((await $.command.run({ command: 'factory', args: 'show' } as never)).text as string).split('\n').map(l => l.trim())
+  return [...lines, ...shown]
+}

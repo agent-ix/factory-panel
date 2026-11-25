@@ -17,19 +17,24 @@ The mod SHALL draw each initiative with its projects indented beneath it, each w
 ## Behavior
 
 - The mod SHALL draw an initiative row followed by one indented row per child project.
-- A project row SHALL show its bar and `done/total`.
-- A project row SHALL show Remaining as `total - done`.
-- A project row SHALL show Ready as the count of `ready_queue` entries of that project's own call.
-- A project row SHALL show Blocked as the count of entries not classified `Completed` in `blocker_layers` of that call.
+- A project row SHALL show its name, its bar and `done/total` and no other text.
+- An initiative row SHALL show its name, its bar and the sum of `done/total` over its counted projects and no other text.
+- The mod SHALL give every top-level row a bar starting at one column and every child row a bar starting at a second column, the indent to the right of the first, both ending at the same right edge.
+- The mod SHALL right-align the `done/total` counts in one column as wide as the widest count.
+- The mod SHALL draw the overall bar over the whole card width on one row with its `done/total` at the right edge, and the legend on its own row below.
+- The mod SHALL put Remaining, Ready and Blocked of each project and of each initiative in the footer warning expansion of [FR-024](./FR-024-warning-icon-in-footer.md) and in `/factory show`, not in the card body.
+- The mod SHALL compute Remaining as `total - done`.
+- The mod SHALL compute Ready as the count of `ready_queue` entries of that project's own call.
+- The mod SHALL compute Blocked as the count of entries not classified `Completed` in `blocker_layers` of that call.
 - The mod SHALL show `-` for Ready or Blocked only where its key is absent from the answer.
 - The mod SHALL show `0` for Ready or Blocked where its key is present and empty.
-- An initiative row SHALL show Remaining, Ready and Blocked as the sums over its counted projects.
+- The mod SHALL compute an initiative's Remaining, Ready and Blocked as the sums over its counted projects.
 - The mod SHALL let the user collapse and expand an initiative, using the existing `focusCollapsed` state.
 - The mod SHALL key `focusCollapsed` by initiative id where the id is known, and by initiative name otherwise.
 - The mod SHALL show a collapsed initiative row with its roll-up and no child rows.
 - The mod SHALL hide completed projects, those with `done` equal to `total`, unless the existing `focusShowDone` state is set.
-- Where hiding completed projects leaves an initiative with no child row, the mod SHALL still draw the initiative row with `all projects done`.
-- A failed project row SHALL carry only a short mark and the project name, with no error text.
+- Where hiding completed projects leaves an initiative with no child row, the mod SHALL still draw the initiative row.
+- A failed project row SHALL carry the project name, an empty dim bar and `—` in place of the counts, with no error text.
 - The mod SHALL leave every error text out of the card body, the error being in the footer warning expansion and in `/factory show`.
 - The mod SHALL list a project in several selected initiatives under each of them.
 
@@ -37,13 +42,13 @@ The mod SHALL draw each initiative with its projects indented beneath it, each w
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-023-AC-1 | For initiative A with projects P1 and P2, the card draws A, then P1 and P2 indented, and each row has a bar and `done/total`. | Test |
-| FR-023-AC-2 | A project with done 10, total 25, 3 `ready_queue` entries and blocker layers holding 4 entries of which 1 is `Completed` shows Remaining 15, Ready 3 and Blocked 3. | Test |
-| FR-023-AC-3 | A project whose answer has an empty `ready_queue` shows Ready `0`, and one whose answer lacks `ready_queue` shows `-`. | Test |
+| FR-023-AC-1 | For initiative A with projects P1 and P2, the card draws A, then P1 and P2 indented, and each row has a bar and `done/total`; top-level bars share one start column and child bars share a second, later one, and the overall bar and its total share one row. | Test |
+| FR-023-AC-2 | A project with done 10, total 25, 3 `ready_queue` entries and blocker layers holding 4 entries of which 1 is `Completed` has no Remaining, Ready or Blocked text in the card body, and the footer warning expansion shows Remaining 15, Ready 3 and Blocked 3 for it. | Test |
+| FR-023-AC-3 | In the footer warning expansion a project whose answer has an empty `ready_queue` shows Ready `0`, and one whose answer lacks `ready_queue` shows `-`. | Test |
 | FR-023-AC-4 | Collapsing A draws A's row and roll-up without P1 and P2, expanding restores them, and the collapsed state is held under A's id, or A's name where no id is known. | Test |
 | FR-023-AC-5 | With P1 complete and `focusShowDone` unset, P1 is hidden, and with it set P1 is drawn. | Test |
-| FR-023-AC-6 | With every project of A complete and hidden, A is drawn with `all projects done`. | Test |
-| FR-023-AC-7 | A failed project P2 shows a short mark and its name and no error text, and its error is in the footer warning expansion and in `/factory show`. | Test |
+| FR-023-AC-6 | With every project of A complete and hidden, A is drawn as its own row with no child row. | Test |
+| FR-023-AC-7 | A failed project P2 shows its name, an empty bar and `—` and no error text, and its error is in the footer warning expansion and in `/factory show`. | Test |
 | FR-023-AC-8 | A project under A and B is drawn under both. | Test |
 
 ## Dependencies

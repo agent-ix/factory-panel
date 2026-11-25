@@ -73,21 +73,70 @@ export type Freshness = {
 // ---------------------------------------------------------------- Focus pane
 
 export type FocusProject = {
+  /** The record key or id this row is drawn under. */
+  key: string
+  /** The ref the project was called by. */
+  ref: string
+  /** The project id of the answer or record; null for a milestone, a ticket and a project never answered. */
+  id: string | null
   name: string
+  /** True when no answer and no record of at most 24 hours exists: the row carries a short mark and no counts. */
+  failed: boolean
   done: number
   total: number
   inProgress: number
-  ready: number
-  /** ms since the epoch of the success this progress comes from; null when it was just read in a combined call */
+  /** null where the answer lacks the key: drawn as `-` */
+  ready: number | null
+  blocked: number | null
+  /** ms since the epoch of the success this progress comes from; null for a failed row */
   at: number | null
-  /** True when this is a recorded value of an earlier success, because the refresh of the selector failed. */
+  /** True when this is a recorded value of an earlier success, because the call of the project failed or was not made. */
   old: boolean
-  /** The error of the failed refresh an old row sits beside. */
-  error: string | null
+  /** Stage counts of the open work by state. */
+  stages: Record<string, number> | null
 }
 
-/** A selector whose refresh failed and for which no record exists. */
-export type FocusFailure = { name: string; error: string }
+/** An initiative drawn with its projects, and the roll-up of those counted. */
+export type FocusInitiative = {
+  /** The initiative id where the selector is one, else its name: the key of its collapsed state. */
+  key: string
+  name: string
+  /** `projects unknown` or `initiative not found` where it could not be expanded. */
+  failed: string | null
+  projects: FocusProject[]
+  counted: number
+  enumerated: number
+  done: number
+  total: number
+  inProgress: number
+  remaining: number
+  ready: number | null
+  blocked: number | null
+  partial: boolean
+  /** The oldest success among counted old projects. */
+  oldestAt: number | null
+}
+
+/** The header total over every distinct counted project. */
+export type FocusHeader = {
+  done: number
+  total: number
+  inProgress: number
+  remaining: number
+  ready: number | null
+  blocked: number | null
+  /** Stage counts by state, from `open_by_state`. */
+  stages: [string, number][]
+  counted: number
+  enumerated: number
+  notExpanded: number
+  partial: boolean
+  oldestAt: number | null
+  complete: boolean
+}
+
+/** One entry of the footer warning: a failed project, an initiative that cannot be expanded, or a source error. */
+export type FocusWarning = { kind: 'project' | 'initiative' | 'source'; name: string; text: string; id: string | null }
 
 export type FocusView = {
   /** The coordinator's herdr address, e.g. hub:TEAM:arch; the focus's name until named focuses land. */
@@ -99,21 +148,18 @@ export type FocusView = {
   status: string
   scope: { initiatives: number; projects: number; tickets: number }
   focusReportedAt: number | null
-  /** ms since the epoch when ix-board fetched the tracker data */
+  /** ms since the epoch when ix-board was asked */
   fetchedAt: number | null
-  projects: FocusProject[]
-  ready: number
-  error: string | null
+  initiatives: FocusInitiative[]
+  /** Projects, milestones and tickets of the focus that no selected initiative holds. */
+  loose: FocusProject[]
+  header: FocusHeader | null
+  warnings: FocusWarning[]
   /** The name shown in place of the address: a named focus definition's name. */
   title: string | null
   /** How the focus was found when the choice is a name: a definition, a lead address or a lead summary. */
   via: 'definition' | 'lead' | 'summary' | null
-  /** Selectors that failed with no record. */
-  failures: FocusFailure[]
-  /** `F fresh, O old, X failed`; null when there was nothing to count. */
-  counts: { fresh: number; old: number; failed: number } | null
-  partial: boolean
-  /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, summed from parts. */
+  /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, earlier outcome. */
   notes: string[]
 }
 
@@ -178,6 +224,7 @@ declare module 'claude-code' {
       focusMeta: Shaped<FocusMeta>
       focusCollapsed: string[]
       focusShowDone: boolean
+      focusWarnings: boolean
       escalations: Shaped<Escalation[]>
       announcements: Shaped<Announcement[]>
       relayMeta: Shaped<RelayMeta>

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- The Focus card draws each initiative with its projects nested under it, each project with its own bar, `done/total`, Remaining, Ready and Blocked, and a header total over every counted project with the stage counts from `open_by_state`. The totals are honest: an initiative reads `X of Y projects`, is marked partial only when a project is missing, says `includes old data (oldest 5m)` when a counted project comes from a record, and a header with a missing or old part or an initiative that could not be expanded is never drawn as complete.
+- ix-board is asked for one project at a time (`ix-board --json focus status --project <ref>`), four at a time, each call for at most 20 seconds and the refresh for at most 60. One project with bad data fails alone; the combined call, the per-selector retry, the `F fresh, O old, X failed` line and the focus-level record of 0.6.0 are gone. A project in two initiatives is called once and counted once in the header.
+- An initiative is expanded to its projects by the `ix-board --json roadmap` (by id if the roadmap carries ids, else by exact name), else by one `focus status --initiative <uuid>` call whose own projects are used, else from the membership cached in `progress.json` under the reserved key `initiatives`. An initiative that cannot be expanded is one failed row, `projects unknown`; its directly listed projects are still called.
+- Every error is folded into one warning on the freshness row of the card (`⚠ N`, clicked to expand), which expands to the full messages with ticket, milestone and project. Error text never appears in the card body or in a project row; `/factory show` lists it too.
+- Progress records are keyed by project id and keep the project's name, identifier and id, so a failed project is drawn from its record, marked old, under its name. A project nobody has named yet is named once through `ix-board project-chunk`. A failed refresh is held for 5 minutes; the refresh key asks at once.
+- Known limitation: SWM-295 makes ix-board fail a whole initiative call when one ticket references a missing milestone (`issue QSL-3236 references unavailable milestone ... in project a31003a8-...`), and SWM-296 means the roadmap lists initiatives by name only, not by id. Until either is fixed an initiative the lead scopes by UUID that has that defect, such as FSL Hardening, cannot be expanded unless a membership was cached while it worked: its row reads `projects unknown`. Where the error names a project, the initiative is drawn as the one roadmap initiative that holds that project when exactly one does (never a selected one); that guess is not stored. The mod needs no change when either is fixed.
+- The focus data shape changes (`focuses-5`).
+
 ## 0.6.0
 
 - The Focus card no longer goes empty when one ticket in Linear is bad. ix-board is asked once about the whole focus, and when that call fails on a selector's account, once for each initiative, project, milestone and ticket (at most four at a time, 30 seconds in all), so the others still show. The aggregate reads `F fresh, O old, X failed` and is marked partial when any are old or failed.

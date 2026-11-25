@@ -11,7 +11,7 @@
 //   FR-004-AC-5   classic: Esc closes the popup and the prompt has the keyboard again
 //   FR-004-AC-6   fullscreen: `/factory focus` focuses the docked Focus tab
 //   FR-009-AC-8   classic: a digit typed while the prompt holds text goes into the prompt
-//   FR-019-AC-1   the Focus view and /factory show say why these focuses are shown (here a typed name)
+//   FR-019-AC-1   /factory show says why these focuses are shown (here a typed name); the card itself holds no prose
 //   FR-008-AC-5   a first-time user, with only /factory help, opens a view, switches and chooses what to display
 //
 // The session runs with a temporary HOME (the Claude config is linked in), so the choice the check
@@ -155,7 +155,8 @@ async function classic() {
     const opened = await s.waitFor(t => popupOpen(t, 'Focus'))
     s.capture('3-open')
     check('classic: /factory opens the Focus popup (1 command)', opened !== null && s.inputs <= 2, s.capture().slice(-800))
-    check('classic: the Focus popup says why these focuses are shown', BANNER.test(opened ?? ''), (opened ?? '').slice(-800))
+    // The card holds no prose since 0.7.0: the banner is in /factory show and behind the warning icon.
+    check('classic: the Focus popup draws the Focus pane heading', /Focus/.test(opened ?? ''), (opened ?? '').slice(-800))
     check('classic: the band stays visible with the popup open', bandLine(s.capture()) !== undefined)
 
     // NFR-003-M-2: switch takes one key.

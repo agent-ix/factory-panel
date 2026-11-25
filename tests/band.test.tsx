@@ -19,6 +19,7 @@ const machine = (name: string, extra: Partial<Machine> = {}): Machine => ({
   ...extra,
 })
 
+const row = (name: string, done: number, total: number, inProgress: number) => ({ key: `project:${name}`, ref: name, id: name, name, failed: false, done, total, inProgress, ready: 0, blocked: 0, at: null, old: false, stages: null })
 const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   machines: [machine('draco'), machine('luna', { cpuPct: 74, lastSeenSecs: 600 }), machine('titan', { lastSeenSecs: null })],
   relay: { ok: true, redis: 'ok', watchers: [], warnings: 0, deadLetters: 0, inboxWaiting: 0, checks: [] },
@@ -33,18 +34,13 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
       scope: { initiatives: 0, projects: 2, tickets: 0 },
       focusReportedAt: null,
       fetchedAt: null,
-      projects: [
-        { name: 'ledger', done: 5, total: 10, inProgress: 2, ready: 0, at: null, old: false, error: null },
-        { name: 'export', done: 5, total: 10, inProgress: 1, ready: 0, at: null, old: false, error: null },
-      ],
-      ready: 4,
-      error: null,
-      title: null,
-      via: null,
-      failures: [],
-      counts: null,
-      partial: false,
-      notes: [],
+    initiatives: [],
+    loose: [row('ledger', 5, 10, 2), row('export', 5, 10, 1)],
+    header: { done: 10, total: 20, inProgress: 3, remaining: 10, ready: 4, blocked: 0, stages: [], counted: 2, enumerated: 2, notExpanded: 0, partial: false, oldestAt: null, complete: false },
+    warnings: [],
+    title: null,
+    via: null,
+    notes: [],
     },
   ],
   escalations: [],
