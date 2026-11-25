@@ -34,7 +34,7 @@ The Team view SHALL show velocity and effort, review quality and flow and capaci
 - The mod SHALL read each selected team's department classes with `ix-board --json retro delta --config ~/.local/state/team-retro/<team>/config.json`, which reads the stored snapshots and makes no network call, for the teams of the session's focus, once every 5 minutes while the view is on screen ([FR-027](./FR-027-fetch-only-on-screen.md)).
 - The strip SHALL draw one mark and name per class of the retro catalog (progress, flow, rework, stability, scope, utilization, resource): red where any metric of the class regresses, amber where none regresses and some has no value, green where all are fine, and a hollow inactive mark where none has a value.
 - A button SHALL expand the strip to the regressing metrics, named by class.
-- A team without a config, a snapshot or a readable answer SHALL read `no retro baseline`; no mark SHALL be drawn for it.
+- A team whose config ix-board cannot read (exit code 3) SHALL read `no retro baseline`. Any other failure (a missing binary, a timeout, another exit code, an answer that is not the delta) SHALL read `retro unavailable`, mark the source failed and show one warning icon with the error. No mark SHALL be drawn for either.
 
 ## Acceptance Criteria
 
@@ -45,7 +45,8 @@ The Team view SHALL show velocity and effort, review quality and flow and capaci
 | FR-029-AC-3 | A share is drawn as a percentage; effort per closure falls back to execution time over verified closures. | Test |
 | FR-029-AC-4 | The retro strip draws one mark per class, red for a regressing class, amber for one with missing values and green for a sound one. | Test |
 | FR-029-AC-5 | The strip expands to the regressing metrics. | Test |
-| FR-029-AC-6 | A team whose retro delta fails reads `no retro baseline`. | Test |
+| FR-029-AC-6 | A team whose retro config cannot be read (exit 3) reads `no retro baseline` with no warning. | Test |
+| FR-029-AC-9 | A retro delta that fails otherwise, or prints text that is not JSON, reads `retro unavailable` and shows a warning icon with the error. | Test |
 | FR-029-AC-7 | The retro delta is read with the team's config path, for the focus's teams only, and never more than once in 5 minutes. | Test |
 | FR-029-AC-8 | In a real session the Team view shows the new tiles and the QSL health strip. | Demonstration |
 

@@ -51,14 +51,14 @@ const old = () =>
 const events = (...rows: [string, string, string, string, number][]) =>
   JSON.stringify({ version: 1, truncated: false, has_more: false, next_cursor: '1-0', events: rows.map(([address, ticket, role, status, ago], i) => ({ id: `${i}-0`, at_ms: NOW - ago * MIN, binding: { address }, change: { kind: 'agent', agent: { agent_id: `a${i}`, name: `n${i}`, ticket, role, status, pane: null, session: null, reported_at_ms: NOW - ago * MIN } } })) })
 
-async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() => ReturnType<typeof out>), eventsText: string | (() => ReturnType<typeof out>) = events(), agents = true): Promise<World> {
+async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() => ReturnType<typeof out>), eventsText: string | ((argv: string[]) => ReturnType<typeof out>) = events(), agents = true): Promise<World> {
   const w = world(on, true)
   const lead = report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] })
-  w.leads.set(LEAD, agents ? { ...lead, agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9), agent('rev-a', 'QSL-1240', 'reviewer', 'running', 5), agent('rev-b', 'QSL-1240', 'code-reviewer', 'waiting', 6), agent('spec-a', 'QSL-1251', 'spec-author', 'done', 12), agent('gate-a', 'QSL-1238', 'gate', 'done', 30)] } : lead)
+  w.leads.set(LEAD, agents ? { ...lead, agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9), agent('rev-a', 'QSL-1240', 'reviewer', 'running', 5), agent('rev-b', 'QSL-1240', 'code-reviewer', 'waiting', 6), agent('spec-a', 'QSL-1251', 'spec-author', 'done', 12), agent('gate-a', 'QSL-1238', 'gate', 'running', 30)] } : lead)
   w.leads.set(IDLE, { ...report(IDLE, 'idle', ['waiting']), agents: [agent('c1', 'QSL-2', 'coder', 'waiting', 41), agent('c2', 'QSL-3', 'coder', 'waiting', 50), agent('c3', 'QSL-4', 'coder', 'waiting', 60)] })
   const prior = w.stub.value
   w.stub.value = (argv, init) => {
-    if (argv.join(' ').startsWith('agent-msg work events')) return typeof eventsText === 'string' ? out(eventsText) : eventsText()
+    if (argv.join(' ').startsWith('agent-msg work events')) return typeof eventsText === 'string' ? out(eventsText) : eventsText(argv)
     return prior?.(argv, init)
   }
   ix(w, { projects: { Alpha: () => (typeof answer === 'string' ? out(answer) : answer()) } })
@@ -123,6 +123,9 @@ test('the badges are pr for an open or draft PR only, review with the count of r
   const board = boardOf(JSON.parse(rich()))
   const one = composeWork([{ address: LEAD, status: 'running', reportedAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'running', reportedAt: NOW }, { name: 'b', ticket: 'QSL-9', role: 'coder', status: 'running', reportedAt: NOW }] }], {}, [{ issues: [{ identifier: 'QSL-9', title: 't', state: 'Specify', prs: [pr('draft')] }], activity: board.activity }])
   expect(one.leads[0]!.tickets[0]!.badges).toEqual(['[pr]', '[review]', '[spec]'])
+  // Finished agents keep no badge.
+  const done = composeWork([{ address: LEAD, status: 'done', reportedAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'done', reportedAt: NOW }, { name: 'g', ticket: 'QSL-9', role: 'gate', status: 'failed', reportedAt: NOW }, { name: 's', ticket: 'QSL-9', role: 'spec-author', status: 'done', reportedAt: NOW }] }], {}, [])
+  expect(done.leads[0]!.tickets[0]!.badges).toEqual([])
 })
 
 test('a ticket in progress that no lead reports is not listed under a lead', async ($, on) => {
@@ -226,4 +229,55 @@ test('the latest event of each lead and ticket wins, an answer is merged once an
   expect(merged.activity!.map(x => x.identifier)).toEqual(['QSL-1251', 'QSL-1238', 'QSL-1199', 'QSL-1111'])
   expect(merged.issues.find(i => i.identifier === 'QSL-1240')!.prs).toHaveLength(1)
   expect(boardOf(JSON.parse(old())).activity).toBeNull()
+})
+
+// ---------------------------------------------------------------- the event stream
+
+const page = (rows: [string, string, string, string, number][], cursor: string, more: boolean) => JSON.stringify({ ...JSON.parse(events(...rows)), next_cursor: cursor, has_more: more })
+const eventCalls = (w: World) => w.ran.filter(l => l.startsWith('agent-msg work events'))
+
+const afterOf = (argv: string[]) => argv[argv.indexOf('--after') + 1]!
+
+test('the events are read page after page by their cursor, and the last action is the newest of all pages', async ($, on) => {
+  trace('FR-028-AC-12')
+  const pages: Record<string, string> = {
+    '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 30]], 'c1', true),
+    c1: page([[LEAD, 'QSL-1240', 'reviewer', 'running', 2]], 'c2', false),
+  }
+  const w = await setup($, on, rich(), argv => out(pages[afterOf(argv)] ?? page([], afterOf(argv), false)))
+  expect(eventCalls(w).map(l => l.split(' --after ')[1])).toEqual(['0-0', 'c1'])
+  const d = await draw($)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/reviewer 2m$/)
+  await d.unmount()
+})
+
+test('the next read asks only for what came after the last cursor and keeps the earlier last actions', async ($, on) => {
+  trace('FR-028-AC-12')
+  const pages: Record<string, string> = {
+    '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 3], [LEAD, 'QSL-1251', 'spec-author', 'running', 3]], 'c1', false),
+    c1: page([[LEAD, 'QSL-1240', 'reviewer', 'waiting', 0]], 'c2', false),
+  }
+  const w = await setup($, on, rich(), argv => out(pages[afterOf(argv)] ?? page([], afterOf(argv), false)))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(2 * MIN)
+  expect(eventCalls(w).map(l => l.split(' --after ')[1]).slice(0, 2)).toEqual(['0-0', 'c1'])
+  const rows = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
+  expect(rows.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/reviewer \d+m$/)
+  expect(rows.find(l => l.trim().startsWith('QSL-1251'))).toMatch(/spec-author \d+m$/)
+  await ui.unmount()
+})
+
+test('five full pages with more behind are a warning, and the next read carries on from where this one stopped', async ($, on) => {
+  trace('FR-028-AC-12')
+  const w = await setup($, on, rich(), argv => out(page([[LEAD, 'QSL-1240', 'coder', 'running', 1]], `c${Number(afterOf(argv).replace('c', '').replace('0-0', '0')) + 1}`, true)))
+  expect(eventCalls(w).map(l => l.split(' --after ')[1])).toEqual(['0-0', 'c1', 'c2', 'c3', 'c4'])
+  const d = await draw($)
+  expect(d.buttons.find(b => b.key === 'warnings-toggle')?.label).toBe('1')
+  await d.press('warnings-toggle')
+  expect(d.text).toMatch(/events behind, catching up/)
+  await d.unmount()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(2 * MIN)
+  expect(eventCalls(w).slice(5, 6).map(l => l.split(' --after ')[1])).toEqual(['c5'])
+  await ui.unmount()
 })

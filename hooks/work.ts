@@ -133,7 +133,9 @@ export type WorkView = {
 
 const has = (role: string, word: string): boolean => role.toLowerCase().includes(word)
 
-const badgesOf = (agents: readonly WorkAgent[], issue: WorkIssue | undefined): string[] => {
+const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): string[] => {
+  // A finished agent keeps no badge: only those still running or waiting count.
+  const agents = all.filter(a => a.status === 'running' || a.status === 'waiting')
   const badges: string[] = []
   if (issue?.prs?.some(p => p.status === 'open' || p.status === 'draft')) badges.push('[pr]')
   const reviewers = agents.filter(a => has(a.role, 'review')).length

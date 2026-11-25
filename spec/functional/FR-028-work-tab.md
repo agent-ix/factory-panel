@@ -27,8 +27,9 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - The Work view SHALL be the third view, after Focus, in the dock and in `/factory` ([FR-003](./FR-003-one-command.md)), opened by `/factory work`.
 - The mod SHALL list the verified leads of `agent-msg who` that the selected teams allow, each with a status mark (`◐` running, `◌` waiting or unknown, `✕` failed, `✓` done) and the age of its latest report.
 - Under each lead the mod SHALL list the tickets of the agents in `agent-msg work --lead <address> show`, keeping each agent's name, ticket, role, status and report time, newest action first.
+- A badge SHALL count only agents that are running or waiting.
 - A ticket row SHALL show its id, the Linear state and title where ix-board's focus status names the ticket, its badges, and its last action as `<role> <status> <age>`.
-- The last action SHALL be the latest transition of an agent on that ticket in `agent-msg work events`, read from its oldest event on in pages of 1000, at most 5 pages; where the events cannot be read it SHALL be the latest report of an agent on the ticket.
+- The last action SHALL be the latest transition of an agent on that ticket in `agent-msg work events`. The stream starts at its oldest event, so the mod SHALL read it in pages of 1000 after a cursor it keeps between reads, at most 5 pages per read, so that a later read asks only for newer events; where more than 5 pages are behind it SHALL warn and carry on at the next read; where the events cannot be read it SHALL be the latest report of an agent on the ticket.
 - The badges SHALL be `[pr]` for a ticket with an open or draft PR, `[review×N]` for N agents in a reviewer role on the ticket (`[review]` when N is 1), `[spec]` for a spec role or the state Specify or Specced, and `[gate]` for a gate role.
 - A ticket that is in progress in the focus status but that no lead reports SHALL NOT be listed under a lead.
 - A lead SHALL collapse to one row that says how many tickets it holds, and expand again, by the arrow beside it.
@@ -61,6 +62,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-8 | Where the events cannot be read the tickets still show with the age of the latest agent report, and the footer shows one warning. | Test |
 | FR-028-AC-9 | The widget says `N leads · M tickets · K merged 24h`. | Test |
 | FR-028-AC-10 | The Work tab follows Focus in the dock order, and `/factory work` opens it. | Test |
+| FR-028-AC-12 | The events are read after the cursor of the page before, a later read asks only for events after the last cursor and keeps earlier last actions, and five full pages with more behind give one warning and are carried on at the next read. | Test |
 | FR-028-AC-11 | In a real session the tab shows the leads, their tickets with badges and today's merges. | Demonstration |
 
 ## Dependencies

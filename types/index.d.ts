@@ -282,6 +282,7 @@ declare module 'claude-code' {
       retro: Shaped<RetroView[]>
       retroMeta: Shaped<RetroMeta>
       retroOpen: string[]
+      retroWarn: boolean
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, WorkLast>>
       workMeta: Shaped<WorkMeta>

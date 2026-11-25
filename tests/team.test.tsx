@@ -133,6 +133,18 @@ test('a team whose retro delta fails reads no retro baseline and draws no mark',
   expect(retroCalls(w).length).toBeGreaterThan(0)
 })
 
+for (const [why, failing] of [['exits 1', () => out('', 1, 'ix-board: boom')], ['prints text that is not JSON', () => out('not json')]] as const) {
+  test(`a retro delta that ${why} is retro unavailable with a warning, not no baseline`, async ($, on) => {
+    trace('FR-029-AC-9')
+    const w = await setup($, on, failing)
+    const d = await draw($, w)
+    expect(d.lines).toContain('retro unavailable')
+    expect(d.lines).not.toContain('no retro baseline')
+    expect(d.buttons).toContain('1')
+    await d.ui.unmount()
+  })
+}
+
 test('the retro delta is asked for the focus teams with their config path, and at most once in five minutes', async ($, on) => {
   trace('FR-029-AC-7')
   const w = await setup($, on)

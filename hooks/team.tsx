@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { RetroClass, RetroMeta, RetroView, TeamMeta, TeamMetric, TeamView } from '../types'
-import { CARD_BG, INK, ago, errorText, promRange, runText, sparkline } from './shared'
+import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
 import { ACCENT, dots } from './ui/glyphs'
 import type { Options } from './shared'
 import { track } from './schedule'
@@ -24,6 +24,7 @@ const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as Tea
 /** Teams whose health strip lists its regressing metrics. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
 const retro = atom({ plugin: 'factory-panel', key: 'retro' } as const, [] as RetroView[], { shape: 'retro-1' })
+const retroWarn = atom({ plugin: 'factory-panel', key: 'retroWarn' } as const, false)
 const retroMeta = atom({ plugin: 'factory-panel', key: 'retroMeta' } as const, { at: null, error: null } as RetroMeta, { shape: 'retroMeta-1' })
 const teamMeta = atom(
   { plugin: 'factory-panel', key: 'teamMeta' } as const,
@@ -148,30 +149,38 @@ function retroTeams(): string[] {
   return scope.ownTeam !== null ? [scope.ownTeam] : scope.teams
 }
 
-async function readRetroTeam($: EngineInterface, dir: string, team: string): Promise<RetroView> {
-  const none = (reason: string): RetroView => ({ team, classes: null, latest: null, reason })
+/** ix-board's exit code for a retro config it cannot read: the team has no retro. */
+const NO_CONFIG_EXIT = 3
+
+/** One team's retro health. Only an unreadable config is "no retro baseline"; any other failure is an `error` to warn about. */
+async function readRetroTeam($: EngineInterface, dir: string, team: string): Promise<{ view: RetroView; error: string | null }> {
+  const none = (reason: string, error: string | null): { view: RetroView; error: string | null } => ({ view: { team, classes: null, latest: null, reason }, error })
   try {
     // Only the stored snapshots are read: the delta makes no network call.
-    const text = await runText($, ['ix-board', '--json', 'retro', 'delta', '--config', `${dir}/${team}/config.json`], RETRO_TIMEOUT_MS)
-    const delta = JSON.parse(text) as Delta
-    if (!Array.isArray(delta.metrics)) return none('no retro baseline')
-    return { team, classes: classesOf(delta.metrics as DeltaMetric[]), latest: typeof delta.latest === 'string' ? delta.latest : null, reason: null }
-  } catch {
-    return none('no retro baseline')
+    const ran = await $.process.run(['ix-board', '--json', 'retro', 'delta', '--config', `${dir}/${team}/config.json`], { timeoutMs: RETRO_TIMEOUT_MS })
+    if (ran.exitCode === NO_CONFIG_EXIT) return none('no retro baseline', null)
+    if (ran.exitCode !== 0) return none('retro unavailable', `${team}: ${ran.stderr.trim().split('\n').pop() || `ix-board exited ${ran.exitCode}`}`)
+    const delta = JSON.parse(ran.stdout) as Delta
+    if (!Array.isArray(delta.metrics)) return none('retro unavailable', `${team}: the delta has no metrics`)
+    return { view: { team, classes: classesOf(delta.metrics as DeltaMetric[]), latest: typeof delta.latest === 'string' ? delta.latest : null, reason: null }, error: null }
+  } catch (error) {
+    return none('retro unavailable', `${team}: ${errorText(error)}`)
   }
 }
 
-/** Reads each selected team's retro delta; a team with no config or snapshots has no baseline, which is not a failure. */
+/** Reads each selected team's retro delta. A team with no config has no baseline, which is not a failure; any other failure is the source's error. */
 export function pollRetro($: EngineInterface): Promise<boolean> {
   return track($, 'retro', async () => {
     try {
       const now = await $.clock.now()
       const dir = `${await home($)}/.local/state/team-retro`
-      const views = await Promise.all(retroTeams().map(team => readRetroTeam($, dir, team)))
-      await update($, retro, () => views)
-      await update($, retroMeta, () => ({ at: now, error: null }))
-      sourceOk('ix-board retro', await $.clock.now())
-      return true
+      const reads = await Promise.all(retroTeams().map(team => readRetroTeam($, dir, team)))
+      const errors = reads.flatMap(r => (r.error === null ? [] : [r.error]))
+      await update($, retro, () => reads.map(r => r.view))
+      await update($, retroMeta, () => ({ at: now, error: errors.length === 0 ? null : errors.join(' · ') }))
+      if (errors.length === 0) sourceOk('ix-board retro', now)
+      else sourceFailed('ix-board retro', errors.join(' · '))
+      return errors.length === 0
     } catch (error) {
       await update($, retroMeta, m => ({ ...m, error: errorText(error) }))
       sourceFailed('ix-board retro', errorText(error))
@@ -217,7 +226,7 @@ export function registerTeam(on: On, options: Options): void {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
     const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
-    const [list, meta, health, open] = await Promise.all([read($, teams), read($, teamMeta), read($, retro), read($, retroOpen)])
+    const [list, meta, health, open, rmeta, warnOpen] = await Promise.all([read($, teams), read($, teamMeta), read($, retro), read($, retroOpen), read($, retroMeta), read($, retroWarn)])
     const now = await $.clock.now()
     const dashboard = `${options.grafanaUrl.replace(/\/$/, '')}/d/ix-team-flow-effort`
 
@@ -320,7 +329,14 @@ export function registerTeam(on: On, options: Options): void {
           </Box>
         ))}
 
-        <Box flexDirection="row" justifyContent="flex-end">
+        {rmeta.error !== null && warnOpen && rmeta.error.split(' · ').map(x => <Text key={x} color="warning" size="caption">{`ix-board retro: ${x}`}</Text>)}
+        <Box flexDirection="row" justifyContent="flex-end" gap={2} alignItems="center">
+          {rmeta.error !== null && (
+            <Box key="warnings-chip" flexDirection="row" gap={1}>
+              <Text color="warning">⚠</Text>
+              <Button key="warnings-toggle" plain label={String(rmeta.error.split(' · ').length)} onPress={() => void update($, retroWarn, v => !v)} />
+            </Box>
+          )}
           <Text color={meta.error ? 'warning' : 'subtle'} size="caption">
             {meta.error ?? `updated ${ago(meta.at, now)}`}
           </Text>

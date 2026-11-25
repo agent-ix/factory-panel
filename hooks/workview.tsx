@@ -45,17 +45,26 @@ const leadOf = (address: string, report: WorkReport): WorkLead => {
 
 type EventPage = { events?: unknown[]; has_more?: boolean; next_cursor?: string }
 
-/** The latest transition of each (lead, ticket) over the bounded history; the stream is read from its oldest event on. */
-async function readLast($: EngineInterface): Promise<Record<string, WorkLast>> {
-  const last: Record<string, WorkLast> = {}
-  let cursor = '0-0'
+/** Where the last read of the event stream ended: the next read asks only for what came after. */
+let eventCursor = '0-0'
+
+/**
+ * The latest transition of each (lead, ticket), folded into `prior`. The stream starts at its oldest event, so a read
+ * resumes after the cursor the last one ended at, at most EVENT_PAGES pages at a time. Where the cap is reached with more to
+ * come, `truncated` is true and the next read carries on from where this one stopped.
+ */
+async function readLast($: EngineInterface, prior: Record<string, WorkLast>): Promise<{ last: Record<string, WorkLast>; cursor: string; truncated: boolean }> {
+  const last = { ...prior }
+  let cursor = eventCursor
+  let more = false
   for (let page = 0; page < EVENT_PAGES; page++) {
     const answer = await runJson<EventPage>($, ['agent-msg', 'work', 'events', '--limit', String(EVENT_LIMIT), '--after', cursor], WORK_TIMEOUT_MS)
     lastOfEvents(Array.isArray(answer.events) ? answer.events : [], last)
-    if (answer.has_more !== true || typeof answer.next_cursor !== 'string') break
-    cursor = answer.next_cursor
+    if (typeof answer.next_cursor === 'string') cursor = answer.next_cursor
+    more = answer.has_more === true && typeof answer.next_cursor === 'string'
+    if (!more) break
   }
-  return last
+  return { last, cursor, truncated: more }
 }
 
 let running: Promise<boolean> | null = null
@@ -71,12 +80,19 @@ export function pollWork($: EngineInterface): Promise<boolean> {
 /** Forgets a read under way; the tests start each session from nothing. */
 export function resetWork(): void {
   running = null
+  eventCursor = '0-0'
+}
+
+function readLastHeld($: EngineInterface): Promise<Record<string, WorkLast>> {
+  return read($, workLast)
 }
 
 async function refreshWork($: EngineInterface): Promise<boolean> {
   // The first drawing shows that a read is under way before anything has answered.
   await update($, workMeta, m => ({ ...m, busy: true }))
   const errors: string[] = []
+  /** Warnings that are not failures of a source. */
+  const notes: string[] = []
   try {
     await selectionReady()
     const teams = focusTeams(scopeOf(getSelection()))
@@ -101,13 +117,15 @@ async function refreshWork($: EngineInterface): Promise<boolean> {
     await update($, workLeads, () => leads)
     // The last actions are a second source: where they fail the tickets still show, with the time of the agents' reports.
     try {
-      const last = await readLast($)
-      await update($, workLast, () => last)
+      const read = await readLast($, await readLastHeld($))
+      eventCursor = read.cursor
+      await update($, workLast, () => read.last)
+      if (read.truncated) notes.push(`agent-msg work events: more than ${EVENT_PAGES * EVENT_LIMIT} events behind, catching up`)
     } catch (error) {
       errors.push(`agent-msg work events: ${errorText(error)}`)
     }
     const now = await $.clock.now()
-    await update($, workMeta, () => ({ at: now, busy: false, error: errors.length === 0 ? null : errors.join(' · ') }))
+    await update($, workMeta, () => ({ at: now, busy: false, error: errors.length + notes.length === 0 ? null : [...errors, ...notes].join(' · ') }))
     return errors.length === 0
   } catch (error) {
     await update($, workMeta, m => ({ ...m, busy: false, error: errorText(error) }))
