@@ -23,8 +23,16 @@ export const SUMMED_NOTE = 'summed from parts; overlapping selectors may count t
 
 export const selectorKey = (s: Selector): string => keyOf(s.kind, s.ref, s.project)
 
-/** The label drawn for a selector: its own, else its kind and ref. */
-export const selectorName = (s: Selector): string => s.label ?? `${s.kind} ${s.ref}`
+/** Names ix-board gave a selector in an earlier answer, by key, for the rows that have no answer now. */
+const learned = new Map<string, string>()
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The label drawn for a selector: its own, else the name ix-board gave it, else its kind and ref (a UUID cut to 8). */
+export const selectorName = (s: Selector): string => s.label ?? learned.get(selectorKey(s)) ?? `${s.kind} ${UUID.test(s.ref) ? s.ref.slice(0, 8) : s.ref}`
+
+/** The key of a focus's own record: the aggregate of a successful combined call. */
+export const focusKey = (id: string): string => `focus:${id}`
 
 /** The argument of one `ix-board focus status` call for a selector; a milestone is asked alone, by its ref. */
 export const selectorArgs = (s: Selector): string[] => [s.kind === 'ticket' ? '--issue' : `--${s.kind}`, s.ref]
@@ -78,9 +86,8 @@ const sum = (rows: Row[]): Omit<Progress, 'ready'> => rows.reduce((a, r) => ({ d
 const argv = (args: string[]): string[] => ['ix-board', '--json', 'focus', 'status', ...args]
 
 /** Asks ix-board once for every selector, then for each selector alone when that is the selector's fault. */
-export async function refreshProgress($: EngineInterface, selectors: readonly Selector[]): Promise<Refresh> {
-  const start = await $.clock.now()
-  const deadline = start + REFRESH_BUDGET_MS
+export async function refreshProgress($: EngineInterface, selectors: readonly Selector[], endsAt?: number): Promise<Refresh> {
+  const deadline = endsAt ?? (await $.clock.now()) + REFRESH_BUDGET_MS
 
   let ran
   try {
@@ -117,6 +124,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
         return { ok: false, error: 'ix-board printed text that is not JSON' }
       }
       const rows = rowsOf(status)
+      if (rows.length === 1) learned.set(selectorKey(s), rows[0]!.name)
       return { ok: true, at: await $.clock.now(), name: rows.length === 1 ? rows[0]!.name : null, ...sum(rows), ready: status.ready_queue?.length ?? 0 }
     } catch (error) {
       return { ok: false, error: errorText(error) }
@@ -138,8 +146,12 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
 }
 
 /** The records this refresh writes: each success, and each selector shown that has a record, seen now. */
-export function recordsOf(selectors: readonly Selector[], refresh: Refresh | null, disk: Records, now: number): Records {
+export function recordsOf(selectors: readonly Selector[], refresh: Refresh | null, disk: Records, now: number, focus?: string): Records {
   const mine: Records = {}
+  if (focus !== undefined) {
+    if (refresh?.combined != null) mine[focus] = { at_ms: refresh.at, seen_ms: now, ...sum(refresh.combined.rows), ready: refresh.combined.ready }
+    else if (disk[focus] !== undefined) mine[focus] = { ...disk[focus]!, seen_ms: now }
+  }
   for (const s of selectors) {
     const key = selectorKey(s)
     const outcome = refresh?.outcomes[key]
@@ -171,10 +183,14 @@ const recordProgress = (r: ProgressRecord): Progress => ({ done: r.done, total: 
  * The view of a refresh: each selector's fresh result, else its record marked old, else its error.
  * `refresh` is null when ix-board itself failed (`sourceError`), which leaves every selector to its record.
  */
-export function compose(selectors: readonly Selector[], refresh: Refresh | null, sourceError: string | null, records: Records): Composed {
+export function compose(selectors: readonly Selector[], refresh: Refresh | null, sourceError: string | null, records: Records, focus?: { key: string; name: string }): Composed {
   const n = selectors.length
   if (refresh?.combined != null) {
     const c = refresh.combined
+    const only = n === 1 ? records[selectorKey(selectors[0]!)] : undefined
+    // A record of the same selector that is newer than this answer wins: the answer is the older one.
+    if (only !== undefined && only.at_ms > refresh.at)
+      return { projects: [rowOf(selectorName(selectors[0]!), recordProgress(only), only.at_ms, false, null)], failures: [], counts: { fresh: 1, old: 0, failed: 0 }, partial: false, notes: [], ready: only.ready, fetchedAt: only.at_ms }
     return {
       projects: c.rows.map(r => rowOf(r.name, { ...r, ready: 0 }, null, false, null)),
       failures: [],
@@ -207,6 +223,13 @@ export function compose(selectors: readonly Selector[], refresh: Refresh | null,
       counts.failed++
       if (outcome?.ok === false) failures.push({ name: selectorName(s), error: error ?? 'failed' })
     }
+  }
+  // Nothing of any selector to show: the focus's own record of its last good aggregate stands in, marked old.
+  const whole = projects.length === 0 && focus !== undefined ? records[focus.key] : undefined
+  if (whole !== undefined) {
+    projects.push(rowOf(focus!.name, recordProgress(whole), whole.at_ms, true, null))
+    counts.old = n
+    counts.failed = 0
   }
   const partial = counts.old > 0 || counts.failed > 0
   return {

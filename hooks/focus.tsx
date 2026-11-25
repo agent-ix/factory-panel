@@ -6,12 +6,13 @@ import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { gatedBoard } from './linear'
-import { compose, recordsOf, refreshProgress, selectorKey, selectorName, selectorsOfScope } from './board'
+import { compose, focusKey, recordsOf, refreshProgress, selectorKey, selectorName, selectorsOfScope, REFRESH_BUDGET_MS } from './board'
+import type { Refresh } from './board'
 import type { Selector } from './board'
 import { matchLeads, resolveDefinitions } from './namedfocus'
 import type { Resolved } from './namedfocus'
 import { STALE_MS, readRecords, saveRecords } from './progress'
-import { setSelectorErrors, sourceFailed, sourceOk } from './sources'
+import { setSelectorErrors, sourceClear, sourceFailed, sourceOk } from './sources'
 import { focusBanner, focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
 import { getSelection, scopeOf, selectionReady } from './selection'
 import type { Selection } from './selection'
@@ -59,9 +60,10 @@ async function listLeads($: EngineInterface): Promise<string[]> {
     .filter(address => address.split(':').length === 3)
 }
 
-async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport } | { error: string }> {
+/** `agent-msg work show` prints `null` for a lead that has reported nothing: that is no report, not a failure. */
+async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport | null } | { error: string }> {
   try {
-    return { report: await runJson<WorkReport>($, ['agent-msg', 'work', '--lead', lead, 'show'], WORK_TIMEOUT_MS) }
+    return { report: await runJson<WorkReport | null>($, ['agent-msg', 'work', '--lead', lead, 'show'], WORK_TIMEOUT_MS) }
   } catch (error) {
     return { error: errorText(error) }
   }
@@ -123,20 +125,32 @@ const definitionEntry = (d: Resolved): Entry => ({
 })
 
 /** What one focus shows of its progress, from ix-board and the records of earlier successes. */
-async function progressOf($: EngineInterface, selectors: Selector[], manual: boolean, failed: Map<string, { name: string; error: string }>): Promise<Partial<FocusView> | null> {
+async function progressOf($: EngineInterface, view: FocusView, selectors: Selector[], manual: boolean, endsAt: number, failed: Map<string, { name: string; error: string }>): Promise<Partial<FocusView> | null> {
   const key = `focus:${selectors.map(selectorKey).join(' ')}`
-  const read = await gatedBoard($, key, () => refreshProgress($, selectors), { manual })
+  let ran = false
+  const read = await gatedBoard(
+    $,
+    key,
+    () => {
+      ran = true
+      return refreshProgress($, selectors, endsAt)
+    },
+    // A refresh that fell back to single calls, or lost a selector, is shown and not kept: the next poll asks again.
+    { manual, keep: (r: Refresh) => r.combined !== null },
+  )
   const now = await $.clock.now()
   const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
   // Another session is reading it and has left nothing yet: keep what is drawn.
   if (read.data === null && sourceError === null) return null
   // After a failed read the cached result is an old one: only the records speak for the selectors.
   const refresh = read.error !== null ? null : read.data
-  const mine = recordsOf(selectors, refresh, await readRecords($), now)
+  const whole = focusKey(view.address)
+  const mine = recordsOf(selectors, refresh, await readRecords($), now, whole)
   const records = await saveRecords($, now, mine)
-  const composed = compose(selectors, refresh, sourceError, records)
+  const composed = compose(selectors, refresh, sourceError, records, { key: whole, name: view.title ?? view.address })
   if (sourceError !== null) sourceFailed('ix-board', sourceError)
-  else if (refresh !== null) sourceOk('ix-board', now)
+  // Only a read that ran now is a success: an answer kept from earlier is not stamped as one.
+  else if (ran && refresh !== null) sourceOk('ix-board', now)
   for (const s of selectors) {
     const outcome = refresh?.outcomes[selectorKey(s)]
     if (outcome?.ok === false) failed.set(selectorKey(s), { name: selectorName(s), error: outcome.error })
@@ -156,7 +170,7 @@ async function progressOf($: EngineInterface, selectors: Selector[], manual: boo
 /** The banner line for the focuses now held; `/factory show` prints the same line. */
 export async function focusBannerNow($: EngineInterface, sel: Selection): Promise<string | null> {
   const scope = scopeOf(sel)
-  return focusBanner(scope, scopeFocuses(await read($, focuses), scope).shown.length > 0)
+  return focusBanner(scope, await read($, focuses))
 }
 
 /** One refresh at a time: a tick that arrives during one is run once, after it. */
@@ -203,6 +217,7 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> 
     const name = scope.focus.trim()
     const isName = name !== '' && !['own', 'team'].includes(name.toLowerCase())
     const errors: SourceError[] = []
+    const endsAt = (await $.clock.now()) + REFRESH_BUDGET_MS
 
     const gather = async (): Promise<{ lead: string; report: WorkReport }[]> => {
       let leads: string[]
@@ -215,13 +230,16 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> 
       }
       const read = await Promise.all(leads.map(async lead => ({ lead, read: await readReport($, lead) })))
       const failedReads = read.flatMap(r => ('error' in r.read ? [{ lead: r.lead, error: r.read.error }] : []))
-      // With every lead read (a name, or a session nobody could identify) one lead with no live agent is no news.
-      if (failedReads.length > 0 && (teams !== null || failedReads.length === read.length)) {
-        const text = failedReads.map(f => `${f.lead}: ${f.error}`).join(' · ')
+      // A failure is shown for the leads the scope is about: those inside the team filter, those whose address is
+      // the name typed, and, when every lead is read, any lead if all of them failed (one with no live agent is normal there).
+      const named = isName ? matchLeads(name, leads).map(a => a.toLowerCase()) : []
+      const shownFails = failedReads.filter(x => teams !== null || named.includes(x.lead.toLowerCase()) || failedReads.length === read.length)
+      if (shownFails.length > 0) {
+        const text = shownFails.map(x => `${x.lead}: ${x.error}`).join(' · ')
         errors.push({ source: 'agent-msg work', text })
         sourceFailed('agent-msg work', text)
       } else sourceOk('agent-msg work', await $.clock.now())
-      return read.flatMap(r => ('report' in r.read ? [{ lead: r.lead, report: r.read.report }] : []))
+      return read.flatMap(r => ('report' in r.read && r.read.report !== null ? [{ lead: r.lead, report: r.read.report }] : []))
     }
     const lookup = async (): Promise<Resolved[]> => {
       if (!isName) return []
@@ -265,13 +283,17 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> 
     await update($, focusMeta, m => ({ ...m, errors }))
 
     const failed = new Map<string, { name: string; error: string }>()
-    // One focus after the other: the gate's file is read and written by each, and two writers in one process lose each other's claim.
-    for (const e of entries) {
-      if (e.selectors.length === 0) continue
-      const progress = await progressOf($, e.selectors, manual, failed)
-      if (progress === null) continue
-      await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
-    }
+    await Promise.all(
+      entries.map(async e => {
+        if (e.selectors.length === 0) return
+        const progress = await progressOf($, e.view, e.selectors, manual, endsAt, failed)
+        if (progress === null) return
+        await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
+      }),
+    )
+    // Sources nobody asks any more say nothing: ix-board when no focus has a selector, the named focus lookup when the choice is not a name.
+    if (!isName) sourceClear('agent-msg focuses')
+    if (entries.every(e => e.selectors.length === 0)) sourceClear('ix-board')
     setSelectorErrors(failed)
     const now = await $.clock.now()
     await update($, focusMeta, () => ({ at: now, busy: false, error: null, errors }))
@@ -317,7 +339,7 @@ export function registerFocus(on: On, _options: Options): void {
     const scope = scopeOf(getSelection())
     const { shown: list, note } = scopeFocuses(all, scope)
     const grouped = scope.focus.trim().toLowerCase() === 'team'
-    const banner = focusBanner(scope, list.length > 0)
+    const banner = focusBanner(scope, all)
 
     const bar = (done: number, inProgress: number, ready: number, total: number, cells: number, complete = false) =>
       Svg && (

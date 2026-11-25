@@ -24,10 +24,11 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - The mod SHALL map a selector to the argument of a single `ix-board --json focus status` call: `--initiative <ref>`, `--project <ref>`, `--milestone <ref>` alone, or `--issue <ref>`, where a ref is a UUID, an identifier or an exact name as `ix-board focus status --help` states.
 - The mod SHALL first ask `ix-board --json focus status` once with every selector, with a timeout of 15 seconds.
 - Where the combined call exited non-zero with stderr text that does not indicate an authentication or authorisation failure, the mod SHALL ask again once for each selector separately.
-- The mod SHALL classify a spawn failure, a timeout, and stderr text that indicates an authentication or authorisation failure as a source error.
+- The mod SHALL classify a spawn failure, a timeout, stderr text that indicates an authentication or authorisation failure, and stderr text that indicates a Linear rate limit as a source error.
+- A Linear rate limit holds the whole workspace, so it is a source error and never a selector error.
 - The mod SHALL classify any other non-zero exit with stderr text as a selector error.
-- Where the combined call could not start, timed out, or failed to authenticate, the mod SHALL show one ix-board source error.
-- Where the combined call could not start, timed out, or failed to authenticate, the mod SHALL make no single-selector call.
+- Where the combined call could not start, timed out, failed to authenticate, or was rate limited, the mod SHALL show one ix-board source error.
+- Where the combined call could not start, timed out, failed to authenticate, or was rate limited, the mod SHALL make no single-selector call.
 - The mod SHALL run at most 4 single-selector calls at once, each with a timeout of 5 seconds.
 - The mod SHALL end a progress refresh after 30 seconds.
 - The mod SHALL count each selector still unanswered at the end of a refresh as failed with the error `timed out`.
@@ -47,6 +48,9 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - The mod SHALL run at most one progress refresh at a time.
 - The mod SHALL coalesce a tick that arrives during a refresh into the next one.
 - The mod SHALL ignore a refresh result that is older than the record it would replace.
+- The mod SHALL NOT keep a refresh in the Linear gate cache when any selector failed or when it fell back to single-selector calls.
+- Where the last refresh was not kept, the next poll SHALL ask ix-board again.
+- Where the last refresh was not kept, a manual refresh SHALL NOT wait out the minimum interval unless a Linear rate limit holds.
 
 ## Acceptance Criteria
 
@@ -64,6 +68,8 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 | FR-016-AC-10 | Given a refresh in flight and two ticks, only one further refresh runs afterwards, and a result older than the stored record is ignored. | Test |
 | FR-016-AC-11 | Given a milestone member with ref m1, the single call is `--milestone m1` with no project argument; an initiative, project and ticket map to `--initiative`, `--project` and `--issue`. | Test |
 | FR-016-AC-12 | Given a lead focus whose work report scope has initiatives, projects and tickets, those become the selectors, and given a report with none, the pane says `no selectors` and ix-board is not called. | Test |
+| FR-016-AC-13 | Given the combined call exits with stderr `Linear rate limited; retry in 60s`, the mod shows one ix-board error, makes no single-selector call, and the gate holds further calls until the retry time. | Test |
+| FR-016-AC-14 | Given a refresh in which one selector failed, the next poll after the normal 2 minute cadence asks ix-board again, and a refresh with every call answered by the combined call is kept for 15 minutes. | Test |
 
 ## Dependencies
 

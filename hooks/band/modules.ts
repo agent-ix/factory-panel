@@ -103,7 +103,9 @@ export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: 
 }
 
 /** The one line that says why these focuses are shown; null while the session is still being identified. */
-export const focusBanner = (scope: Scope, ownEntryExists: boolean): string | null => {
+export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
+  // The session's own entry: the lead entry of its own team.
+  const ownEntryExists = scope.ownTeam !== null && focuses.some(f => f.via == null && same(teamOf(f.address), scope.ownTeam!))
   const name = scope.focus.trim()
   const lower = name.toLowerCase()
   const keyword = lower === 'own' || lower === 'team'

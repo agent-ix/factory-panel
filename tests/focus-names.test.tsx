@@ -5,7 +5,7 @@ import { trace } from './trace'
 import { focusBanner } from '../hooks/band/modules'
 import { matchLeads } from '../hooks/namedfocus'
 import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
-import { BAD_MILESTONE, defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
+import { defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
 import type { World } from './world'
 
 // Tests for the banner that says why these focuses are shown and the resolution of the name of
@@ -115,9 +115,9 @@ test('whoami failing with focus team says it could not tell who the session is',
   expect((await paneLines($))[0]).toBe('could not tell who this session is, showing every focus')
   // The order is the spec's: the name first, then the identity, then own, team and the rest.
   const detected = { hosts: 'local', teams: [], ownTeam: 'QSL', teamsSelected: false } as const
-  expect(focusBanner({ ...detected, focus: 'Beta', identity: 'unknown' }, true)).toBe('your choice: Beta')
-  expect(focusBanner({ ...detected, focus: 'own', identity: 'unknown' }, true)).toBe('could not tell who this session is, showing every focus')
-  expect(focusBanner({ ...detected, focus: 'own', identity: 'detected' }, false)).toBe('no focus reported, showing the whole team')
+  expect(focusBanner({ ...detected, focus: 'Beta', identity: 'unknown' }, [])).toBe('your choice: Beta')
+  expect(focusBanner({ ...detected, focus: 'own', identity: 'unknown' }, [])).toBe('could not tell who this session is, showing every focus')
+  expect(focusBanner({ ...detected, focus: 'own', identity: 'detected' }, [])).toBe('no focus reported, showing the whole team')
 })
 
 // ---------------------------------------------------------------- FR-020 named focus resolution
@@ -368,8 +368,7 @@ test('when the members of the named definition change between refreshes the seco
   expect(statusCalls(w).at(-1)).toBe('--project p1 --project p2')
 })
 
-test('two active definitions with the same name are both shown and the pane says how many matched', async ($, on) => {
-  trace("FR-020-AC-3")
+test('two active definitions with the same name of one team are both shown and the pane says how many matched', async ($, on) => {
   const w = world(on, true)
   choose(w, 'Beta')
   named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'), defRow(ENG, 'Beta', 'QSL'))), {
@@ -382,5 +381,66 @@ test('two active definitions with the same name are both shown and the pane says
   shows(lines, /^2 focuses matched "Beta"$/)
   shows(lines, /^Pn p1$/)
   shows(lines, /^Pn p2$/)
-  void BAD_MILESTONE
+})
+
+test('a show that never returns is given up on after 5 seconds, the error is shown and the lead steps follow', async ($, on) => {
+  trace("FR-020-AC-14", "NFR-004-M-2")
+  const w = world(on, true)
+  lead(w, null, 'Beta')
+  choose(w, 'Beta')
+  const timeouts: (number | undefined)[] = []
+  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))), { [BETA]: () => out('') })
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv[2] === 'show' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
+  await startSession($)
+  await w.clock!.advance(4900)
+  hides(await paneLines($), /^Beta$/)
+  await w.clock!.advance(200)
+  const lines = await paneLines($)
+  expect(timeouts).toEqual([5000])
+  shows(lines, /^Beta$/)
+  shows(lines, new RegExp(`^agent-msg focuses: show ${BETA}: .+`))
+})
+
+// ---------------------------------------------------------------- the work reports of the leads
+
+test('a lead with no report is silent in own mode, and a lead whose work show fails is named with its error', async ($, on) => {
+  trace("FR-018-AC-2")
+  const w = world(on, true)
+  w.leads.set('draco:QSL:code', null) // `agent-msg work show` prints null for a lead that has reported nothing
+  w.leads.set('draco:QSL:plan', undefined) // and fails for one it cannot resolve
+  await started($, w)
+  const lines = await paneLines($)
+  shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
+  hides(lines, /draco:QSL:code:/)
+  hides(lines, /null/)
+})
+
+test('a lead with no report at all draws no error', async ($, on) => {
+  trace("FR-018-AC-2")
+  const w = world(on, true)
+  w.leads.set('draco:QSL:code', null)
+  await started($, w)
+  hides(await paneLines($), /^agent-msg work: /)
+})
+
+test('a name that is the address of a lead whose work show fails shows that error and not only nothing matched', async ($, on) => {
+  trace("FR-018-AC-2")
+  const w = world(on, true)
+  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'Fine'))
+  w.leads.set('draco:QSL:plan', undefined)
+  choose(w, 'draco:QSL:plan')
+  named(w, () => out(listJson()))
+  await started($, w)
+  const lines = await paneLines($)
+  shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
+  shows(lines, /^no focus matches "draco:QSL:plan"$/)
+})
+
+test('the banner calls the focus own only when the session’s team has an entry', async () => {
+  trace("FR-019-AC-2")
+  const entry = (address: string) => ({ address, via: null }) as never
+  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, focus: 'own', identity: 'detected' } as const
+  expect(focusBanner(scope, [entry('draco:ENG:code')])).toBe('no focus reported, showing the whole team')
+  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('draco:QSL:arch')])).toBe('own focus')
 })

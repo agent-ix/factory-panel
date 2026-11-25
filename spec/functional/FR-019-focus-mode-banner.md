@@ -20,7 +20,7 @@ The mod SHALL state in one line why the focuses it shows are shown.
 
 - The Focus pane SHALL draw the line as its first line.
 - `/factory show` SHALL print the same line.
-- The mod SHALL choose the reason by the first of these that holds: 1, the user chose a name, matched or not, with the line `your choice: <name>`; 2, the session is not identified, with the line `could not tell who this session is, showing every focus`, which also covers the keywords `own` and `team`; 3, the focus scope is `own` and the session's focus entry exists, with the line `own focus`; 4, the focus scope is `team`, with the line `team focuses`; 5, otherwise, with the line `no focus reported, showing the whole team`.
+- The mod SHALL choose the reason by the first of these that holds: 1, a focus name was chosen by the user or by a declaration, matched or not, with the line `your choice: <name>`; 2, the session is not identified, with the line `could not tell who this session is, showing every focus`, which also covers the keywords `own` and `team`; 3, the focus scope is `own` and the session's focus entry exists, with the line `own focus`; 4, the focus scope is `team`, with the line `team focuses`; 5, otherwise, with the line `no focus reported, showing the whole team`.
 - Where a chosen name matched nothing, the Focus pane SHALL add a separate warning line `no focus matches "<name>"`.
 - The line SHALL name exactly one reason.
 

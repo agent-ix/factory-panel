@@ -47,8 +47,10 @@ test('with the real milestone error and only project D failing alone the pane sh
   const lines = await paneLines($)
   for (const name of ['A', 'B', 'C']) shows(lines, new RegExp(`^Progress of ${name}$`))
   shows(lines, /^project D: project D is not available$/)
-  shows(lines, /2 fresh|3 fresh, 0 old, 1 failed/)
+  shows(lines, /^9\/12 done · 0 in progress · 0 ready · 3 fresh, 0 old, 1 failed$/)
+  expect(lines.filter(l => l === '3/4')).toHaveLength(3)
   shows(lines, /^partial$/)
+  hides(lines, /summed from parts/)
 })
 
 test('two fresh selectors, one old record and one failure sum to 20 and read 2 fresh, 1 old, 1 failed, marked partial', async ($, on) => {
@@ -520,10 +522,14 @@ test('a source that never returns does not hold back the others, and the first v
   const started$ = startSession($)
   // The first view is painted at once, from the fallback, before anything has answered.
   expect(await BAND($)).toContain('local')
+  // The sources answer after 100 ms; ix-board never does. The summary is drawn within a second of that, with no progress yet.
   await w.clock!.advance(100)
+  await w.clock!.advance(900)
+  const early = await paneLines($)
+  shows(early, /^Release train summary$/)
+  hides(early, /done · /)
   await w.clock!.advance(1000)
   await started$
-  shows(await paneLines($), /^Release train summary$/)
 })
 
 test('every source failing raises nothing and each module shows its source’s error', async ($, on) => {
@@ -553,4 +559,111 @@ test('agent-msg focuses list failing is listed under agent-msg focuses and the F
   const lines = await paneLines($)
   shows(lines, /^your choice: Beta$/)
   shows(lines, /^Beta$/)
+})
+
+// ---------------------------------------------------------------- what is kept, and what is not
+
+test('a Linear rate limit is one ix-board error, makes no single call, and holds further calls', async ($, on) => {
+  trace("FR-016-AC-13")
+  const w = world(on, true)
+  lead(w, { projects: ['A', 'B'] })
+  board(w, { combined: () => out('', 1, 'Linear rate limited; retry in 3600.005s') })
+  await started($, w)
+  expect(statusCalls(w)).toHaveLength(1)
+  await w.clock!.advance(10 * MIN)
+  expect(statusCalls(w)).toHaveLength(1)
+  shows(await paneLines($), /^Linear rate limit · paused /)
+})
+
+test('a refresh with a failed selector is not kept and is asked again at the next poll, one answered by the combined call is kept', async ($, on) => {
+  trace("FR-016-AC-14")
+  const w = world(on, true)
+  lead(w, { projects: ['A', 'B'] })
+  let healthy = false
+  board(w, { combined: () => (healthy ? out(statusJson([{ name: 'Pa', done: 1, total: 2 }])) : out('', 1, BAD_MILESTONE)), single: args => (args[1] === 'B' ? out('', 1, 'B is broken') : pageOf('Pa', 1, 2)) })
+  await started($, w)
+  expect(statusCalls(w)).toHaveLength(3)
+  await w.clock!.advance(2 * MIN + 1000)
+  expect(statusCalls(w)).toHaveLength(6)
+  healthy = true
+  await w.clock!.advance(2 * MIN)
+  expect(statusCalls(w)).toHaveLength(7)
+  // Answered by the combined call: kept, so the polls of the next ten minutes call nothing.
+  await w.clock!.advance(10 * MIN)
+  expect(statusCalls(w)).toHaveLength(7)
+})
+
+test('a successful combined call writes the focus-level record with the aggregate', async ($, on) => {
+  trace("FR-017-AC-12")
+  const w = world(on, true)
+  lead(w, { projects: ['A', 'B'] })
+  board(w, { combined: () => out(statusJson([{ name: 'Pa', done: 4, total: 8, inProgress: 1 }, { name: 'Pb', done: 6, total: 12, inProgress: 2 }], 2)) })
+  await started($, w)
+  expect(saved(w)[`focus:${LEAD}`]).toMatchObject({ done: 10, total: 20, inProgress: 3, ready: 2 })
+})
+
+test('when everything fails and no selector has a record the focus-level record is shown old, not an empty card', async ($, on) => {
+  trace("FR-017-AC-13")
+  const w = world(on, true)
+  lead(w, { projects: ['A', 'B'] })
+  seed(w, { [`focus:${LEAD}`]: record() })
+  board(w, { combined: () => out('', 1, BAD_MILESTONE), single: args => out('', 1, `${args[1]} is broken`) })
+  await started($, w)
+  const lines = await paneLines($)
+  shows(lines, new RegExp(`^${LEAD} · old 5m$`))
+  shows(lines, /^10\/20$/)
+  shows(lines, /^project A: A is broken$/)
+  shows(lines, /^project B: B is broken$/)
+  shows(lines, /^partial$/)
+})
+
+test('a result older than the record another process wrote meanwhile is ignored by a real refresh', async ($, on) => {
+  trace("FR-016-AC-10")
+  const w = world(on, true)
+  lead(w, { projects: ['A', 'B'] })
+  board(w, {
+    combined: () => out('', 1, BAD_MILESTONE),
+    single: args => w.clock!.sleep(3000).then(() => {
+      // While the answer is awaited, another session writes a newer record of A.
+      seed(w, { 'project:A': record({ at_ms: T0 + 60_000, seen_ms: T0 + 60_000, done: 9, total: 9, inProgress: 0, ready: 0 }) })
+      return pageOf(`P${args[1]}`, 1, 2)
+    }),
+  })
+  await startSession($)
+  await w.clock!.advance(8000)
+  const lines = await paneLines($)
+  shows(lines, /^10\/11 done/)
+  hides(lines, /^PA$/)
+  shows(lines, /^PB$/)
+  expect(saved(w)['project:A']!.done).toBe(9)
+})
+
+test('the source state of agent-msg focuses and ix-board is cleared when nothing asks them any more', async ($, on) => {
+  trace("FR-018-AC-7")
+  const w = world(on, true)
+  lead(w, { projects: ['A'] }, 'Beta')
+  choose(w, 'Beta')
+  named(w, () => out('', 1, 'agent-msg: relay store unavailable'))
+  board(w, { combined: () => out('', 1, 'ix-board: authentication failed') })
+  await started($, w)
+  const before = (await $.command.run({ command: 'factory', args: 'show' } as never)).text as string
+  expect(before).toMatch(/agent-msg focuses: list/)
+  // The choice stops being a name, and the lead no longer scopes anything.
+  w.leads.set(LEAD, report(LEAD, 'Beta', ['running'], null))
+  await $.command.run({ command: 'factory', args: 'focus own' } as never)
+  await w.clock!.advance(2 * MIN + 1000)
+  const after = (await $.command.run({ command: 'factory', args: 'show' } as never)).text as string
+  expect(after).not.toMatch(/agent-msg focuses/)
+  expect(after).not.toMatch(/ix-board/)
+})
+
+test('a selector is named by its label, else by its kind and the first 8 characters of a UUID', async ($, on) => {
+  trace("FR-016-AC-2")
+  const w = world(on, true)
+  lead(w, { projects: ['11111111-2222-4333-8444-555555555555', 'QSL-77'] })
+  board(w, { combined: () => out('', 1, BAD_MILESTONE), single: () => out('', 1, 'boom') })
+  await started($, w)
+  const lines = await paneLines($)
+  shows(lines, /^project 11111111: boom$/)
+  shows(lines, /^project QSL-77: boom$/)
 })

@@ -70,6 +70,8 @@ Each source keeps to its own part of the view. ix-board is first asked once abou
 
 The aggregate line reads `F fresh, O old, X failed`. An old selector shows its last good progress with its age (`old 5m`, and `stale` past 30 minutes) beside the error. A selector that failed with no earlier value shows its error alone. Where any are old or failed the aggregate is marked partial and is never drawn as complete. When the combined call failed and every single call worked, the pane adds `summed from parts; overlapping selectors may count twice`. A lead whose work report has no initiatives, projects or tickets says `no selectors`.
 
+A refresh that lost a selector, or fell back to single calls, is shown but not kept: the next poll asks ix-board again. A Linear rate limit is one ix-board error with no single calls. When every call fails and no selector has a record, the focus-level record of the last good aggregate is shown, marked old.
+
 The last good progress is kept in `~/.ix/factory-panel/progress.json`, shared by the sessions on the machine, and a record is dropped when no refresh has shown it for 24 hours. Errors of the other sources (`agent-msg work`, `agent-msg focuses`, Prometheus) are shown on the card of the module that uses them, and `/factory show` lists every failing source with its error and the age of its last success. A failing source never blocks another or the first paint.
 
 All of the mod's own files are under `~/.ix/factory-panel/`: the choices, the declarations it reads, the last good progress and the Linear rate-limit cache.

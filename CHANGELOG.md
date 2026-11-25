@@ -8,6 +8,7 @@
 - The first line of the Focus pane and of `/factory show` says why these focuses are shown.
 - `/factory focus <name>` resolves the keywords, then ix-relay's named focus definitions (read-only, `agent-msg focuses list` and `show`), then a lead address (`host:team:segment` or `team:segment`), then a lead summary, on every refresh. Exclusions of a definition are noted, not applied.
 - A lead whose work report has no scope says `no selectors`.
+- A refresh with a failed selector is not cached across polls; a successful combined call also writes a focus-level record that stands in, marked old, when every later call fails.
 - The focus data shape changes (`focuses-4`, `focusMeta-2`).
 
 ## 0.5.0

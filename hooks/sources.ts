@@ -28,6 +28,9 @@ export const sourceOk = (source: SourceName, now: number): void => {
   s.okAt = now
 }
 
+/** Forgets what a source said: nothing asks it any more. */
+export const sourceClear = (source: SourceName): void => void states.delete(source)
+
 export const sourceFailed = (source: SourceName, error: string): void => {
   stateOf(source).error = error
 }
