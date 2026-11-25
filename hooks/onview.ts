@@ -75,7 +75,11 @@ async function ask($: EngineInterface): Promise<boolean> {
     const pane = await $.env.get('TMUX_PANE')
     // One inside the other: neither can say what the person sees.
     if (isHerdr === (pane !== undefined && pane !== '')) return true
-    return await (isHerdr ? askHerdr($) : askTmux($, pane!))
+    if (isHerdr) return await askHerdr($)
+    // A TMUX_PANE can be left over in a terminal started from tmux, and would name someone else's pane.
+    const program = await $.env.get('TERM_PROGRAM')
+    if (!(await $.env.get('TMUX')) || (program !== undefined && program !== 'tmux')) return true
+    return await askTmux($, pane!)
   } catch {
     return true
   }

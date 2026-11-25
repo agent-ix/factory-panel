@@ -1267,3 +1267,45 @@ test('a project named by project-chunk through its name keeps a name-only record
   await progress(w, [proj('Named'), proj('Other')], { manual: true })
   expect(b.calls.filter(c => c.startsWith('project-chunk'))).toHaveLength(1)
 })
+
+test('answers of a search level are drawn and recorded when another call of the level is rate limited', async ($, on) => {
+  trace("FR-026-AC-6")
+  const w = world(on, true)
+  let asked = 0
+  // C fails the combined call as a bad project would, and its half then meets the rate limit.
+  const b = ix(w, { projects: { A: project('A', 1, 2), B: project('B', 2, 4), C: () => out('', 4, asked++ === 0 ? 'bad data' : 'Linear rate limited; retry in 60s'), D: project('D', 1, 4) } })
+  const shown = await progress(w, ['A', 'B', 'C', 'D'].map(proj))
+  expect(b.calls).toHaveLength(3)
+  expect(shown.progress!.loose.map(p => [p.name, p.failed])).toEqual([['A', false], ['B', false], ['project C', true], ['project D', true]])
+  expect(saved(w)[`project:${pid('A')}`]).toMatchObject({ done: 1, total: 2 })
+  expect(saved(w)[`project:${pid('B')}`]).toMatchObject({ done: 2, total: 4 })
+  expect(shown.progress!.warnings.map(x => x.kind)).toEqual(['source'])
+})
+
+test('an inferred source error that repeats is held twice as long each time to 30 minutes, r asks after 60 seconds, and an answer starts again', async ($, on) => {
+  trace("FR-025-AC-14")
+  const w = world(on, true)
+  let healthy = false
+  // Words that name no project, from the only call: nothing shows whose fault it is.
+  const b = ix(w, { projects: { P: () => (healthy ? out(statusJson([project('P', 1, 2)])) : out('', 4, 'something went wrong')) } })
+  const poll = (manual = false) => progress(w, [proj('P')], { manual })
+  const after = async (ms: number, manual = false) => (await w.clock!.advance(ms), (await poll(manual), b.calls.length))
+  await poll()
+  expect(b.calls).toHaveLength(1)
+  let calls = 1
+  for (const hold of [5, 10, 20, 30, 30]) {
+    expect(await after((hold - 1) * MIN)).toBe(calls)
+    expect(await after(2 * MIN)).toBe(++calls)
+  }
+  const held = await poll()
+  expect(held.progress!.notes.join(' ')).toMatch(/after 30 minutes, r asks after 60 seconds/)
+  expect(await after(30_000, true)).toBe(calls)
+  expect(await after(31_000, true)).toBe(++calls)
+  healthy = true
+  expect(await after(61_000, true)).toBe(++calls)
+  // The answer is kept the usual 30 minutes; the next failure is held 5.
+  healthy = false
+  expect(await after(31 * MIN)).toBe(++calls)
+  expect(await after(4 * MIN)).toBe(calls)
+  expect(await after(2 * MIN)).toBe(++calls)
+})

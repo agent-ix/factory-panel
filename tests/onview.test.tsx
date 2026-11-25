@@ -59,7 +59,7 @@ const openBand = ($: Parameters<TestBody>[0]) => $.ui.mount({ plugin: 'factory-p
 const pass = (w: World, ms: number): Promise<void> => w.clock!.advance(ms)
 
 const HERDR = { HERDR_ENV: '1', HERDR_PANE_ID: 'w1:p1' }
-const TMUX = { TMUX_PANE: '%0' }
+const TMUX = { TMUX_PANE: '%0', TMUX: '/tmp/tmux-501/default,1,0' }
 
 test('herdr says off view only for a session whose panes are behind another tab or under a zoomed pane', () => {
   trace("FR-027-AC-20")
@@ -162,6 +162,8 @@ for (const [name, env] of [
   ['neither herdr nor tmux', {}],
   ['tmux inside herdr', { ...HERDR, ...TMUX }],
   ['the view check switched off', { ...TMUX, FACTORY_PANEL_VIEW_CHECK: 'off' }],
+  ['a TMUX_PANE left over outside tmux', { TMUX_PANE: '%0' }],
+  ['a TMUX_PANE inherited by another terminal program', { ...TMUX, TERM_PROGRAM: 'iTerm.app' }],
 ] as const) {
   test(`with ${name} no check runs and a drawn view reads`, async ($, on) => {
     trace("FR-027-AC-25")
@@ -176,6 +178,18 @@ for (const [name, env] of [
     await pane.unmount()
   })
 }
+
+test('with TERM_PROGRAM tmux the pane is asked after', async ($, on) => {
+  trace("FR-027-AC-25")
+  const { w, view, checks, escalations } = inside(on, { ...TMUX, TERM_PROGRAM: 'tmux' })
+  view.tmux = '0 0 1 []'
+  await startSession($)
+  const pane = await openPane($, 'escalations')
+  await pass(w, SEC)
+  expect(checks()).toBe(1)
+  expect(escalations()).toBe(0)
+  await pane.unmount()
+})
 
 test('the refresh key reads although the terminal is off view', async ($, on) => {
   trace("FR-027-AC-26")

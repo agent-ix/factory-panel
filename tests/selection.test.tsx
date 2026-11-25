@@ -606,6 +606,9 @@ test('the queue cell shows an unknown Ready as a dash, never as a smaller number
   expect(queueText(null)[0]!.tone).toBeUndefined()
   expect(queueText(4).map(p => p.text).join('')).toBe('4 ready · 2 doing')
   expect(queueText(4)[0]!.tone).toBe('warning')
+  const bare = buildCells(['queue'], { ...snapshotOf(), focuses: [{ ...base, header: null }] })[0]!.parts
+  expect(bare.map(p => p.text).join('')).toMatch(/^- ready/)
+  expect(bare[0]!.tone).toBeUndefined()
 })
 
 test('/factory show prints each feature with its value and where it came from', async () => {

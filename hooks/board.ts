@@ -108,6 +108,8 @@ export type Refresh = {
   blockers: number | null
   /** true where another session is reading the roadmap and nothing of it is at hand: the refresh is asked again soon */
   pending?: boolean
+  /** true where the source error is inferred from refusals that could as well be a project's doing */
+  unproven?: boolean
 }
 
 /** A rate limit of Linear: it holds the whole workspace, so it is thrown for the gate to hold every call. */
@@ -269,6 +271,8 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   const bad = await readBad($)
   const outcomes: Record<string, Outcome> = {}
   let sourceError: string | null = null
+  /** Set with `sourceError` where it is inferred and not said by ix-board's own words. */
+  let isUnproven = false
   let roadmapError: string | null = null
   let pending = false
   let answered = 0
@@ -678,13 +682,14 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
     let level = [first]
     for (let depth = 1; level.length > 0; depth++) {
       const calls = (await Promise.all(level.map(split))).flat()
-      if (sourceError !== null) return
-      // The answers of a level are recorded before its refusals are judged.
+      // The answers of a level are recorded before its refusals are judged, and before a source error ends the search.
       for (const c of calls) if (c.result.ok) await settle(c.refs, c.result)
+      if (sourceError !== null) return
       const refusals = calls.flatMap(c => (!c.result.ok && c.result.timedOut !== true ? [c.result.error] : []))
       const alike = refusals.length > 1 && refusals.length === calls.length && refusals.every(e => e === refusals[0]) && !UUID_IN.test(refusals[0]!)
       if (depth > 1 && succeeded === 0 && alike) {
         sourceError ??= refusals[0]!
+        isUnproven = true
         return
       }
       level = []
@@ -748,6 +753,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   // remembered of any.
   if (sourceError === null && refusal !== null && succeeded === 0 && !healthy.every(ref => suspects.some(x => x.project && x.ref === ref && provenBy(x)))) {
     sourceError = refusal
+    isUnproven = true
     suspects.length = 0
     for (const ref of healthy) delete outcomes[projectKey(ref)]
   }
@@ -787,7 +793,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   for (const [ref, id] of twins) if (outcomes[projectKey(id)] !== undefined) outcomes[projectKey(ref)] = outcomes[projectKey(id)]!
   if (sourceError === null) for (const s of selectors) if (s.kind === 'milestone' || s.kind === 'ticket') outcomes[selectorKey(s)] ??= { ok: false, error: 'timed out' }
 
-  const refresh: Refresh = { at, roadmapError, sourceError, expansions, outcomes, blockers: statusAnswers === 0 || blockers === null ? null : (blockers as Set<string>).size, ...(pending ? { pending: true } : {}) }
+  const refresh: Refresh = { at, roadmapError, sourceError, expansions, outcomes, blockers: statusAnswers === 0 || blockers === null ? null : (blockers as Set<string>).size, ...(pending ? { pending: true } : {}), ...(isUnproven ? { unproven: true } : {}) }
   if (sourceError !== null && RATE.test(sourceError)) {
     const limited = new SourceFailure(sourceError)
     limited.partial = refresh

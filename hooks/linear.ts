@@ -19,6 +19,8 @@ const MANUAL_MIN_MS = 60 * 1000
 
 /** An outcome a source error cut short is held this long, not the whole interval, and not asked again meanwhile. */
 export const UNKEPT_TTL_MS = 5 * 60 * 1000
+/** The longest an outcome that fails time after time in a way that proves nothing is held. */
+export const REPEAT_HOLD_MAX_MS = 30 * 60 * 1000
 /** An entry nobody has fetched or claimed for this long is dropped at the next write. */
 export const ENTRY_UNUSED_MS = 24 * 60 * 60 * 1000
 /**
@@ -36,6 +38,11 @@ type Entry = {
   unkept?: boolean
   /** the error of a read that failed outright, shown while it is held */
   error?: string
+  /** how many reads in a row, since the last that was kept, ended in an inferred source error */
+  streak?: number
+  /** how long such an outcome is held, and when it was read */
+  holdMs?: number
+  triedAt?: number
 }
 type GateFile = { backoffUntil: number | null; entries: Record<string, Entry> }
 
@@ -45,6 +52,8 @@ export type Gated<T> = {
   at: number | null
   /** True when `data` is the outcome of an earlier refresh that a source error cut short, held for a few minutes. */
   held?: boolean
+  /** How long that outcome is held where it is an inferred source error, whose hold doubles each time. */
+  holdMs?: number
   /** set while Linear's rate limit holds */
   backoffUntil: number | null
   error: string | null
@@ -118,6 +127,14 @@ export function retryAfterMs(message: string): number | null {
   return m ? Math.ceil(Number(m[1]) * 1000) : null
 }
 
+export type GateOptions<T> = {
+  manual?: boolean
+  /** false holds a result for UNKEPT_TTL_MS only, not the whole interval */
+  keep?: (data: T) => boolean
+  /** true for a result not kept whose hold doubles each time in a row, up to REPEAT_HOLD_MAX_MS */
+  repeats?: (data: T) => boolean
+}
+
 /**
  * Runs `fetch` for `key` only when no session has in the last `intervalMs`, none is fetching it now,
  * and Linear is not rate limiting; otherwise answers what the last read left.
@@ -126,7 +143,7 @@ export function gatedBoard<T>(
   $: EngineInterface,
   key: string,
   fetch: () => Promise<T>,
-  opts: { manual?: boolean; /** false holds a result for UNKEPT_TTL_MS only, not the whole interval */ keep?: (data: T) => boolean } = {},
+  opts: GateOptions<T> = {},
 ): Promise<Gated<T>> {
   const running = inFlight.get(key)
   if (running) return running as Promise<Gated<T>>
@@ -142,7 +159,7 @@ async function gate<T>(
   $: EngineInterface,
   key: string,
   fetch: () => Promise<T>,
-  opts: { manual?: boolean; keep?: (data: T) => boolean },
+  opts: GateOptions<T>,
 ): Promise<Gated<T>> {
   const now = await $.clock.now()
   const g = await load($)
@@ -152,14 +169,19 @@ async function gate<T>(
     data: had.data as T | null,
     at: had.at,
     held: had.unkept === true,
+    ...(had.unkept === true && had.holdMs !== undefined ? { holdMs: had.holdMs } : {}),
     backoffUntil: backoffUntil !== null && backoffUntil > now ? backoffUntil : null,
     error,
   })
 
   if (g.backoffUntil !== null && g.backoffUntil > now) return cached()
   const wait = opts.manual ? MANUAL_MIN_MS : BOARD_INTERVAL_MS
+  if (had.unkept === true && had.holdMs !== undefined && had.triedAt !== undefined) {
+    // An inferred source error is held for its own time; a manual refresh asks it after 60 seconds.
+    if (now - had.triedAt < (opts.manual ? MANUAL_MIN_MS : had.holdMs)) return cached()
+  }
   // A manual refresh asks again at once when the last one was only held after a failure.
-  if (had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
+  else if (had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
   if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached()
 
   const claim = now + Math.random() / 10
@@ -180,9 +202,15 @@ async function gate<T>(
     // A failed save must not throw the fetched data away: this session still shows it.
     // A result that is not to be kept is shown, held for UNKEPT_TTL_MS, and asked again after it.
     const keep = opts.keep?.(data) ?? true
+    // Only a kept result ends a streak.
+    const isRepeat = !keep && (opts.repeats?.(data) ?? false)
+    const streak = keep ? 0 : (had.streak ?? 0) + (isRepeat ? 1 : 0)
+    const holdMs = isRepeat ? Math.min(UNKEPT_TTL_MS * 2 ** (streak - 1), REPEAT_HOLD_MAX_MS) : undefined
     await exclusive(() =>
       save($, f => {
-        f.entries[key] = keep ? { at, claimAt: null, data } : { at: at - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, data, unkept: true }
+        f.entries[key] = keep
+          ? { at, claimAt: null, data }
+          : { at: at - (BOARD_INTERVAL_MS - (holdMs ?? UNKEPT_TTL_MS)), claimAt: null, data, unkept: true, ...(streak > 0 ? { streak } : {}), ...(holdMs === undefined ? {} : { holdMs, triedAt: at }) }
       }),
     ).catch(() => undefined)
     return { data, at, backoffUntil: null, error: null }
@@ -193,7 +221,7 @@ async function gate<T>(
     await exclusive(() =>
       save($, f => {
         // A read that failed outright is held a few minutes like any source error; Linear's own wait holds every read.
-        if (until === null) f.entries[key] = { data: had.data, at: now - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, unkept: true, error: text }
+        if (until === null) f.entries[key] = { data: had.data, at: now - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, unkept: true, error: text, ...(had.streak === undefined ? {} : { streak: had.streak }) }
         else {
           f.entries[key] = { ...had, claimAt: null }
           f.backoffUntil = until

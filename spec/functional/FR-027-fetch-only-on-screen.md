@@ -41,6 +41,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 - The mod SHALL make no read for a terminal drawing while the session's pane is known to be off view, and SHALL read what is due within 15 seconds of its coming back.
 - In herdr (`HERDR_ENV` is `1`) the mod SHALL ask `herdr api snapshot`, and the pane is off view only where every pane that lists this session's id is on a tab other than `focused_tab_id`, or on that tab under another pane zoomed over it.
 - In tmux (`TMUX_PANE` is set) the mod SHALL ask `tmux display-message` for the pane, and the pane is off view only where no client is viewing its window, or another pane is zoomed over it, and no control mode client is attached. With several clients attached, one that views the window is enough.
+- The mod SHALL count the pane on view where `TMUX_PANE` is set but `TMUX` is not, or `TERM_PROGRAM` is set to something other than `tmux`, since the variable is then left over from another terminal.
 - The mod SHALL count the pane on view where neither or both of herdr and tmux are set, where the command fails or takes more than 3 seconds, where its answer does not say, and where `FACTORY_PANEL_VIEW_CHECK` is `off`.
 - The mod SHALL run the check only when a drawn view has a read due, at most once in 15 seconds, and as one command.
 - The `r` key SHALL read without the check, since the person pressed it.
@@ -90,7 +91,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | ID | Constraint | Type | Validation |
 |----|------------|------|------------|
 | FR-027-CON-1 | herdr 0.9.1 gives each attached client its own view and reports only the view of the client that last switched; neither `herdr api snapshot`, `herdr status`, `herdr session list` nor any method or event of its API lists or counts attached clients. Where two or more clients are attached to one herdr server (another window, or another machine's `herdr --machine`), a pane only another client views counts off view, and it still does after the other clients leave until the remaining one switches tab or workspace. A server with no client attached still reports a focused tab, whose sessions count on view. | Environment | Demonstration |
-| FR-027-CON-2 | Nothing says whether the terminal window itself is hidden, covered or without focus, nor whether a session herdr's Claude integration has not reported, a session in tmux inside herdr, or one in another multiplexer is on view. These count as on view. | Environment | Inspection |
+| FR-027-CON-2 | Nothing says whether the terminal window itself is hidden, covered or without focus, nor whether a session herdr's Claude integration has not reported, a session in tmux inside herdr, or one in another multiplexer is on view. These count as on view. A terminal started from a tmux pane inherits `TMUX` and `TMUX_PANE`; where it sets no `TERM_PROGRAM` of its own the mod cannot tell it from that pane. | Environment | Inspection |
 | FR-027-CON-3 | Whether the desktop app draws panes that are not on screen, and what `$.ui.panes()` says of them, is not verified. Its drawings count as on view. | Environment | Inspection |
 
 ## Acceptance Criteria
@@ -121,7 +122,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | FR-027-AC-22 | A tmux answer counts the pane off view where no client views its window or another pane is zoomed over it, and on view where any one of several attached clients views it. | Test |
 | FR-027-AC-23 | With the pane behind another herdr tab or tmux window nothing is read through a drawing, and what is due is read within 16 seconds of its coming back. | Test |
 | FR-027-AC-24 | The check runs at most once in 15 seconds, and not while no drawn view has a read due. | Test |
-| FR-027-AC-25 | With neither herdr nor tmux, with both, or with `FACTORY_PANEL_VIEW_CHECK` `off`, no check runs and a drawn view reads. | Test |
+| FR-027-AC-25 | With neither herdr nor tmux, with both, with a `TMUX_PANE` and no `TMUX` or another `TERM_PROGRAM`, or with `FACTORY_PANEL_VIEW_CHECK` `off`, no check runs and a drawn view reads. | Test |
 | FR-027-AC-26 | The `r` key reads while the pane is off view. | Test |
 | FR-027-AC-27 | A desktop pane or widget reads on being drawn, without a view check and whatever `$.ui.panes()` says. | Test |
 | FR-027-AC-28 | In real herdr and tmux sessions a panel that is behind another tab, or in a session nobody is attached to, makes no read other than the view check, and reads again when it comes back. | Demonstration |

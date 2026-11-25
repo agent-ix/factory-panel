@@ -199,8 +199,8 @@ const queue = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
   if (f === undefined) return null
   const { inProgress } = progressOf(f)
-  // An unknown Ready is a dash, never a smaller number.
-  const ready = f.header === null ? 0 : f.header.ready
+  // An unknown Ready, as of a focus with no header yet, is a dash, never a smaller number.
+  const ready = f.header?.ready ?? null
   return { id: 'queue', pane: 'focus', parts: [{ text: `${ready ?? '-'} ready`, tone: (ready ?? 0) > 0 ? 'warning' : undefined }, { text: ` · ${inProgress} doing`, dim: true }] }
 }
 

@@ -40,6 +40,8 @@ The mod SHALL key last-good records by project id, remember which projects belon
 - The mod SHALL ask ix-board again at the first poll after those 5 minutes.
 - Where a gated read fails outright with no rate limit, the mod SHALL hold it for 5 minutes and keep showing its error meanwhile.
 - A manual refresh SHALL ask ix-board once 60 seconds have passed since the last read, and at once where that read is held for a source error, unless a rate limit holds as [FR-026](./FR-026-per-project-calls.md) states.
+- Where the source error is one [FR-026](./FR-026-per-project-calls.md) infers from refusals, not one ix-board's own words name, the mod SHALL double that time for each such refresh in a row, to 10, 20 and at most 30 minutes, until a refresh is kept for the full interval.
+- Where that doubled time holds an outcome, a manual refresh SHALL ask once 60 seconds have passed.
 
 ## Acceptance Criteria
 
@@ -57,6 +59,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 | FR-025-AC-11 | Given a refresh cut short by a source error, polls in the next 5 minutes make no call and show the earlier outcome, the first poll after asks again, and a manual refresh asks at once. | Test |
 | FR-025-AC-12 | Given a gated read that fails outright, it is not made again for 5 minutes and its error is answered meanwhile. | Test |
 | FR-025-AC-13 | Given a gated read that succeeded, no session makes it again for 30 minutes, and the first after that does. | Test |
+| FR-025-AC-14 | Refreshes that keep ending in an inferred source error are called again after 5, 10, 20, 30 and 30 minutes, a manual refresh calls once 60 seconds have passed and not before, and the first such error after a refresh with none is held 5 minutes. | Test |
 
 ## Superseded in 0.7.1
 

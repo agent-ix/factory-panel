@@ -34,7 +34,7 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
         throw error
       })
     },
-    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true },
+    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true, repeats: (r: Refresh) => r.unproven === true },
   )
   const now = await $.clock.now()
   const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
@@ -58,6 +58,7 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
   else if (ran && refresh !== null) sourceOk('ix-board', now)
   for (const w of composed.warnings) if (w.kind !== 'source' || w.name !== 'ix-board') failed.set(projectKeyOfWarning(w), { name: w.name, error: w.text })
 
-  const held = read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again after 5 minutes, r asks now`] : []
+  const when = read.holdMs === undefined ? 'after 5 minutes, r asks now' : `after ${Math.round(read.holdMs / 60_000)} minutes, r asks after 60 seconds`
+  const held = read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again ${when}`] : []
   return { initiatives: composed.initiatives, loose: composed.loose, header: composed.header, warnings: composed.warnings, fetchedAt: composed.fetchedAt, notes: held }
 }
