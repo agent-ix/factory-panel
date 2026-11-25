@@ -34,7 +34,8 @@ The mod SHALL resolve the name of `/factory focus <name>` against the keywords, 
 - A row lacking `name`, `team` or `state` SHALL match by `focus_id` only.
 - Where a row matched by `focus_id` is unavailable, the mod SHALL show the id with the row's `reason` and no progress.
 - The mod SHALL skip a definition whose `state` is not `active`, including one that `list` returns without `--archived`.
-- Where the session is identified, the mod SHALL consider only definitions whose `team` equals the session's team.
+- Where the session is identified, the mod SHALL apply the team filter only to rows that carry a `team`.
+- Where the session is identified, the mod SHALL consider only those rows whose `team` equals the session's team.
 - Where the session is not identified, the mod SHALL consider every definition.
 - The mod SHALL read the members of a matched definition from `definition.include`.
 - The mod SHALL compute the progress of a named focus over those members as selectors under [FR-016](./FR-016-isolated-selectors.md).
@@ -64,7 +65,7 @@ The mod SHALL resolve the name of `/factory focus <name>` against the keywords, 
 | FR-020-AC-9 | Given an archived definition named `Beta` that `list` returns, `/factory focus Beta` does not use it. | Test |
 | FR-020-AC-10 | Given no definition, no lead address and no summary matches, the pane shows no focus and says nothing matched. | Test |
 | FR-020-AC-11 | Across every test, the only `agent-msg focuses` subcommands the mod runs are `list` and `show`. | Inspection |
-| FR-020-AC-12 | Given an unavailable row `{focus_id, available:false, code, reason}`, `/factory focus <that focus_id>` shows the id and the reason with no progress, and a name equal to no field of it never matches it. | Test |
+| FR-020-AC-12 | Given an unavailable row `{focus_id, available:false, code, reason}`, and the session team QSL, `/factory focus <that focus_id>` shows the id and the reason with no progress, and a name equal to no field of it never matches it. | Test |
 | FR-020-AC-13 | Given a `show` that exits non-zero or prints text that is not JSON for a matched definition, the mod shows a source error and continues with the lead address and lead summary steps. | Test |
 | FR-020-AC-14 | Given `list` or `show` that never returns, the mod falls to the lead address and lead summary steps within 5 seconds and shows a source error. | Test |
 | FR-020-AC-15 | Given `/factory focus QSL:CODE` and leads `host1:QSL:code` and `host2:QSL:code`, both are shown and the pane says two matched. | Test |

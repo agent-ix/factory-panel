@@ -21,9 +21,11 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 - A selector SHALL be one initiative, one project, one milestone or one ticket of the shown focus.
 - The selectors of a named focus SHALL be its `include` members.
 - The selectors of a lead's focus SHALL be the initiatives, projects and tickets of its `agent-msg work` report scope.
-- The mod SHALL map a selector to the argument of a single `ix-board --json focus status` call: `--initiative <ref>`, `--project <ref>`, `--milestone <ref>` for a milestone together with its project, or `--issue <ref>`.
+- The mod SHALL map a selector to the argument of a single `ix-board --json focus status` call: `--initiative <ref>`, `--project <ref>`, `--milestone <ref>` alone, or `--issue <ref>`, where a ref is a UUID, an identifier or an exact name as `ix-board focus status --help` states.
 - The mod SHALL first ask `ix-board --json focus status` once with every selector, with a timeout of 15 seconds.
-- Where the combined call ran and exited non-zero with an error, the mod SHALL ask again once for each selector separately.
+- Where the combined call exited non-zero with stderr text that does not indicate an authentication or authorisation failure, the mod SHALL ask again once for each selector separately.
+- The mod SHALL classify a spawn failure, a timeout, and stderr text that indicates an authentication or authorisation failure as a source error.
+- The mod SHALL classify any other non-zero exit with stderr text as a selector error.
 - Where the combined call could not start, timed out, or failed to authenticate, the mod SHALL show one ix-board source error.
 - Where the combined call could not start, timed out, or failed to authenticate, the mod SHALL make no single-selector call.
 - The mod SHALL run at most 4 single-selector calls at once, each with a timeout of 5 seconds.
@@ -57,10 +59,11 @@ The mod SHALL compute the progress of a focus per selector, so that one failing 
 | FR-016-AC-5 | Given every selector fails and no record exists, the pane shows each selector with its error, draws no aggregate, and still draws the lead's summary. | Test |
 | FR-016-AC-6 | Given a single-selector call that does not answer within the 5 second timeout of NFR-004, that selector is failed with a timeout error and the other selectors are drawn. | Test |
 | FR-016-AC-7 | Given a combined call that fails and every single call succeeds, the aggregate is the sum of the singles, is not partial, and carries the note `summed from parts; overlapping selectors may count twice`. | Test |
-| FR-016-AC-8 | Given ix-board is missing, or the combined call times out at 15 seconds, or fails to authenticate, the mod shows one ix-board error and makes no single-selector call. | Test |
+| FR-016-AC-8 | Given ix-board is missing, or the combined call times out at 15 seconds, or exits with stderr `authentication failed`, the mod shows one ix-board error and makes no single-selector call. | Test |
 | FR-016-AC-9 | Given 10 selectors and a failing combined call, the mod makes at most 11 calls, never more than 4 at once, and each selector unanswered at 30 seconds is failed with `timed out`. | Test |
 | FR-016-AC-10 | Given a refresh in flight and two ticks, only one further refresh runs afterwards, and a result older than the stored record is ignored. | Test |
-| FR-016-AC-11 | Given a milestone member with ref m1 and project p1, the single call is `--milestone m1` with project p1; an initiative, project and ticket map to `--initiative`, `--project` and `--issue`. | Test |
+| FR-016-AC-11 | Given a milestone member with ref m1, the single call is `--milestone m1` with no project argument; an initiative, project and ticket map to `--initiative`, `--project` and `--issue`. | Test |
+| FR-016-AC-12 | Given a lead focus whose work report scope has initiatives, projects and tickets, those become the selectors, and given a report with none, the pane says `no selectors` and ix-board is not called. | Test |
 
 ## Dependencies
 
