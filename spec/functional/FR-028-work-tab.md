@@ -29,9 +29,12 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - A lead whose last read failed SHALL carry the mark `▲` in place of its status, and read `old <age>` where an earlier report is drawn, with the age of that read, or `not read` where there is none.
 - Each lead SHALL be drawn as its read answers.
 - The header SHALL say how many leads are listed, and how many are `not read` and `old`.
-- Under each lead the mod SHALL list the tickets of the agents in `agent-msg work --lead <address> show`, keeping each agent's name, ticket, role, status and report time, newest action first.
+- Under each lead the mod SHALL list the tickets of the agents in `agent-msg work --lead <address> show`, keeping each agent's name, ticket, role, status and report time, and the tickets the report's focus names (`focus.tickets`), newest action first.
+- A lead with no ticket SHALL say `no ticket reported`, with the summary of its reported focus under it where it has one.
+- The mod SHALL name, in one line under the leads, the listed leads of the selected teams that answered with no report: `N leads report no work: <addresses>`.
 - A badge SHALL count only agents that are running or waiting.
 - A ticket row SHALL show its id, the Linear state and title where ix-board's focus status names the ticket, its badges, and its last action as `<role> <status> <age>`.
+- A ticket that only a focus names, with no transition in the events, SHALL read `focus <age>` as its last action, with the age of the focus report.
 - The last action SHALL be the latest transition of an agent on that ticket in `agent-msg work events`. The stream starts at its oldest event, so the mod SHALL read it in pages of 1000 after a cursor it keeps between reads, at most 5 pages per read, so that a later read asks only for newer events; where more than 5 pages are behind it SHALL warn and carry on at the next read; where the events cannot be read it SHALL be the latest report of an agent on the ticket.
 - The badges SHALL be `[pr]` for a ticket with an open or draft PR, `[review×N]` for N agents in a reviewer role on the ticket (`[review]` when N is 1), `[spec]` for a spec role or the state Specify or Specced, and `[gate]` for a gate role.
 - A ticket that is in progress in the focus status but that no lead reports SHALL NOT be listed under a lead.
@@ -85,6 +88,9 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-16 | A review reported while the view is on screen is listed within 60 seconds. | Test |
 | FR-028-AC-17 | With no `activity` in the focus status, `a` lists the role events and says `needs ix-board ≥0.9.0`. | Test |
 | FR-028-AC-18 | Under `a`, 5 role events show beside 40 newer activity entries, and rows either kind does not fill go to the other, listed together newest first. | Test |
+| FR-028-AC-19 | A ticket the focus of a lead names is listed under it once, also where it has no agent, with `focus <age>` where no agent or transition speaks of it, and is counted with the tickets. | Test |
+| FR-028-AC-20 | A lead with no ticket says `no ticket reported` and the summary of its focus. | Test |
+| FR-028-AC-21 | The leads of the selected teams that answer with no report are named in one line, and a lead that could not be read is not among them. | Test |
 
 ## Dependencies
 

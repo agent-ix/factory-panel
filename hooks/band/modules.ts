@@ -291,9 +291,31 @@ const work = (s: Snapshot): Cell | null => {
   return { id: 'work', pane: 'work', parts, alert }
 }
 
+/** The teams the Team view and the team cell read: those of the session's focus, else the teams choice. None: every team. */
+export const selectedTeams = (scope: Scope): string[] => focusTeams(scope) ?? [...scope.teams]
+
+/**
+ * The team views a selection reads: `shown`, those keyed with a selected team, in the selection's order; `unmatched`,
+ * the exporter ids with no key, which cannot be matched to one; and the selected teams that have no series. With no
+ * team selected every view is shown, those with a key first.
+ */
+export function viewsOf(views: readonly TeamView[], selected: readonly string[]): { shown: TeamView[]; unmatched: TeamView[]; missing: string[] } {
+  const keyed = views.filter(v => v.keyed)
+  const unkeyed = views.filter(v => !v.keyed)
+  if (selected.length === 0) return { shown: [...keyed, ...unkeyed], unmatched: [], missing: [] }
+  const of = (name: string) => keyed.filter(v => same(v.team, name))
+  return { shown: selected.flatMap(of), unmatched: unkeyed, missing: selected.filter(name => of(name).length === 0) }
+}
+
+/** The views a one-line summary reads: the selected teams that have series, else the ids with no key. */
+export const headlineViews = (views: readonly TeamView[], selected: readonly string[]): TeamView[] => {
+  const { shown, unmatched } = viewsOf(views, selected)
+  return shown.length > 0 ? shown : unmatched
+}
+
 /** The first tile of the first team that has a reading: the one the Team view shows first. */
 const team = (s: Snapshot): Cell | null => {
-  for (const t of s.teamViews) {
+  for (const t of headlineViews(s.teamViews, selectedTeams(s.scope))) {
     const tile = t.metrics.find(m => m.value !== null)
     if (tile !== undefined && tile.value !== null) {
       const value = tile.unit === 'seconds' ? `${Math.round(tile.value)}s` : Number.isInteger(tile.value) ? String(tile.value) : tile.value.toFixed(1)

@@ -26,9 +26,9 @@ const EVENT_LIMIT = 1000
 const EVENT_PAGES = 5
 const RECENT_ROWS = 10
 
-const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-2' })
+const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
 const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, WorkLast>, { shape: 'workLast-1' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0 } as WorkMeta, { shape: 'workMeta-3' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [] } as WorkMeta, { shape: 'workMeta-4' })
 const EMPTY_FEED: WorkFeed = { events: [], phase: {}, error: null }
 const workFeed = atom({ plugin: 'factory-panel', key: 'workFeed' } as const, EMPTY_FEED, { shape: 'workFeed-1' })
 export const workCollapsed = atom({ plugin: 'factory-panel', key: 'workCollapsed' } as const, [] as string[])
@@ -43,8 +43,11 @@ const agentsOf = (report: WorkReport): WorkAgent[] =>
 const leadOf = (address: string, report: WorkReport): Omit<WorkLead, 'error' | 'readAt'> => {
   const agents = agentsOf(report)
   const times = [...agents.map(a => a.reportedAt), report.focus?.reported_at_ms, report.scope?.reported_at_ms].filter((t): t is number => typeof t === 'number')
-  return { address: report.binding?.address ?? address, status: statusOf(report.agents), reportedAt: times.length === 0 ? null : Math.max(...times), agents }
+  return { address: report.binding?.address ?? address, status: statusOf(report.agents), reportedAt: times.length === 0 ? null : Math.max(...times), agents, focus: focusOf(report) }
 }
+
+const focusOf = ({ focus }: WorkReport): WorkLead['focus'] =>
+  focus ? { summary: focus.summary ?? '', tickets: (focus.tickets ?? []).filter(t => typeof t === 'string' && t !== ''), at: typeof focus.reported_at_ms === 'number' ? focus.reported_at_ms : null } : null
 
 /**
  * The leads to draw while `reads` come in: one not yet answered keeps what was drawn of it, one that has reported
@@ -56,7 +59,7 @@ function leadsOf(addresses: readonly string[], reads: ReadonlyMap<string, LeadRe
     if (read === undefined) return drawn.filter(l => l.address === address)
     if (read.report) return [{ ...leadOf(address, read.report), error: read.error, readAt: read.at }]
     // A report of nothing is a report too: such a lead that stops answering is old, and one never read has no age.
-    return read.error === null ? [] : [{ address, status: 'unknown', reportedAt: null, agents: [], error: read.error, readAt: read.at }]
+    return read.error === null ? [] : [{ address, status: 'unknown', reportedAt: null, agents: [], focus: null, error: read.error, readAt: read.at }]
   })
 }
 
@@ -165,7 +168,8 @@ async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean
     else sourceFailed('agent-msg work', failure)
     const now = await $.clock.now()
     const relayError = failure === null ? null : `no lead could be read, ${failed[0]}`
-    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size }))
+    const silent = [...reads.values()].filter(r => r.error === null && !r.report).map(r => r.address).sort((a, b) => a.localeCompare(b))
+    await update($, workMeta, () => ({ at: now, busy: false, error: failed.length === 0 ? null : failed.join(' · '), relayError, listed: reads.size, silent }))
     return failure === null
   } catch (error) {
     await update($, workMeta, m => ({ ...m, busy: false, error: errorText(error), relayError: errorText(error) }))
@@ -263,6 +267,7 @@ export function registerWork(on: On, _options: Options): void {
           </Box>
           {isOpen && l.tickets.map(t => <Text key={`${l.address}-${t.id}`} wrap="truncate-end">{ticketLine(t, now, width)}</Text>)}
           {isOpen && l.readAt !== null && l.tickets.length === 0 && <Text dimColor>   no ticket reported</Text>}
+          {isOpen && l.tickets.length === 0 && l.summary !== '' && <Text dimColor wrap="truncate-end">{`   focus: ${l.summary}`}</Text>}
         </Box>
       )
     }
@@ -307,6 +312,10 @@ export function registerWork(on: On, _options: Options): void {
           <Box flexDirection="column" backgroundColor={CARD_BG}>
             {view.leads.map(leadBlock)}
           </Box>
+        )}
+
+        {meta.silent.length > 0 && (
+          <Text dimColor wrap="wrap">{`${meta.silent.length} ${meta.silent.length === 1 ? 'lead reports' : 'leads report'} no work: ${meta.silent.join(', ')}`}</Text>
         )}
 
         <Box flexDirection="column">

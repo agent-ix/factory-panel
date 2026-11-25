@@ -25,8 +25,8 @@ const focusMeta = atom({ plugin: 'factory-panel', key: 'focusMeta' } as const, {
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], { shape: 'escalations-1' })
 const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden' } as const, [] as string[])
 const teamViews = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-4' })
-const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-2' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0 } as WorkMeta, { shape: 'workMeta-3' })
+const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [] } as WorkMeta, { shape: 'workMeta-4' })
 const workBoards = atom({ plugin: 'factory-panel', key: 'workBoards' } as const, {} as Record<string, WorkBoard>, { shape: 'workBoards-1' })
 
 // Facts learned at session start: the machine this session runs on.

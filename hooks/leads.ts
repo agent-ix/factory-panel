@@ -22,7 +22,7 @@ export type WorkReport = {
   binding?: { machine?: string; kind?: string; address?: string }
   agents?: { name?: string; ticket?: string; role?: string; status?: string; reported_at_ms?: number }[]
   scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number } | null
-  focus?: { summary?: string; reported_at_ms?: number } | null
+  focus?: { summary?: string; tickets?: string[]; reported_at_ms?: number } | null
 }
 
 export type LeadRead = {

@@ -7,6 +7,7 @@ import { ACCENT, dots } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
 import { drawCapacity, pollCapacity } from './capacity'
+import { headlineViews, viewsOf } from './band/modules'
 import { drawRoles, retroTeams } from './roles'
 import { home, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
@@ -24,6 +25,8 @@ const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
 const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-4' })
+/** The exporter ids with no team key whose tiles are open. */
+const teamOpen = atom({ plugin: 'factory-panel', key: 'teamOpen' } as const, [] as string[])
 /** Teams whose health strip lists its regressing metrics. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
 const retro = atom({ plugin: 'factory-panel', key: 'retro' } as const, [] as RetroView[], { shape: 'retro-1' })
@@ -350,19 +353,23 @@ export function registerTeam(on: On, options: Options): void {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
     const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
-    const [list, meta, health, open, rmeta, warnOpen] = await Promise.all([read($, teams), read($, teamMeta), read($, retro), read($, retroOpen), read($, retroMeta), read($, retroWarn)])
+    const [list, meta, health, open, rmeta, warnOpen, opened] = await Promise.all([read($, teams), read($, teamMeta), read($, retro), read($, retroOpen), read($, retroMeta), read($, retroWarn), read($, teamOpen)])
+    const selected = retroTeams()
+    const { shown, unmatched, missing } = viewsOf(list, selected)
     const now = await $.clock.now()
     const dashboard = `${options.grafanaUrl.replace(/\/$/, '')}/d/ix-team-flow-effort`
 
     if (e.props.placement === 'widget') {
-      const closures = list.map(t => t.metrics.find(m => m.key === 'closures'))
+      const headline = headlineViews(list, selected)
+      const closures = headline.map(t => t.metrics.find(m => m.key === 'closures'))
       const known = closures.flatMap(m => (m === undefined || m.value === null ? [] : [{ value: m.value, atLeast: m.atLeast }]))
-      // A team with no reading, or only a lower bound, makes the sum one; with no reading at all it is unknown, not 0.
-      const isBound = known.length < closures.length || known.some(m => m.atLeast)
+      // A team with no reading, or only a lower bound, makes the sum one, as does a selected team with no series beside
+      // one that has; with no reading at all it is unknown, not 0.
+      const isBound = known.length < closures.length || known.some(m => m.atLeast) || (shown.length > 0 && missing.length > 0)
       const total = known.length === 0 ? '—' : `${isBound ? '≥' : ''}${Math.round(known.reduce((a, m) => a + m.value, 0))}`
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{list.length > 0 ? `${total} closures / 24h` : 'no team metrics'}</Text>
+          <Text weight="semibold">{headline.length > 0 ? `${total} closures / 24h` : 'no team metrics'}</Text>
         </Box>
       )
     }
@@ -413,6 +420,34 @@ export function registerTeam(on: On, options: Options): void {
         })}
       </Box>
     )
+
+    const tiles = (t: TeamView) =>
+      GROUPS.map(g => (
+        <Box key={g.id} flexDirection="column">
+          <Text dimColor size="caption">{g.title}</Text>
+          <Box flexDirection="row" flexWrap="wrap" gap={1}>
+            {t.metrics.filter(m => m.group === g.id).map(m => tile(t.team, m))}
+          </Box>
+          {g.id === 'velocity' && dailyRows(t)}
+        </Box>
+      ))
+
+    // An id with no key may be any team: one closed row says what it has, and opens to its tiles.
+    const unmatchedTeam = (t: TeamView) => {
+      const isOpen = opened.includes(t.team)
+      const valued = t.metrics.filter(m => m.value !== null).length
+      return (
+        <Box key={t.team} flexDirection="column" gap={1}>
+          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+            <Button key={`unkeyed-${t.team}`} plain label={isOpen ? '▾' : '▸'} onPress={() => void update($, teamOpen, l => (l.includes(t.team) ? l.filter(x => x !== t.team) : [...l, t.team]))} />
+            <Text weight="semibold">{t.team}</Text>
+            <Text dimColor size="caption">exporter id, no team key</Text>
+            <Text dimColor size="caption">{`${valued} of ${t.metrics.length} metrics have a value`}</Text>
+          </Box>
+          {isOpen && tiles(t)}
+        </Box>
+      )
+    }
 
     const healthStrip = (v: RetroView) => {
       const isOpen = open.includes(v.team)
@@ -469,23 +504,19 @@ export function registerTeam(on: On, options: Options): void {
           </Box>
         )}
 
-        {list.map(t => (
+        {list.length > 0 && missing.length > 0 && (
+          <Text dimColor wrap="wrap">{`No team series carries the key ${missing.join(', ')}.${unmatched.length > 0 ? ' The exporter ids below have no team_key (ix-board publishes it from 0.12.0), so which team each is cannot be told.' : ''}`}</Text>
+        )}
+        {shown.map(t => (
           <Box key={t.team} flexDirection="column" gap={1}>
             <Box flexDirection="row" gap={1} alignItems="center">
               <Text weight="semibold">{t.team}</Text>
               {!t.keyed && <Text dimColor size="caption">exporter id, no team key</Text>}
             </Box>
-            {GROUPS.map(g => (
-              <Box key={g.id} flexDirection="column">
-                <Text dimColor size="caption">{g.title}</Text>
-                <Box flexDirection="row" flexWrap="wrap" gap={1}>
-                  {t.metrics.filter(m => m.group === g.id).map(m => tile(t.team, m))}
-                </Box>
-                {g.id === 'velocity' && dailyRows(t)}
-              </Box>
-            ))}
+            {tiles(t)}
           </Box>
         ))}
+        {unmatched.map(unmatchedTeam)}
 
         {rmeta.error !== null && warnOpen && rmeta.error.split(' · ').map(x => <Text key={x} color="warning" size="caption">{`ix-board retro: ${x}`}</Text>)}
         <Box flexDirection="row" justifyContent="flex-end" gap={2} alignItems="center">

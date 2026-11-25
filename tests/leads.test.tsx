@@ -246,7 +246,8 @@ test('a lead that had reported nothing and stops answering is old, not never rea
   await startSession($)
   const ui = await mount($)
   await w.clock!.advance(SEC)
-  expect((await lines(ui)).join('\n')).not.toContain(FAR)
+  // Named with those that report nothing, and no row of its own.
+  expect(await lines(ui)).not.toContain(FAR)
   isDown = true
   await w.clock!.advance(MIN)
   const drawn = (await lines(ui)).join('\n')

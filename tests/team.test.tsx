@@ -3,7 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
 import { classesOf } from '../hooks/team'
-import { FP, out, startSession, world } from './world'
+import { FP, drawBand, out, startSession, world } from './world'
 import type { World } from './world'
 
 // Tests for the Team tab: its tiles, teams, daily rows and retro health (FR-029).
@@ -75,9 +75,11 @@ async function setup($: $t, on: Parameters<TestBody>[1], { delta = () => out(DEL
   return w
 }
 
-async function draw($: $t, w: World, wait = 1000) {
+/** Draws the pane after `wait`; the rows of the keyless ids are opened unless `opened` is false. */
+async function draw($: $t, w: World, wait = 1000, opened = true) {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(wait)
+  if (opened) for (const b of await ui.findAll({ type: 'Button' })) if (b.key?.startsWith('unkeyed-') && (b.props as { label?: string }).label === '▸') await ui.press({ key: b.key })
   const els = async () => (await ui.findAll({ type: 'Text' })).map(t => ({ text: t.text ?? '', color: (t.props as { color?: string }).color }))
   const lines = (await els()).map(e => e.text)
   const buttons = (await ui.findAll({ type: 'Button' })).map(b => String((b.props as { label?: string }).label ?? ''))
@@ -267,6 +269,105 @@ test('the retro delta is asked for the focus teams with their config path, and a
   await d.ui.unmount()
 })
 
+// ---------------------------------------------------------------- the selected teams
+
+/** A session whose declaration selects `picked`. */
+const declaring = (picked: Record<string, unknown>) => (w: World) => {
+  w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify(picked))
+}
+const THREE = [series('ready_issues', [4], { key: 'QSL' }), series('ready_issues', [9], { id: 'swm', key: 'SWM' }), series('ready_issues', [2], { id: 'aaa', key: 'AAA' })]
+const count = (lines: string[], text: string) => lines.filter(l => l === text).length
+/** The team names of the headings drawn, in order. */
+const headings = (lines: string[], names: string[]) => lines.filter(l => names.includes(l))
+
+test('only the selected team keys have tiles', async ($, on) => {
+  trace("FR-029-AC-31")
+  const w = await setup($, on, { published: THREE })
+  const d = await draw($, w)
+  expect(headings(d.lines, ['QSL', 'SWM', 'AAA'])).toEqual(['QSL'])
+  expect(count(d.lines, 'Ready issues')).toBe(1)
+  expect(after(d.lines, 'Ready issues')).toBe('4')
+  expect(d.lines.join('\n')).not.toContain('No team series carries the key')
+  await d.ui.unmount()
+})
+
+test('the selected teams are drawn in the order of the selection', async ($, on) => {
+  trace("FR-029-AC-31")
+  const w = await setup($, on, { published: THREE, arrange: declaring({ focus: 'Alpha', teams: ['SWM', 'QSL'] }) })
+  const d = await draw($, w)
+  expect(headings(d.lines, ['QSL', 'SWM', 'AAA'])).toEqual(['SWM', 'QSL'])
+  await d.ui.unmount()
+})
+
+test('with no team selected every team is drawn, those with a key first', async ($, on) => {
+  trace("FR-029-AC-31")
+  const w = await setup($, on, { published: [series('ready_issues', [7], { id: 'aaa-id' }), series('ready_issues', [4], { key: 'QSL' })], arrange: w => {
+    w.whoami.value = undefined
+  } })
+  const d = await draw($, w, 6000)
+  expect(headings(d.lines, ['QSL', 'aaa-id'])).toEqual(['QSL', 'aaa-id'])
+  expect(count(d.lines, 'Ready issues')).toBe(2)
+  await d.ui.unmount()
+})
+
+test('an exporter id with no key is one closed row that opens to its tiles and closes again', async ($, on) => {
+  trace("FR-029-AC-32")
+  const w = await setup($, on, { published: [series('ready_issues', [4], { id: 'keyed', key: 'QSL' }), series('ready_issues', [7]), series('wip_active', [1]), series('blocked_issues', [2], { ago: 1200 })] })
+  const d = await draw($, w, 1000, false)
+  expect(d.lines.slice(d.lines.indexOf('fsl'), d.lines.indexOf('fsl') + 3)).toEqual(['fsl', 'exporter id, no team key', '2 of 17 metrics have a value'])
+  expect(count(d.lines, 'Ready issues')).toBe(1)
+  const texts = async () => (await d.ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  await d.ui.press({ key: 'unkeyed-fsl' })
+  expect(count(await texts(), 'Ready issues')).toBe(2)
+  await d.ui.press({ key: 'unkeyed-fsl' })
+  expect(count(await texts(), 'Ready issues')).toBe(1)
+  await d.ui.unmount()
+})
+
+test('a selected team with no series is named, with why the keyless ids cannot be told apart', async ($, on) => {
+  trace("FR-029-AC-33")
+  const w = await setup($, on, { published: [series('ready_issues', [7])] })
+  const d = await draw($, w, 1000, false)
+  expect(d.lines).toContain('No team series carries the key QSL. The exporter ids below have no team_key (ix-board publishes it from 0.12.0), so which team each is cannot be told.')
+  await d.ui.unmount()
+})
+
+test('a selected team with no series beside keyed ones of others is only named', async ($, on) => {
+  trace("FR-029-AC-33")
+  const w = await setup($, on, { published: [series('ready_issues', [9], { id: 'swm', key: 'SWM' })] })
+  const d = await draw($, w)
+  expect(d.lines).toContain('No team series carries the key QSL.')
+  expect(d.lines).not.toContain('SWM')
+  await d.ui.unmount()
+})
+
+const closures = (n: number, id: string, key?: string) => series('verified_path_closed_24h', [n], { id, key })
+const WIDGET: [string, Series[], string[], string][] = [
+  ['the selected team only', [closures(4, 'fsl', 'QSL'), closures(9, 'swm', 'SWM'), closures(7, 'blank')], ['QSL'], '4 closures / 24h'],
+  ['a lower bound where a selected team has no series', [closures(4, 'fsl', 'QSL')], ['QSL', 'ENG'], '≥4 closures / 24h'],
+  ['the keyless ids where no selected team has series', [closures(7, 'fsl'), closures(2, 'swarm-tools'), closures(9, 'swm', 'SWM')], ['QSL'], '9 closures / 24h'],
+]
+for (const [name, published, teams, text] of WIDGET)
+  test(`the widget reads ${name} of the selection`, async ($, on) => {
+    trace("FR-029-AC-34")
+    const w = await setup($, on, { published, arrange: declaring({ focus: 'team', teams }) })
+    const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'terminal' } as never)
+    await w.clock!.advance(1000)
+    expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain(text)
+    await ui.unmount()
+  })
+
+test('the band team cell reads the selected team, not the first published', async ($, on) => {
+  trace("FR-029-AC-34")
+  const w = await setup($, on, { published: THREE, arrange: declaring({ modules: ['team'] }) })
+  const band = await drawBand($)
+  await w.clock!.advance(2000)
+  const text = (await band.findAll({ type: 'Text' })).map(t => t.text ?? '').join('')
+  expect(text).toContain('QSL Ready issues 4')
+  expect(text).not.toContain('AAA')
+  await band.unmount()
+})
+
 // ---------------------------------------------------------------- teams, current values and the daily rows
 
 /** The lines drawn under the heading of `team`, up to the next team's heading or the footer. */
@@ -388,7 +489,7 @@ for (const [name, days, trend] of [
 
 test('a team with two scopes shows each day as at least the larger count, with no trend', async ($, on) => {
   trace("FR-029-AC-27")
-  const w = await setup($, on, { published: [
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['SWM'] }), published: [
     ...daily('closures_day', { 2: 4, 1: 9 }, { key: 'QSL', scope: 'release' }),
     ...daily('closures_day', { 2: 6, 1: 2, 0: 1 }, { key: 'QSL', scope: 'completion' }),
     ...daily('closures_day', { 2: 1, 1: 5 }, { id: 'swm', key: 'SWM' }),
@@ -411,7 +512,7 @@ test('a team with two scopes shows its 24 hour counts as at least the larger, an
   trace("FR-029-AC-28")
   // One scope's latest closure sample is a step older than the other's: both are current.
   const both = (name: string, release: number, completion: number) => [series(name, [release], { key: 'QSL', scope: 'release' }), series(name, [completion], { key: 'QSL', scope: 'completion', ago: name === 'verified_path_closed_24h' ? 300 : 0 })]
-  const w = await setup($, on, { published: [
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['SWM'] }), published: [
     ...both('verified_path_closed_24h', 4, 6),
     ...both('pr_merges_per_hour_24h', 0.5, 0.25),
     ...both('review_findings_confirmed_high_24h', 1, 3),
@@ -439,7 +540,7 @@ const CURRENT_COUNTS: [string, string][] = [
 
 test('a team with two scopes shows its current counts as at least the larger, never their sum, and one scope shows them exactly', async ($, on) => {
   trace("FR-029-AC-30")
-  const w = await setup($, on, { published: [
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['SWM', 'TWO'] }), published: [
     ...CURRENT_COUNTS.flatMap(([, name], i) => [series(name, [i + 1], { key: 'QSL', scope: 'release' }), series(name, [10 + i], { key: 'QSL', scope: 'completion', ago: i % 2 === 0 ? 300 : 0 })]),
     ...CURRENT_COUNTS.map(([, name], i) => series(name, [i], { id: 'swm', key: 'SWM' })),
     // Only one of this team's two scopes reports a count: the other still makes it a bound.

@@ -128,7 +128,7 @@ export type WorkTicket = {
   lastAction: { what: string; at: number } | null
 }
 
-export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[]; error: string | null; readAt: number | null }
+export type WorkLeadView = { address: string; status: string; at: number | null; tickets: WorkTicket[]; summary: string; error: string | null; readAt: number | null }
 
 export type WorkView = {
   leads: WorkLeadView[]
@@ -144,8 +144,11 @@ const has = (role: string, word: string): boolean => role.toLowerCase().includes
 
 const isOpenPr = (p: WorkPr): boolean => p.status === 'open' || p.status === 'draft'
 
-/** The distinct tickets the leads' agents report. */
-export const ticketIds = (leads: readonly WorkLead[]): string[] => [...new Set(leads.flatMap(l => l.agents.map(a => a.ticket)).filter(t => t !== ''))]
+/** The distinct tickets one lead has in hand: those its agents report and those its focus names. */
+const ticketsOf = (lead: WorkLead): string[] => [...new Set([...lead.agents.map(a => a.ticket), ...(lead.focus?.tickets ?? [])].filter(t => t !== ''))]
+
+/** The distinct tickets of all the leads. */
+export const ticketIds = (leads: readonly WorkLead[]): string[] => [...new Set(leads.flatMap(ticketsOf))]
 
 const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): string[] => {
   // A finished agent keeps no badge: only those still running or waiting count.
@@ -168,16 +171,19 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
   const board = mergeBoards(boards)
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
   const views = leads.map((lead): WorkLeadView => {
-    const tickets = [...new Set(lead.agents.map(a => a.ticket).filter(t => t !== ''))].map((id): WorkTicket => {
+    const tickets = ticketsOf(lead).map((id): WorkTicket => {
       const agents = lead.agents.filter(a => a.ticket === id)
       const issue = byId.get(id)
       const event = last[`${lead.address}\u0000${id}`]
       const newest = agents.reduce<WorkAgent | null>((m, a) => (a.reportedAt !== null && (m === null || a.reportedAt > (m.reportedAt ?? 0)) ? a : m), null)
-      const action = event !== undefined ? { what: `${event.role} ${event.status}`, at: event.at } : newest === null ? null : { what: `${newest.role} ${newest.status}`, at: newest.reportedAt! }
+      // A ticket only the focus names is as old as the focus.
+      const said = lead.focus?.tickets.includes(id) ? lead.focus.at : null
+      const named = said === null ? null : { what: 'focus', at: said }
+      const action = event !== undefined ? { what: `${event.role} ${event.status}`, at: event.at } : newest === null ? named : { what: `${newest.role} ${newest.status}`, at: newest.reportedAt! }
       return { id, title: issue?.title ?? '', state: issue === undefined || issue.state === '' ? null : issue.state, badges: badgesOf(agents, issue), lastAction: action }
     })
     tickets.sort((a, b) => (b.lastAction?.at ?? 0) - (a.lastAction?.at ?? 0) || a.id.localeCompare(b.id))
-    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets, error: lead.error, readAt: lead.readAt }
+    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
   })
   views.sort((a, b) => a.address.localeCompare(b.address))
   return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.length > 0 }

@@ -51,7 +51,7 @@ const old = () =>
 const events = (...rows: [string, string, string, string, number][]) =>
   JSON.stringify({ version: 1, truncated: false, has_more: false, next_cursor: '1-0', events: rows.map(([address, ticket, role, status, ago], i) => ({ id: `${i}-0`, at_ms: NOW - ago * MIN, binding: { address }, change: { kind: 'agent', agent: { agent_id: `a${i}`, name: `n${i}`, ticket, role, status, pane: null, session: null, reported_at_ms: NOW - ago * MIN } } })) })
 
-async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() => ReturnType<typeof out>), eventsText: string | ((argv: string[]) => ReturnType<typeof out>) = events(), agents = true): Promise<World> {
+async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() => ReturnType<typeof out>), eventsText: string | ((argv: string[]) => ReturnType<typeof out>) = events(), agents = true, arrange: (w: World) => void = () => undefined): Promise<World> {
   const w = world(on, true)
   const lead = report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] })
   w.leads.set(LEAD, agents ? { ...lead, agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9), agent('rev-a', 'QSL-1240', 'reviewer', 'running', 5), agent('rev-b', 'QSL-1240', 'code-reviewer', 'waiting', 6), agent('spec-a', 'QSL-1251', 'spec-author', 'done', 12), agent('gate-a', 'QSL-1238', 'gate', 'running', 30)] } : lead)
@@ -62,6 +62,7 @@ async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() =>
     return prior?.(argv, init)
   }
   ix(w, { projects: { Alpha: () => (typeof answer === 'string' ? out(answer) : answer()) } })
+  arrange(w)
   await startSession($)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(1000)
@@ -94,6 +95,66 @@ const ticketRow = (d: Drawn, id: string) => d.lines.find(l => l.trim().startsWit
 
 // ---------------------------------------------------------------- FR-028 leads and tickets
 
+/** A lead's report whose focus names `tickets`, said `ago` minutes ago, with the agents given. */
+const focused = (address: string, summary: string, tickets: string[], ago: number, agents: unknown[] = []) => ({ ...report(address, summary, [], { projects: ['Alpha'] }), focus: { summary, tickets, reported_at_ms: NOW - ago * MIN }, agents })
+
+test('the tickets a lead’s focus names are listed under it once, with the focus age where nothing else speaks of them', async ($, on) => {
+  trace("FR-028-AC-19")
+  await setup($, on, rich(), events([LEAD, 'QSL-9', 'reviewer', 'done', 30]), true, w => {
+    w.leads.set(LEAD, focused(LEAD, 'landing', ['QSL-1240', 'QSL-1251', 'QSL-9'], 780, [agent('c', 'QSL-1251', 'coder', 'running', 12)]))
+  })
+  const d = await draw($)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 Coding .*\[pr\] {2}focus 13h$/)
+  expect(ticketRow(d, 'QSL-1251')).toMatch(/coder running 12m$/)
+  expect(ticketRow(d, 'QSL-9')).toMatch(/reviewer done 30m$/)
+  expect(d.lines.filter(l => l.trim().startsWith('QSL-1251'))).toHaveLength(1)
+  expect(d.lines).not.toContain('   no ticket reported')
+  await d.unmount()
+  // The idle lead holds three more.
+  const widget = await draw($, 'terminal', 'widget')
+  expect(widget.text).toContain('2 leads · 6 tickets')
+  await widget.unmount()
+})
+
+test('a lead with no ticket says so and what its focus says', async ($, on) => {
+  trace("FR-028-AC-20")
+  await setup($, on, rich(), events(), true, w => {
+    w.leads.set(LEAD, focused(LEAD, 'Landing 8 inherited PRs', [], 700))
+    w.leads.set(IDLE, focused(IDLE, '', [], 700))
+  })
+  const d = await draw($)
+  expect(d.lines.filter(l => l === '   no ticket reported')).toHaveLength(2)
+  expect(d.lines.filter(l => l.startsWith('   focus:'))).toEqual(['   focus: Landing 8 inherited PRs'])
+  await d.unmount()
+})
+
+test('the leads of the selected teams that report nothing are named, and one that could not be read is not among them', async ($, on) => {
+  trace("FR-028-AC-21")
+  await setup($, on, rich(), events(), true, w => {
+    w.leads.set('luna:QSL:code', null)
+    w.leads.set('terra:QSL:minder', null)
+    w.leads.set('draco:SWM:code', null)
+    w.leads.set('terra:QSL:gone', undefined)
+  })
+  const d = await draw($)
+  expect(d.lines).toContain('2 leads report no work: luna:QSL:code, terra:QSL:minder')
+  expect(d.lines).toContain('terra:QSL:gone')
+  expect(d.lines).not.toContain('luna:QSL:code')
+  await d.unmount()
+})
+
+test('one lead that reports nothing is named where no lead reported work', async ($, on) => {
+  trace("FR-028-AC-21")
+  await setup($, on, rich(), events(), true, w => {
+    w.leads.delete(IDLE)
+    w.leads.set(LEAD, null)
+  })
+  const d = await draw($)
+  expect(d.lines).toContain('No lead has reported work.')
+  expect(d.lines).toContain(`1 lead reports no work: ${LEAD}`)
+  await d.unmount()
+})
+
 test('a lead is listed with its status mark and age, and its tickets with state, title, badges and last action', async ($, on) => {
   trace("FR-028-AC-1")
   await setup($, on, rich(), events([LEAD, 'QSL-1240', 'coder', 'running', 4], [LEAD, 'QSL-1240', 'reviewer', 'running', 2]))
@@ -121,10 +182,10 @@ test('the badges are pr for an open or draft PR only, review with the count of r
   expect(ticketRow(d, 'QSL-1251')).toMatch(/\[spec\]/)
   await d.unmount()
   const board = boardOf(JSON.parse(rich()))
-  const one = composeWork([{ address: LEAD, status: 'running', reportedAt: NOW, error: null, readAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'running', reportedAt: NOW }, { name: 'b', ticket: 'QSL-9', role: 'coder', status: 'running', reportedAt: NOW }] }], {}, [{ issues: [{ identifier: 'QSL-9', title: 't', state: 'Specify', prs: [pr('draft')] }], activity: board.activity }])
+  const one = composeWork([{ address: LEAD, status: 'running', reportedAt: NOW, error: null, readAt: NOW, focus: null, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'running', reportedAt: NOW }, { name: 'b', ticket: 'QSL-9', role: 'coder', status: 'running', reportedAt: NOW }] }], {}, [{ issues: [{ identifier: 'QSL-9', title: 't', state: 'Specify', prs: [pr('draft')] }], activity: board.activity }])
   expect(one.leads[0]!.tickets[0]!.badges).toEqual(['[pr]', '[review]', '[spec]'])
   // Finished agents keep no badge.
-  const done = composeWork([{ address: LEAD, status: 'done', reportedAt: NOW, error: null, readAt: NOW, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'done', reportedAt: NOW }, { name: 'g', ticket: 'QSL-9', role: 'gate', status: 'failed', reportedAt: NOW }, { name: 's', ticket: 'QSL-9', role: 'spec-author', status: 'done', reportedAt: NOW }] }], {}, [])
+  const done = composeWork([{ address: LEAD, status: 'done', reportedAt: NOW, error: null, readAt: NOW, focus: null, agents: [{ name: 'a', ticket: 'QSL-9', role: 'reviewer', status: 'done', reportedAt: NOW }, { name: 'g', ticket: 'QSL-9', role: 'gate', status: 'failed', reportedAt: NOW }, { name: 's', ticket: 'QSL-9', role: 'spec-author', status: 'done', reportedAt: NOW }] }], {}, [])
   expect(done.leads[0]!.tickets[0]!.badges).toEqual([])
 })
 

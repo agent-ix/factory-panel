@@ -24,8 +24,8 @@ const NOW = Date.UTC(2026, 10, 24, 12, 0)
 const HOUR = 3_600_000
 
 /** A lead whose agents report these tickets. */
-const workLead = (address: string, ...tickets: string[]): WorkLead => ({ address, status: 'running', reportedAt: NOW, agents: tickets.map((ticket, i) => ({ name: `a${i}`, ticket, role: 'coder', status: 'running', reportedAt: NOW })), error: null, readAt: NOW })
-const unreadLead = (address: string): WorkLead => ({ address, status: 'unknown', reportedAt: null, agents: [], error: 'timed out', readAt: null })
+const workLead = (address: string, ...tickets: string[]): WorkLead => ({ address, status: 'running', reportedAt: NOW, agents: tickets.map((ticket, i) => ({ name: `a${i}`, ticket, role: 'coder', status: 'running', reportedAt: NOW })), focus: null, error: null, readAt: NOW })
+const unreadLead = (address: string): WorkLead => ({ address, status: 'unknown', reportedAt: null, agents: [], focus: null, error: 'timed out', readAt: null })
 const openPr = (number: number, status = 'open') => ({ url: `https://github.com/agent-ix/x/pull/${number}`, repo: 'agent-ix/x', number, status, draft: status === 'draft' })
 const merge = (ago: number, number: number) => ({ at: NOW - ago * HOUR, kind: 'merged' as const, identifier: `QSL-${number}`, title: 't', project: 'p', repo: 'agent-ix/x', number })
 /** Two tickets with two open PRs between them (one shared, one draft), one merged PR, and merges 1, 23 and 25 hours old. */
@@ -210,6 +210,9 @@ test('the work cell counts the leads’ tickets, their open and draft PRs once e
   expect(workText({ leads: [workLead('hub:QSL:code', 'QSL-2')], boards: [{ ...board(), activity: [merge(2, 5)] }] })).toBe('1 ticket · 1 PR open · 1 merged 24h')
   // One PR that closed two tickets is one merge.
   expect(workText({ boards: [{ ...board(), activity: [merge(1, 5), { ...merge(1, 5), identifier: 'QSL-50' }, { ...merge(2, 6), repo: null, number: null }] }] })).toBe('2 tickets · 2 PRs open · 2 merged 24h')
+  // A ticket only a lead's focus names is one of its tickets.
+  const naming = { ...workLead('hub:QSL:arch', 'QSL-1'), focus: { summary: 's', tickets: ['QSL-1', 'QSL-2'], at: NOW } }
+  expect(workText({ leads: [naming] })).toBe('2 tickets · 2 PRs open · 2 merged 24h')
   // No ticket reported is a real zero.
   expect(workText({ leads: [], boards: [{ issues: [], activity: [] }] })).toBe('0 tickets · 0 PRs open · 0 merged 24h')
 })

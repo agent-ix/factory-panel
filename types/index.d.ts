@@ -283,16 +283,19 @@ export type WorkAgent = { name: string; ticket: string; role: string; status: st
  * A lead of `agent-msg who` with the agents of its work report. `error` is why the latest read failed, and `readAt`
  * when the report drawn was read: null where none ever was, so that nothing is known of the lead.
  */
-export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[]; error: string | null; readAt: number | null }
+export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[]; focus: WorkLeadFocus | null; error: string | null; readAt: number | null }
+
+/** What a lead last said it is doing: the summary, the tickets it named, and when. */
+export type WorkLeadFocus = { summary: string; tickets: string[]; at: number | null }
 
 /** The latest transition of one agent on one ticket, from `agent-msg work events`. */
 export type WorkLast = { role: string; status: string; at: number }
 
 /**
  * `relayError` is why the last read of the leads gave nothing new: no list of leads, or no report of any lead.
- * `listed` counts the leads that read asked.
+ * `listed` counts the leads that read asked, and `silent` names those that answered with no report.
  */
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number }
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[] }
 
 /** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
 export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }
@@ -339,6 +342,7 @@ declare module 'claude-code' {
       retro: Shaped<RetroView[]>
       retroMeta: Shaped<RetroMeta>
       retroOpen: string[]
+      teamOpen: string[]
       retroWarn: boolean
       roles: Shaped<RolesView[]>
       rolesOpen: string[]

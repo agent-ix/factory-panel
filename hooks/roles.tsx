@@ -5,7 +5,7 @@ import type { RoleReport, RoleRule, RoleScore, RolesView } from '../types'
 import { CARD_BG, ago, errorText, failureText, pausedText } from './shared'
 import { BOARD_INTERVAL_MS, UNKEPT_TTL_MS, gatedBoard } from './linear'
 import { track } from './schedule'
-import { focusTeams } from './band/modules'
+import { selectedTeams } from './band/modules'
 import { getSelection, home, scopeOf, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
@@ -16,12 +16,9 @@ const roles = atom({ plugin: 'factory-panel', key: 'roles' } as const, [] as Rol
 /** The roles whose rules are listed, as `team/role`. */
 const rolesOpen = atom({ plugin: 'factory-panel', key: 'rolesOpen' } as const, [] as string[])
 
-/** The teams whose retro health and role evaluations are shown: the teams the session's focus is about. */
+/** The selected teams, whose retro health, role evaluations and tiles the Team view draws. */
 export function retroTeams(): readonly string[] {
-  const scope = scopeOf(getSelection())
-  const picked = focusTeams(scope)
-  if (picked !== null && picked.length > 0) return picked
-  return scope.ownTeam !== null ? [scope.ownTeam] : scope.teams
+  return selectedTeams(scopeOf(getSelection()))
 }
 
 // ---------------------------------------------------------------- reading

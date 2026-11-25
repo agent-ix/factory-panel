@@ -16,13 +16,13 @@ relationships:
 
 ## Description
 
-The Team view SHALL show velocity and effort, review quality, flow and capacity and the completed issues and merged PRs of each of the last 7 days for each team from the `ix_team_*` series, and the health of the selected teams' departments from their stored retro snapshots.
+The Team view SHALL show velocity and effort, review quality, flow and capacity and the completed issues and merged PRs of each of the last 7 days for each selected team from the `ix_team_*` series, and the health of the selected teams' departments from their stored retro snapshots.
 
 ## Behavior
 
 ### Tiles
 
-- Each team the series name SHALL have one tile for every metric, in three rows: velocity and effort, review quality, flow and capacity.
+- Each team drawn SHALL have one tile for every metric, in three rows: velocity and effort, review quality, flow and capacity.
 - Velocity and effort SHALL hold verified closures in 24 hours, effort per verified closure (`ix_team_effort_per_verified_path_closure_seconds_24h`), merges per hour and the median PR cycle.
 - Review quality SHALL hold the median first-review latency, the share of PRs with findings, confirmed findings of high, medium and low severity, and the share of PRs with changes requested (`ix_team_pr_changes_requested_share`).
 - Flow and capacity SHALL hold the work remaining, in progress, blocked, ready unmerged PRs, the oldest age in a stage, ready issues and executing agents.
@@ -39,6 +39,15 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 - A team no series gives a key SHALL be headed by its exporter id, marked `exporter id, no team key`.
 - Where several exporter ids carry one team key, their values at one time SHALL be combined as the metric is: the largest of durations, ages and shares, and counts as below.
 - Where a series with the key and one without it have a sample at one time, the one with the key SHALL be drawn.
+
+### Selected teams
+
+- The selected teams SHALL be the teams of the session's focus, else those of the teams choice, for the tiles, the retro health and the role evaluations alike.
+- A team with a key that is not among the selected teams SHALL NOT be drawn. The selected teams SHALL be drawn in the order of the selection.
+- With no team selected, every team SHALL be drawn, those with a key first.
+- An exporter id with no team key cannot be matched to a selected team. Where a team is selected, each SHALL be drawn after the selected teams as one closed row, its id, `exporter id, no team key` and `N of M metrics have a value`, which opens and closes its tiles.
+- Where a selected team has no series, the view SHALL say `No team series carries the key <keys>.`, and where there are exporter ids with no key, that they have no `team_key` (ix-board publishes it from 0.12.0), so which team each is cannot be told.
+- The widget and the band's team cell SHALL read the selected teams that have series, and where none has, the exporter ids with no key. The widget's number SHALL be a lower bound where a selected team has no series beside one that has.
 
 ### Teams with several scopes
 
@@ -66,7 +75,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 
 ### Retro health
 
-- The mod SHALL read each selected team's department classes with `ix-board --json retro delta --config ~/.local/state/team-retro/<team>/config.json`, which reads the stored snapshots and makes no network call, for the teams of the session's focus, once every 5 minutes while the view is on screen ([FR-027](./FR-027-fetch-only-on-screen.md)).
+- The mod SHALL read each selected team's department classes with `ix-board --json retro delta --config ~/.local/state/team-retro/<team>/config.json`, which reads the stored snapshots and makes no network call, for the selected teams, once every 5 minutes while the view is on screen ([FR-027](./FR-027-fetch-only-on-screen.md)).
 - The mod SHALL place each metric of the delta in the class the answer's `class` field names (ix-board 0.11.0 and later), and SHALL keep no table of its own of which metric belongs to which class.
 - The read SHALL wait until the session knows its teams, and a changed focus or teams choice SHALL make the retro health due again.
 - Before the first read the Team view SHALL say the retro snapshots are being read, and where a read found no team to ask for it SHALL say `no team selected`.
@@ -110,6 +119,10 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-28 | A team with two scopes shows verified closures, merges per hour and confirmed findings as `≥` the larger, on the tiles, in the widget and in the band's team cell; one scope shows them exactly. | Test |
 | FR-029-AC-30 | A team with two scopes shows work remaining, in progress, blocked, ready unmerged PRs, ready issues and executing agents as `≥` the larger, never their sum, also where only one scope reports one; one scope shows them exactly. | Test |
 | FR-029-AC-29 | A second scope that reports none of those counts, or reports them without the team key, still makes them lower bounds, and one scope's samples from before the key do not. | Test |
+| FR-029-AC-31 | With one team selected, the tiles of that team key are drawn and those of another key are not; selected teams are drawn in the order of the selection, and with no team selected all are drawn, keyed first. | Test |
+| FR-029-AC-32 | With a team selected, an exporter id with no key is one closed row with the count of metrics that have a value, which opens to its tiles and closes again. | Test |
+| FR-029-AC-33 | A selected team with no series is named, with why an exporter id with no key cannot be told apart. | Test |
+| FR-029-AC-34 | The widget and the band team cell read the selected teams' series, a lower bound where one of them has none, and the keyless ids where no selected team has any. | Test |
 | FR-029-AC-25 | Against the factory's Prometheus the Team view shows the values and days Prometheus answers. | Demonstration |
 
 ## Dependencies

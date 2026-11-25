@@ -19,6 +19,9 @@ Review events and a work cell, role evaluations, fleet capacity and daily veloci
 - New Capacity section on the Team tab: each host’s busy ratio, ready-buffer deficit and output against its recorded sustainable level, from the `ix_fleet_*` series and one read-only ledger query a minute, with stale samples marked and absent values `unavailable` with their reason. The deficit and output need the ix-board that publishes them (not 0.11.0).
 - A Team tile says `N% covered` where the exporter’s `ix_team_metric_coverage` of its series is below 100%.
 - The health strip waits for the session to know its team before reading, instead of saying `no retro baseline` for 5 minutes where the Team view opened first, and reads again when the teams choice changes. It says when it is still reading and when no team is selected.
+- The Work tab lists the tickets a lead’s focus names beside those of its agents, and the band and widget count them; a lead with no ticket shows its focus summary, and the leads that have reported no work are named in one line.
+- The Team tab’s tiles, its widget and the band’s team cell follow the selected teams. An exporter id with no team key cannot be matched, so with a team selected it is one closed row that opens to its tiles, and a selected team with no series is named.
+- The selected teams of the health strip and Roles are those of the session’s focus, else the teams choice (a named focus showed only the session’s own team).
 
 ## 0.8.0
 
