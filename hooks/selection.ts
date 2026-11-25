@@ -181,7 +181,7 @@ export function resetSelection(): void {
   ready = Promise.resolve()
 }
 
-async function home($: EngineInterface): Promise<string> {
+export async function home($: EngineInterface): Promise<string> {
   if (homeDir !== undefined) return homeDir
   const ran = await $.process.run(['printenv', 'HOME'], { timeoutMs: 5_000 })
   homeDir = ran.stdout.trim()

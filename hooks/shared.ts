@@ -47,6 +47,9 @@ export const ago = (at: number | null, now: number): string => {
   return `${Math.round(s / 86_400)}d ago`
 }
 
+/** An age without the "ago": 19h, 6m. */
+export const agoShort = (at: number, now: number): string => ago(at, now).replace(/ ago$/, '')
+
 /** How long until a moment: "58m", "2h". */
 export const until = (at: number, now: number): string => ago(now, at).replace(/ ago$/, '')
 

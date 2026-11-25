@@ -14,13 +14,14 @@ The views behind the cells are:
 | --- | --- |
 | Factory | Each machine's up or down, CPU, memory and temperature, agents by status, 24-hour spend, and the herdr, ix-relay and ix-board state |
 | Focus | One card per named focus: its initiatives with their projects nested under them, progress, Ready and Blocked, and one warning icon |
+| Work | Each code lead with its tickets: Linear state, title, `[pr]`, `[review×N]`, `[spec]` and `[gate]` badges and the last action; below them the recent merges (`a` shows every kind). Needs ix-board 0.9.0 for PRs and merges; without it the tickets show without a PR badge |
 | Escalations | What the leads escalated, open first, with context, options and recommendation |
 | Message (`/factory relay`) | A message to every lead or one lead, and the recent broadcasts |
-| Team | Velocity and quality tiles per team with six-hour history |
+| Team | Tiles per team with six-hour history in three rows (velocity and effort, review quality, flow and capacity), and the health of your teams' departments from their stored retro snapshots, or `no retro baseline`. A series the exporter does not publish reads `—`, never 0 |
 
 ## How to use it
 
-- Open more: type `/factory`. It opens Focus when the focus cell is shown and Factory otherwise. `/factory focus`, `/factory escalations`, `/factory relay`, `/factory team` and `/factory factory` open one view directly.
+- Open more: type `/factory`. It opens Focus when the focus cell is shown and Factory otherwise. `/factory focus`, `/factory work`, `/factory escalations`, `/factory relay`, `/factory team` and `/factory factory` open one view directly.
 - Switch: with a view open in the classic layout, type a cell's number at an empty prompt. A number typed while the prompt holds text goes into the prompt. In the fullscreen layout, click a tab or type `/factory` and the view name.
 - Refresh and close: `r` refreshes the open view and Esc closes it and gives the keyboard back to the prompt.
 - Reading: the mod reads a source only while a view that draws it is on screen, and catches up when the view appears. In herdr and tmux that excludes a session whose pane is off view.

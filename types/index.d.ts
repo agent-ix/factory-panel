@@ -199,10 +199,12 @@ export type RelayMeta = { at: number | null; error: string | null; human: string
 
 export type TeamMetric = {
   key: string
+  /** the row it is drawn in */
+  group: 'velocity' | 'review' | 'flow'
   label: string
   /** the latest value, null when the series is absent */
   value: number | null
-  unit: 'count' | 'rate' | 'seconds'
+  unit: 'count' | 'rate' | 'seconds' | 'share'
   /** higher is better (velocity) or worse (queues), for the trend's colour */
   better: 'up' | 'down'
   history: number[]
@@ -211,6 +213,38 @@ export type TeamMetric = {
 export type TeamView = { team: string; metrics: TeamMetric[] }
 
 export type TeamMeta = { at: number | null; error: string | null }
+
+/** One department class of a team's retro delta: its mark and the metrics that regress. */
+export type RetroClass = { id: string; rating: 'red' | 'amber' | 'green' | 'unknown'; regressing: string[]; unavailable: number; total: number }
+
+/** A team's retro health: its classes, or `null` classes with the reason there is no baseline. */
+export type RetroView = { team: string; classes: RetroClass[] | null; latest: string | null; reason: string | null }
+
+export type RetroMeta = { at: number | null; error: string | null }
+
+// ---------------------------------------------------------------- Work pane
+
+/** A pull request of a ticket, as ix-board's focus status lists it. */
+export type WorkPr = { url: string; repo: string; number: number | null; status: string; draft: boolean }
+
+/** A ticket of the focus status: started, or closed lately. `prs` is null where ix-board is too old to say. */
+export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null }
+
+/** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
+export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
+
+/** What one focus status answer says of tickets; `activity` is null where ix-board has no such field. */
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null }
+
+export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
+
+/** A lead of `agent-msg who` with the agents of its work report. */
+export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[] }
+
+/** The latest transition of one agent on one ticket, from `agent-msg work events`. */
+export type WorkLast = { role: string; status: string; at: number }
+
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -245,6 +279,16 @@ declare module 'claude-code' {
       relayNotice: string
       teams: Shaped<TeamView[]>
       teamMeta: Shaped<TeamMeta>
+      retro: Shaped<RetroView[]>
+      retroMeta: Shaped<RetroMeta>
+      retroOpen: string[]
+      workLeads: Shaped<WorkLead[]>
+      workLast: Shaped<Record<string, WorkLast>>
+      workMeta: Shaped<WorkMeta>
+      workBoards: Shaped<Record<string, WorkBoard>>
+      workCollapsed: string[]
+      workAll: boolean
+      workWarnings: boolean
     }
   }
 }

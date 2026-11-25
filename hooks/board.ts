@@ -1,10 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { FocusHeader, FocusInitiative, FocusProject, FocusWarning } from '../types'
+import type { FocusHeader, FocusInitiative, FocusProject, FocusWarning, WorkBoard } from '../types'
 import { gatedBoard } from './linear'
 import { MEMBERSHIP_MS, RETRY_MS, findRecord, isUsable, isUuid, keyOf, nameFor, projectKey, readBad, saveBad } from './progress'
 import type { Bad, BadEntry, Initiatives, Member, Membership, ProgressFile, ProgressRecord, ProjectRef, Records } from './progress'
 import { after, errorText } from './shared'
+import { boardOf, mergeBoards } from './work'
 
 // Progress of a focus: one combined `ix-board focus status` call over all its healthy projects. An
 // initiative is first expanded to its projects (the membership remembered in progress.json, else the
@@ -110,6 +111,8 @@ export type Refresh = {
   pending?: boolean
   /** true where the source error is inferred from refusals that could as well be a project's doing */
   unproven?: boolean
+  /** the tickets and activity of every status answer of the refresh, for the Work tab; absent from a refresh made before 0.8.0 */
+  board?: WorkBoard
 }
 
 /** A rate limit of Linear: it holds the whole workspace, so it is thrown for the gate to hold every call. */
@@ -137,6 +140,9 @@ const lastLine = (text: string): string => text.trim().split('\n').filter(Boolea
 function parse(text: string): Status {
   const parsed = JSON.parse(text) as unknown
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object')
+  // An older ix-board wrapped the answer in a `result` key.
+  const inner = (parsed as { result?: unknown }).result
+  if (!('projects' in parsed) && typeof inner === 'object' && inner !== null && !Array.isArray(inner)) return inner as Status
   return parsed as Status
 }
 
@@ -455,7 +461,9 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   let blockers: Set<string> | null = new Set<string>()
   let statusAnswers = 0
   let succeeded = 0
+  const answers: WorkBoard[] = []
   const collect = (status: Status): void => {
+    answers.push(boardOf(status))
     statusAnswers++
     succeeded++
     const open = openBlockers(status)
@@ -793,7 +801,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
   for (const [ref, id] of twins) if (outcomes[projectKey(id)] !== undefined) outcomes[projectKey(ref)] = outcomes[projectKey(id)]!
   if (sourceError === null) for (const s of selectors) if (s.kind === 'milestone' || s.kind === 'ticket') outcomes[selectorKey(s)] ??= { ok: false, error: 'timed out' }
 
-  const refresh: Refresh = { at, roadmapError, sourceError, expansions, outcomes, blockers: statusAnswers === 0 || blockers === null ? null : (blockers as Set<string>).size, ...(pending ? { pending: true } : {}), ...(isUnproven ? { unproven: true } : {}) }
+  const refresh: Refresh = { at, roadmapError, sourceError, expansions, outcomes, blockers: statusAnswers === 0 || blockers === null ? null : (blockers as Set<string>).size, ...(pending ? { pending: true } : {}), ...(isUnproven ? { unproven: true } : {}), ...(answers.length > 0 ? { board: mergeBoards(answers) } : {}) }
   if (sourceError !== null && RATE.test(sourceError)) {
     const limited = new SourceFailure(sourceError)
     limited.partial = refresh

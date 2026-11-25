@@ -43,7 +43,7 @@ const CHOICE_HELP = [
 const CLASSIC_HELP = [
   "factory-panel shows the factory's health, your project's progress and what needs you.",
   '  See it:      the line above the prompt. Each cell starts with a number.',
-  '  Open more:   /factory, or /factory focus | escalations | relay | team | factory',
+  '  Open more:   /factory, or /factory focus | work | escalations | relay | team | factory',
   "  Switch:      type a cell's number at an empty prompt. r refreshes, Esc closes.",
   CHOICE_HELP,
 ].join('\n')
@@ -51,7 +51,7 @@ const CLASSIC_HELP = [
 const FULLSCREEN_HELP = [
   "factory-panel shows the factory's health, your project's progress and what needs you.",
   '  See it:      the panel at the right of the chat, one tab for each view.',
-  '  Open more:   /factory (focuses the panel), or /factory focus | escalations | relay | team | factory',
+  '  Open more:   /factory (focuses the panel), or /factory focus | work | escalations | relay | team | factory',
   '  Switch:      click a tab, or type /factory and the view name. r refreshes.',
   CHOICE_HELP,
 ].join('\n')

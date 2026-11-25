@@ -5,6 +5,7 @@ import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './fact
 import { PANE_SPEC as FOCUS_PANE, registerFocus, resetFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
+import { PANE_SPEC as WORK_PANE, registerWork, resetWork } from './workview'
 import { resolveEndpoints } from './endpoints'
 import { bandPlan, renderBand, startBand, syncStatus } from './band'
 import { resetSchedule, setRefresh } from './schedule'
@@ -15,7 +16,7 @@ import { isViewId } from './views'
 import { HEARTBEAT_MS, bandSources, drawn, paneSources, refreshScope, resetVisible } from './visible'
 
 // Each pane lives in its own file; open panes show as tabs beside the chat.
-const PANES = [FACTORY_PANE, FOCUS_PANE, ESCALATIONS_PANE, RELAY_PANE, TEAM_PANE]
+const PANES = [FACTORY_PANE, FOCUS_PANE, WORK_PANE, ESCALATIONS_PANE, RELAY_PANE, TEAM_PANE]
 const SETTLE_MS = 15_000
 // Ids this session has opened at least once; one the person closed afterwards is not reopened.
 const everOpened = new Set<string>()
@@ -57,6 +58,7 @@ export const register: Register = (on, rawOptions) => {
   })
   registerFactory(on, options)
   registerFocus(on, options)
+  registerWork(on, options)
   registerEscalations(on, options)
   registerRelay(on, options)
   registerTeam(on, options)
@@ -69,6 +71,7 @@ export const register: Register = (on, rawOptions) => {
     isInteractive = e.isInteractive
     resetSelection()
     resetFocus()
+    resetWork()
     resetSchedule()
     resetVisible()
     // The band paints from the fallback at once; who the session is, what a skill declared and

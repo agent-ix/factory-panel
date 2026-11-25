@@ -12,7 +12,8 @@ import type { SourceId } from './schedule'
 import { getSelection, refreshSelection } from './selection'
 import { guarded } from './shared'
 import type { Options } from './shared'
-import { pollTeam } from './team'
+import { pollRetro, pollTeam } from './team'
+import { pollWork } from './workview'
 import { VIEW_SPECS } from './views'
 import type { ViewId } from './views'
 
@@ -36,9 +37,10 @@ export const HEARTBEAT_MS = 15 * 1000
 const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   factory: ['selection', 'prometheus', 'herdr', 'relay', 'board'],
   focus: ['selection', 'focus'],
+  work: ['selection', 'focus', 'work'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['team'],
+  team: ['team', 'retro'],
 }
 
 const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
@@ -103,6 +105,10 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollRelay($)
     case 'team':
       return pollTeam($, options)
+    case 'work':
+      return pollWork($)
+    case 'retro':
+      return pollRetro($)
     // The identity lookup is part of the selection's refresh.
     case 'whoami':
       return Promise.resolve()

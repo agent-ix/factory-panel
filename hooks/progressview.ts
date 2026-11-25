@@ -8,16 +8,23 @@ import { mergeInitiatives, mergeRecords, readFile, saveFile } from './progress'
 import type { Records } from './progress'
 import { ago, pausedText } from './shared'
 import { sourceFailed, sourceOk } from './sources'
+import type { WorkBoard } from '../types'
+
+/** The key a focus's progress read is gated and held under. */
+export const progressKeyOf = (selectors: readonly Selector[]): string => `progress:${selectors.map(selectorKey).join(' ')}`
 
 /** The progress part of a focus: what the pane reads from `initiatives`, `loose`, `header`, `warnings`, `fetchedAt` and `notes`. */
 export type Progress = Pick<FocusView, 'initiatives' | 'loose' | 'header' | 'warnings' | 'fetchedAt' | 'notes'>
+
+/** A focus's progress with the tickets and activity of the same answer, which the Work tab reads. */
+export type Loaded = { progress: Progress; board: WorkBoard | null }
 
 /**
  * What one focus shows of its progress, from ix-board and the records of earlier successes. `failed` collects the
  * warnings by record key for `/factory show`. Returns null when another session is reading and has left nothing yet.
  */
-export async function loadProgress($: EngineInterface, selectors: Selector[], manual: boolean, endsAt: number, failed: Map<string, { name: string; error: string }>): Promise<Progress | null> {
-  const key = `progress:${selectors.map(selectorKey).join(' ')}`
+export async function loadProgress($: EngineInterface, selectors: Selector[], manual: boolean, endsAt: number, failed: Map<string, { name: string; error: string }>): Promise<Loaded | null> {
+  const key = progressKeyOf(selectors)
   const disk = await readFile($)
   let ran = false
   let partial: Refresh | null = null
@@ -60,5 +67,6 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
 
   const when = read.holdMs === undefined ? 'after 5 minutes, r asks now' : `after ${Math.round(read.holdMs / 60_000)} minutes, r asks after 60 seconds`
   const held = read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again ${when}`] : []
-  return { initiatives: composed.initiatives, loose: composed.loose, header: composed.header, warnings: composed.warnings, fetchedAt: composed.fetchedAt, notes: held }
+  // The Work tab reads the tickets and activity of the same answer: no further call is made for them.
+  return { progress: { initiatives: composed.initiatives, loose: composed.loose, header: composed.header, warnings: composed.warnings, fetchedAt: composed.fetchedAt, notes: held }, board: refresh?.board ?? null }
 }
