@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- The Focus card no longer goes empty when one ticket in Linear is bad. ix-board is asked once about the whole focus, and when that call fails on a selector's account, once for each initiative, project, milestone and ticket (at most four at a time, 30 seconds in all), so the others still show. The aggregate reads `F fresh, O old, X failed` and is marked partial when any are old or failed.
+- The last good progress of each selector is kept in `~/.ix/factory-panel/progress.json` and shown, marked old with its age (stale after 30 minutes), beside the error when a refresh fails. Records are written by temporary file and rename, merged with another session's, and dropped after 24 hours unseen.
+- A failing source (ix-board, `agent-msg work`, `agent-msg focuses`, Prometheus) is shown on the card of the module that uses it and listed with its error and the age of its last success by `/factory show`, and never blocks another source or the first paint. Prometheus calls and `agent-msg` calls are given up on after 5 seconds.
+- The first line of the Focus pane and of `/factory show` says why these focuses are shown.
+- `/factory focus <name>` resolves the keywords, then ix-relay's named focus definitions (read-only, `agent-msg focuses list` and `show`), then a lead address (`host:team:segment` or `team:segment`), then a lead summary, on every refresh. Exclusions of a definition are noted, not applied.
+- A lead whose work report has no scope says `no selectors`.
+- The focus data shape changes (`focuses-4`, `focusMeta-2`).
+
 ## 0.5.0
 
 - Breaking: the role question, the stored role answer, the `role` setting and `/factory role` are removed. The mod has no notion of role and asks nothing. The `bandModules` and `bandFocus` settings are removed too: `/factory use` and `/factory focus` replace them.

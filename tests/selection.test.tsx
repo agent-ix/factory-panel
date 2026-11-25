@@ -32,9 +32,15 @@ const focusView = (address: string, summary: string, over: Partial<FocusView> = 
   scope: { initiatives: 0, projects: 1, tickets: 0 },
   focusReportedAt: null,
   fetchedAt: null,
-  projects: [{ name: 'ledger', done: 5, total: 10, inProgress: 2 }],
+  projects: [{ name: 'ledger', done: 5, total: 10, inProgress: 2, ready: 0, at: null, old: false, error: null }],
   ready: 4,
   error: null,
+  title: null,
+  via: null,
+  failures: [],
+  counts: null,
+  partial: false,
+  notes: [],
   ...over,
 })
 const machine = (name: string) => ({ name, lastSeenSecs: 5, leads: 1, panesWorking: 1, panesIdle: 0, panesDone: 0, cpuPct: 10, memPct: 10, tempC: null, spend24hUsd: 3 })
@@ -93,7 +99,7 @@ test('an unreadable whoami output and the text no placement each leave the ident
   const w = world(() => undefined as never)
   w.whoami.value = undefined
   expect((await refresh(w)).identity).toEqual({ status: 'unknown' })
-  expect(showText(getSelection())).toMatch(/could not tell who this session is/)
+  expect(await showText(fake$(w) as never, getSelection())).toMatch(/could not tell who this session is/)
 })
 
 test('a stored 0.4.0 role answer and a role setting change nothing', { options: { role: 'coordinator' } }, async ($, on) => {
@@ -723,7 +729,7 @@ test('a whoami that never returns leaves the band painted from the fallback, is 
 })
 
 test('a missing and a malformed declaration and a malformed choice file each still draw the band', async ($, on) => {
-  trace("NFR-004-M-2")
+  trace("NFR-004-M-5")
   const w = world(on)
   fullWorld(w)
   for (const [declaration, chosen] of [[undefined, undefined], ['{ nope', undefined], [undefined, '[1,2'], ['{ nope', '"x"']] as const) {

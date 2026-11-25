@@ -1,13 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { FocusMeta, FocusProject, FocusView } from '../types'
+import type { FocusMeta, FocusProject, FocusView, SourceError } from '../types'
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, ago, errorText, pausedText, progressBar, runJson, runText } from './shared'
 import { gatedBoard } from './linear'
-import { focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
+import { compose, recordsOf, refreshProgress, selectorKey, selectorName, selectorsOfScope } from './board'
+import type { Selector } from './board'
+import { matchLeads, resolveDefinitions } from './namedfocus'
+import type { Resolved } from './namedfocus'
+import { STALE_MS, readRecords, saveRecords } from './progress'
+import { setSelectorErrors, sourceFailed, sourceOk } from './sources'
+import { focusBanner, focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
 import { getSelection, scopeOf, selectionReady } from './selection'
+import type { Selection } from './selection'
 import type { Options } from './shared'
 
 // The Focus pane: one card per named focus. A focus belongs to a coordinator agent: its
@@ -19,14 +26,17 @@ const PANE = 'focus'
 const TITLE = 'Focus'
 export const PANE_SPEC = { id: PANE, title: TITLE }
 const POLL_MS = 2 * 60 * 1000
+/** an agent-msg call is given up on after this long. */
+const WORK_TIMEOUT_MS = 5_000
+export const NO_SELECTORS = 'no selectors'
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
-  shape: 'focuses-3',
+  shape: 'focuses-4',
 })
 const focusMeta = atom(
   { plugin: 'factory-panel', key: 'focusMeta' } as const,
-  { at: null, busy: false, error: null } as FocusMeta,
-  { shape: 'focusMeta-1' },
+  { at: null, busy: false, error: null, errors: [] } as FocusMeta,
+  { shape: 'focusMeta-2' },
 )
 const focusCollapsed = atom({ plugin: 'factory-panel', key: 'focusCollapsed' } as const, [] as string[])
 const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as const, false)
@@ -36,64 +46,52 @@ const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as 
 type WorkReport = {
   binding?: { machine?: string; kind?: string; address?: string }
   agents?: { status?: string }[]
-  scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number }
-  focus?: { summary?: string; reported_at_ms?: number }
-}
-
-type FocusStatus = {
-  fetched_at?: number
-  ready_queue?: unknown[]
-  projects?: {
-    name: string
-    progress?: { done?: number; total?: number }
-    in_progress?: unknown[]
-  }[]
+  scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number } | null
+  focus?: { summary?: string; reported_at_ms?: number } | null
 }
 
 /** The verified lead addresses `agent-msg who` lists; unverified rows start with `-`. */
 async function listLeads($: EngineInterface): Promise<string[]> {
-  const text = await runText($, ['agent-msg', 'who'], 20_000)
+  const text = await runText($, ['agent-msg', 'who'], WORK_TIMEOUT_MS)
   return text
     .split('\n')
     .map(line => line.trim().split(/\s+/)[0] ?? '')
     .filter(address => address.split(':').length === 3)
 }
 
-async function readReport($: EngineInterface, lead: string): Promise<WorkReport | null> {
+async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport } | { error: string }> {
   try {
-    return await runJson<WorkReport>($, ['agent-msg', 'work', '--lead', lead, 'show'], 20_000)
-  } catch {
-    return null
+    return { report: await runJson<WorkReport>($, ['agent-msg', 'work', '--lead', lead, 'show'], WORK_TIMEOUT_MS) }
+  } catch (error) {
+    return { error: errorText(error) }
   }
 }
 
-const scopeArgs = (report: WorkReport): string[] => [
-  ...(report.scope?.initiatives ?? []).flatMap(id => ['--initiative', id]),
-  ...(report.scope?.projects ?? []).flatMap(id => ['--project', id]),
-  ...(report.scope?.tickets ?? []).flatMap(id => ['--issue', id]),
-]
+type Entry = { view: FocusView; selectors: Selector[] }
 
-type FocusRead = { fetchedAt: number | null; ready: number; projects: FocusProject[] }
+const blank = (address: string): FocusView => ({
+  address,
+  machine: address.split(':')[0] ?? '',
+  kind: '',
+  summary: '',
+  status: 'unknown',
+  scope: { initiatives: 0, projects: 0, tickets: 0 },
+  focusReportedAt: null,
+  fetchedAt: null,
+  projects: [],
+  ready: 0,
+  error: null,
+  title: null,
+  via: null,
+  failures: [],
+  counts: null,
+  partial: false,
+  notes: [],
+})
 
-async function readFocus($: EngineInterface, args: string[]): Promise<FocusRead> {
-  const status = await runJson<FocusStatus>($, ['ix-board', '--json', 'focus', 'status', ...args], 180_000)
-  return {
-    fetchedAt: typeof status.fetched_at === 'number' ? status.fetched_at * 1000 : null,
-    ready: status.ready_queue?.length ?? 0,
-    projects: (status.projects ?? []).map(
-      (p): FocusProject => ({
-        name: p.name,
-        done: p.progress?.done ?? 0,
-        total: p.progress?.total ?? 0,
-        inProgress: Math.max(0, Math.min(p.in_progress?.length ?? 0, (p.progress?.total ?? 0) - (p.progress?.done ?? 0))),
-      }),
-    ),
-  }
-}
-
-async function focusOf($: EngineInterface, lead: string, report: WorkReport, manual: boolean): Promise<FocusView> {
-  const view: FocusView = {
-    address: report.binding?.address ?? lead,
+const leadEntry = (lead: string, report: WorkReport): Entry => ({
+  view: {
+    ...blank(report.binding?.address ?? lead),
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
     summary: report.focus?.summary ?? '',
@@ -104,38 +102,179 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport, man
       tickets: report.scope?.tickets?.length ?? 0,
     },
     focusReportedAt: report.focus?.reported_at_ms ?? report.scope?.reported_at_ms ?? null,
-    fetchedAt: null,
-    projects: [],
-    ready: 0,
-    error: null,
-  }
-  const args = scopeArgs(report)
-  if (args.length === 0) return view
-  const read = await gatedBoard($, `focus:${args.join(' ')}`, () => readFocus($, args), { manual })
-  if (read.data) Object.assign(view, read.data)
+  },
+  selectors: selectorsOfScope(report.scope),
+})
+
+const definitionEntry = (d: Resolved): Entry => ({
+  view: {
+    ...blank(d.focusId),
+    kind: 'named focus',
+    title: d.name,
+    via: 'definition',
+    notes: d.notes,
+    scope: {
+      initiatives: d.selectors.filter(s => s.kind === 'initiative').length,
+      projects: d.selectors.filter(s => s.kind === 'project' || s.kind === 'milestone').length,
+      tickets: d.selectors.filter(s => s.kind === 'ticket').length,
+    },
+  },
+  selectors: d.unavailable ? [] : d.selectors,
+})
+
+/** What one focus shows of its progress, from ix-board and the records of earlier successes. */
+async function progressOf($: EngineInterface, selectors: Selector[], manual: boolean, failed: Map<string, { name: string; error: string }>): Promise<Partial<FocusView> | null> {
+  const key = `focus:${selectors.map(selectorKey).join(' ')}`
+  const read = await gatedBoard($, key, () => refreshProgress($, selectors), { manual })
   const now = await $.clock.now()
-  view.error = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
-  return view
+  const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
+  // Another session is reading it and has left nothing yet: keep what is drawn.
+  if (read.data === null && sourceError === null) return null
+  // After a failed read the cached result is an old one: only the records speak for the selectors.
+  const refresh = read.error !== null ? null : read.data
+  const mine = recordsOf(selectors, refresh, await readRecords($), now)
+  const records = await saveRecords($, now, mine)
+  const composed = compose(selectors, refresh, sourceError, records)
+  if (sourceError !== null) sourceFailed('ix-board', sourceError)
+  else if (refresh !== null) sourceOk('ix-board', now)
+  for (const s of selectors) {
+    const outcome = refresh?.outcomes[selectorKey(s)]
+    if (outcome?.ok === false) failed.set(selectorKey(s), { name: selectorName(s), error: outcome.error })
+  }
+  return {
+    projects: composed.projects,
+    ready: composed.ready,
+    fetchedAt: composed.fetchedAt,
+    failures: composed.failures,
+    counts: composed.counts,
+    partial: composed.partial,
+    notes: composed.notes,
+    error: sourceError,
+  }
 }
 
-export async function pollFocus($: EngineInterface, manual = false): Promise<void> {
+/** The banner line for the focuses now held; `/factory show` prints the same line. */
+export async function focusBannerNow($: EngineInterface, sel: Selection): Promise<string | null> {
+  const scope = scopeOf(sel)
+  return focusBanner(scope, scopeFocuses(await read($, focuses), scope).shown.length > 0)
+}
+
+/** One refresh at a time: a tick that arrives during one is run once, after it. */
+let running: Promise<void> | null = null
+let again = false
+let againManual = false
+
+export function pollFocus($: EngineInterface, manual = false): Promise<void> {
+  if (running !== null) {
+    again = true
+    againManual ||= manual
+    return running
+  }
+  running = (async () => {
+    try {
+      let asManual = manual
+      do {
+        again = false
+        againManual = false
+        await refreshFocus($, asManual)
+        asManual = againManual
+      } while (again)
+    } finally {
+      running = null
+    }
+  })()
+  return running
+}
+
+/** Forgets the refresh state of an earlier session; the tests start each session from nothing. */
+export function resetFocus(): void {
+  running = null
+  again = false
+  againManual = false
+}
+
+async function refreshFocus($: EngineInterface, manual: boolean): Promise<void> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     // The scope needs to know who this session is before it knows which leads to read.
     await selectionReady()
     const scope = scopeOf(getSelection())
     const teams = focusTeams(scope)
-    const leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
-    const reports = await Promise.all(leads.map(async lead => ({ lead, report: await readReport($, lead) })))
-    const withFocus = reports.filter(
-      (r): r is { lead: string; report: WorkReport } =>
-        r.report !== null && (scopeArgs(r.report).length > 0 || Boolean(r.report.focus?.summary)),
-    )
-    const views = await Promise.all(withFocus.map(r => focusOf($, r.lead, r.report, manual)))
-    views.sort((a, b) => a.address.localeCompare(b.address))
-    await update($, focuses, () => views)
+    const name = scope.focus.trim()
+    const isName = name !== '' && !['own', 'team'].includes(name.toLowerCase())
+    const errors: SourceError[] = []
+
+    const gather = async (): Promise<{ lead: string; report: WorkReport }[]> => {
+      let leads: string[]
+      try {
+        leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
+      } catch (error) {
+        errors.push({ source: 'agent-msg work', text: errorText(error) })
+        sourceFailed('agent-msg work', errorText(error))
+        return []
+      }
+      const read = await Promise.all(leads.map(async lead => ({ lead, read: await readReport($, lead) })))
+      const failedReads = read.flatMap(r => ('error' in r.read ? [{ lead: r.lead, error: r.read.error }] : []))
+      // With every lead read (a name, or a session nobody could identify) one lead with no live agent is no news.
+      if (failedReads.length > 0 && (teams !== null || failedReads.length === read.length)) {
+        const text = failedReads.map(f => `${f.lead}: ${f.error}`).join(' · ')
+        errors.push({ source: 'agent-msg work', text })
+        sourceFailed('agent-msg work', text)
+      } else sourceOk('agent-msg work', await $.clock.now())
+      return read.flatMap(r => ('report' in r.read ? [{ lead: r.lead, report: r.read.report }] : []))
+    }
+    const lookup = async (): Promise<Resolved[]> => {
+      if (!isName) return []
+      let failed: string | null = null
+      const found = await resolveDefinitions($, name, scope.identity === 'detected' ? scope.ownTeam : null, m => {
+        failed = failed === null ? m : `${failed} · ${m}`
+      })
+      if (failed !== null) {
+        errors.push({ source: 'agent-msg focuses', text: failed })
+        sourceFailed('agent-msg focuses', failed)
+      } else sourceOk('agent-msg focuses', await $.clock.now())
+      return found
+    }
+    const [reports, defs] = await Promise.all([gather(), lookup()])
+
+    const leadEntries = reports
+      .filter(r => selectorsOfScope(r.report.scope).length > 0 || Boolean(r.report.focus?.summary))
+      .map(r => leadEntry(r.lead, r.report))
+    let entries: Entry[]
+    if (!isName) entries = leadEntries
+    else if (defs.length > 0) entries = defs.map(definitionEntry)
+    else {
+      const addresses = matchLeads(name, reports.map(r => r.lead))
+      const byAddress = leadEntries.filter(e => addresses.some(a => a.toLowerCase() === e.view.address.toLowerCase()))
+      if (byAddress.length > 0) entries = byAddress.map(e => ({ ...e, view: { ...e.view, via: 'lead' as const } }))
+      else {
+        const picked = scopeFocuses(leadEntries.map(e => e.view), scope).shown
+        entries = leadEntries.filter(e => picked.includes(e.view)).map(e => ({ ...e, view: { ...e.view, via: 'summary' as const } }))
+      }
+    }
+    entries.sort((a, b) => a.view.address.localeCompare(b.view.address))
+
+    // Each source is drawn when it answers: the reports and definitions first, with the progress of the last refresh.
+    const before = await read($, focuses)
+    const first = entries.map(e => {
+      const prior = before.find(f => f.address === e.view.address)
+      const noSelectors = e.selectors.length === 0 && e.view.via !== 'definition'
+      return { ...e.view, ...(prior === undefined ? {} : { projects: prior.projects, ready: prior.ready, fetchedAt: prior.fetchedAt, failures: prior.failures, counts: prior.counts, partial: prior.partial, error: prior.error }), notes: [...e.view.notes, ...(noSelectors ? [NO_SELECTORS] : [])] }
+    })
+    await update($, focuses, () => first)
+    await update($, focusMeta, m => ({ ...m, errors }))
+
+    const failed = new Map<string, { name: string; error: string }>()
+    // One focus after the other: the gate's file is read and written by each, and two writers in one process lose each other's claim.
+    for (const e of entries) {
+      if (e.selectors.length === 0) continue
+      const progress = await progressOf($, e.selectors, manual, failed)
+      if (progress === null) continue
+      await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
+    }
+    setSelectorErrors(failed)
     const now = await $.clock.now()
-    await update($, focusMeta, () => ({ at: now, busy: false, error: null }))
+    await update($, focusMeta, () => ({ at: now, busy: false, error: null, errors }))
   } catch (error) {
     await update($, focusMeta, m => ({ ...m, busy: false, error: errorText(error) }))
   }
@@ -178,10 +317,11 @@ export function registerFocus(on: On, _options: Options): void {
     const scope = scopeOf(getSelection())
     const { shown: list, note } = scopeFocuses(all, scope)
     const grouped = scope.focus.trim().toLowerCase() === 'team'
+    const banner = focusBanner(scope, list.length > 0)
 
-    const bar = (done: number, inProgress: number, ready: number, total: number, cells: number) =>
+    const bar = (done: number, inProgress: number, ready: number, total: number, cells: number, complete = false) =>
       Svg && (
-      <Svg source={progressBar(done, total, cells * 7, total > 0 && done >= total ? INK.good : INK.calm, inProgress, ready)} alt={`${done} of ${total} done`} width={cells * 7} height={6} />
+      <Svg source={progressBar(done, total, cells * 7, complete ? INK.good : INK.calm, inProgress, ready)} alt={`${done} of ${total} done`} width={cells * 7} height={6} />
       )
 
     if (e.props.placement === 'widget') {
@@ -200,16 +340,24 @@ export function registerFocus(on: On, _options: Options): void {
       const done = f.projects.reduce((s, p) => s + p.done, 0)
       const total = f.projects.reduce((s, p) => s + p.total, 0)
       const inProgress = f.projects.reduce((s, p) => s + p.inProgress, 0)
+      // A partial aggregate is neither complete nor done: it never reads 100% and never wears the done colour.
+      const reached = !f.partial && total > 0 && done >= total
+      const pct = Math.min(f.partial ? 99 : 100, Math.round((100 * done) / Math.max(1, total)))
+      const barDone = f.partial && total > 0 ? Math.min(done, total - 1) : done
+      const counts = f.counts === null ? null : `${f.counts.fresh} fresh, ${f.counts.old} old, ${f.counts.failed} failed`
       const isOpen = !collapsed.includes(f.address)
       const open = f.projects.filter(p => p.done < p.total).sort((a, b) => b.total - b.done - (a.total - a.done))
       const finished = f.projects.filter(p => p.total > 0 && p.done >= p.total)
-      const rows = showDone ? [...open, ...finished] : open
-      const nameCells = Math.min(38, Math.max(16, ...rows.map(p => p.name.length)))
+      // A selector whose refresh failed always keeps its row, so an old value is never hidden behind the toggle.
+      const rows = showDone ? [...open, ...finished] : [...open, ...finished.filter(p => p.old)]
+      const label = (p: FocusProject) => (p.old && p.at !== null ? `${p.name} · ${now - p.at > STALE_MS ? 'stale' : 'old'} ${age(p.at, now)}` : p.name)
+      const nameCells = Math.min(38, Math.max(16, ...rows.map(p => label(p).length)))
       const barCells = Math.max(6, Math.min(18, width - nameCells - 14))
       // Terminal row width = name + bar + 10-column count + 2 gaps, inside the card's padding of 1 each side.
       const room = width - 3 - 12 // the card padding, one spare column, the row's two gaps and its 10-column count
-      const termNameCells = Math.max(8, Math.min(30, room - 8, Math.max(10, ...rows.map(p => p.name.length))))
+      const termNameCells = Math.max(8, Math.min(30, room - 8, Math.max(10, ...rows.map(p => label(p).length))))
       const termBarCells = Math.max(8, room - termNameCells)
+      const hidden = finished.filter(p => !p.old)
 
       return (
         <Box key={f.address} flexDirection="column" padding={1} gap={1} backgroundColor={CARD_BG}>
@@ -217,12 +365,12 @@ export function registerFocus(on: On, _options: Options): void {
             <Button
               key={`focus-${f.address}`}
               plain
-              label={`${isOpen ? '▾' : '▸'} ${f.address}`}
+              label={`${isOpen ? '▾' : '▸'} ${f.title ?? f.address}`}
               onPress={() => void toggleCollapsed($, f.address)}
             />
             {total > 0 && (
               <Text weight="semibold" size="heading" tabular color={Svg ? undefined : ACCENT}>
-                {Math.round((100 * done) / total)}%
+                {pct}%
               </Text>
             )}
           </Box>
@@ -236,8 +384,8 @@ export function registerFocus(on: On, _options: Options): void {
           {total > 0 && (
             <Box flexDirection="column">
               {Svg
-                ? bar(done, inProgress, f.ready, total, Math.max(10, Math.min(48, width - 6)))
-                : segmentBar(`all-${f.address}`, done, inProgress, f.ready, total, termBarCells)}
+                ? bar(barDone, inProgress, f.ready, total, Math.max(10, Math.min(48, width - 6)), reached)
+                : segmentBar(`all-${f.address}`, barDone, inProgress, f.ready, total, termBarCells)}
               <Box flexDirection="row" gap={2}>
                 {Svg ? (
                   <Box flexDirection="row" gap={2}>
@@ -250,15 +398,31 @@ export function registerFocus(on: On, _options: Options): void {
                     <Text dimColor size="caption" tabular>
                       {f.ready} ready
                     </Text>
+                    {counts !== null && (
+                      <Text color={f.partial ? 'warning' : undefined} dimColor={!f.partial} size="caption" tabular>
+                        {counts}
+                      </Text>
+                    )}
                   </Box>
                 ) : (
                   <Text dimColor size="caption" tabular wrap="truncate-end">
-                    {done}/{total} done · {inProgress} in progress · {f.ready} ready
+                    {done}/{total} done · {inProgress} in progress · {f.ready} ready{counts === null ? '' : ` · ${counts}`}
                   </Text>
                 )}
               </Box>
+              {f.partial && (
+                <Text color="warning" size="caption">
+                  partial
+                </Text>
+              )}
               {legend()}
             </Box>
+          )}
+
+          {total === 0 && counts !== null && (
+            <Text dimColor size="caption" tabular>
+              {counts}
+            </Text>
           )}
 
           {f.error && (
@@ -267,35 +431,61 @@ export function registerFocus(on: On, _options: Options): void {
             </Text>
           )}
 
+          {f.notes.map(n => (
+            <Text key={`note-${f.address}-${n}`} dimColor size="caption">
+              {n}
+            </Text>
+          ))}
+
+          {f.failures.map(x => (
+            <Text key={`fail-${f.address}-${x.name}`} color="warning" size="caption">
+              {x.name}: {x.error}
+            </Text>
+          ))}
+
           {isOpen && rows.length > 0 && (
             <Box flexDirection="column">
               {Svg
                 ? rows.map(p => (
-                    <Box key={p.name} flexDirection="row" gap={1} alignItems="center">
-                      <Box width={nameCells}>
-                        <Text dimColor={p.done >= p.total} wrap="truncate-end">
-                          {p.name}
-                        </Text>
+                    <Box key={p.name} flexDirection="column">
+                      <Box flexDirection="row" gap={1} alignItems="center">
+                        <Box width={nameCells}>
+                          <Text dimColor={p.done >= p.total || p.old} wrap="truncate-end">
+                            {label(p)}
+                          </Text>
+                        </Box>
+                        {bar(p.done, p.inProgress, 0, p.total, barCells, p.done >= p.total && !p.old)}
+                        <Box width={10} justifyContent="flex-end">
+                          <Text dimColor size="caption" tabular>
+                            {p.done}/{p.total}
+                          </Text>
+                        </Box>
                       </Box>
-                      {bar(p.done, p.inProgress, 0, p.total, barCells)}
-                      <Box width={10} justifyContent="flex-end">
-                        <Text dimColor size="caption" tabular>
-                          {p.done}/{p.total}
+                      {p.error && (
+                        <Text color="warning" size="caption">
+                          {p.name}: {p.error}
                         </Text>
-                      </Box>
+                      )}
                     </Box>
                   ))
-                : rows.map(p =>
-                    progressRow(`p-${f.address}-${p.name}`, p.name, p.done, p.inProgress, 0, p.total, termNameCells, termBarCells, p.done >= p.total),
-                  )}
+                : rows.map(p => (
+                    <Box key={`row-${f.address}-${p.name}`} flexDirection="column">
+                      {progressRow(`p-${f.address}-${p.name}`, label(p), p.done, p.inProgress, 0, p.total, termNameCells, termBarCells, p.done >= p.total || p.old)}
+                      {p.error && (
+                        <Text color="warning" size="caption" wrap="truncate-end">
+                          {p.name}: {p.error}
+                        </Text>
+                      )}
+                    </Box>
+                  ))}
             </Box>
           )}
 
-          {isOpen && finished.length > 0 && (
+          {isOpen && hidden.length > 0 && (
             <Button
               key={`done-${f.address}`}
               plain
-              label={showDone ? 'hide complete' : `+ ${finished.length} complete`}
+              label={showDone ? 'hide complete' : `+ ${hidden.length} complete`}
               onPress={() => void toggleShowDone($)}
             />
           )}
@@ -319,6 +509,11 @@ export function registerFocus(on: On, _options: Options): void {
 
     return (
       <Box flexDirection="column" gap={1}>
+        {banner !== null && (
+          <Text key="banner" size="caption">
+            {banner}
+          </Text>
+        )}
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text weight="semibold" size="heading">
@@ -339,16 +534,16 @@ export function registerFocus(on: On, _options: Options): void {
           </Text>
         )}
 
-        {note !== null && (
+        {meta.at !== null && note !== null && (
           <Text color="warning" size="caption">
             {note}
           </Text>
         )}
-        {scope.identity === 'unknown' && (
-          <Text dimColor size="caption">
-            Could not tell who this session is, so every focus is shown.
+        {meta.errors.map(x => (
+          <Text key={`err-${x.source}`} color="warning" size="caption">
+            {x.source}: {x.text}
           </Text>
-        )}
+        ))}
 
         {list.map((f, i) => (
           <Box key={f.address} flexDirection="column" gap={1}>

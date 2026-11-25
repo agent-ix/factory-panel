@@ -15,6 +15,7 @@ import { CARD_BG, INK, ago, errorText, pausedText, promQuery, shortError } from 
 import { ACCENT, tempColor, usd } from './ui/glyphs'
 import { widgets } from './ui/widgets'
 import { gatedBoard } from './linear'
+import { sourceFailed, sourceOk } from './sources'
 import { getSelection, selectionReady } from './selection'
 import type { Options, Sample } from './shared'
 
@@ -163,7 +164,9 @@ async function pollPrometheus($: EngineInterface, options: Options): Promise<voi
       prometheusError: null,
       nodeMetricsSeen: cpu.length > 0 || mem.length > 0 || temp.length > 0,
     }))
+    sourceOk('prometheus', now)
   } catch (error) {
+    sourceFailed('prometheus', errorText(error))
     await update($, freshness, f => ({ ...f, prometheusError: errorText(error) }))
   }
 }

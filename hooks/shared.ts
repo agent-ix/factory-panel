@@ -59,12 +59,31 @@ export const pausedText = (backoffUntil: number, now: number): string =>
 export type Sample = { metric: Record<string, string>; value: [number, string] }
 export type RangeSeries = { metric: Record<string, string>; values: [number, string][] }
 
+/** A Prometheus call is given up on after this long. */
+export const PROMETHEUS_TIMEOUT_MS = 5_000
+
+/** Resolves true once `ms` have passed on the host's clock; never resolves where the clock cannot wait. */
+export function after($: EngineInterface, ms: number): Promise<true> {
+  return Promise.resolve()
+    .then(() => $.clock.sleep(ms))
+    .then(
+      () => true as const,
+      () => new Promise<true>(() => undefined),
+    )
+}
+
 async function promGet<T>($: EngineInterface, url: string, body: string): Promise<T> {
-  const response = await $.http.fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body,
+  const timedOut = after($, PROMETHEUS_TIMEOUT_MS).then((): never => {
+    throw new Error(`Prometheus timed out after ${PROMETHEUS_TIMEOUT_MS}ms`)
   })
+  const response = await Promise.race([
+    $.http.fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body,
+    }),
+    timedOut,
+  ])
   if (!response.ok) throw new Error(`Prometheus ${response.status}`)
   const parsed = JSON.parse(response.text) as { status: string; data?: T; error?: string }
   if (parsed.status !== 'success' || parsed.data === undefined) {
