@@ -215,7 +215,14 @@ async function pollRelay($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   try {
     const ran = await $.process.run(['agent-msg', 'doctor', '--json'], { timeoutMs: 30_000 })
-    const parsed = JSON.parse(ran.stdout) as { ok: boolean; checks: RelayCheck[] }
+    // A doctor that fails outright prints its reason on stderr, not JSON; show that reason.
+    let parsed: { ok: boolean; checks: RelayCheck[] }
+    try {
+      parsed = JSON.parse(ran.stdout) as { ok: boolean; checks: RelayCheck[] }
+    } catch (error) {
+      const reason = (ran.stderr.trim() || ran.stdout.trim()).split('\n')[0]
+      throw reason === undefined || reason === '' ? error : new Error(reason)
+    }
     const checks = parsed.checks ?? []
     const redis = checks.find(c => c.check === 'redis')?.status ?? 'unknown'
     const watchers = checks

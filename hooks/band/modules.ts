@@ -182,9 +182,6 @@ const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local
 export const MAX_DIGITS = 9
 export const digitFor = (index: number): string | undefined => (index < MAX_DIGITS ? String(index + 1) : undefined)
 
-/** The cell a pressed digit opens; undefined when no cell carries it. */
-export const cellForDigit = (cells: readonly Cell[], digit: string): Cell | undefined => cells.find((_, i) => digitFor(i) === digit)
-
 /** The cells for the listed modules, in order; a module with nothing to say is left out. */
 export const buildCells = (ids: readonly ModuleId[], s: Snapshot): Cell[] =>
   ids.flatMap(id => {

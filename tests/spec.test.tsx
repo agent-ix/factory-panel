@@ -6,7 +6,7 @@ import { runFactory, helpText } from '../hooks/router'
 import { askRole, isRoleUnknown, roleOf, startRole } from '../hooks/role'
 import { defaultView } from '../hooks/views'
 import { PRESETS, modulesFor, parseModules } from '../hooks/band/roles'
-import { cellForDigit, digitFor } from '../hooks/band/modules'
+import { digitFor } from '../hooks/band/modules'
 import type { Cell } from '../hooks/band/modules'
 import type { Options } from '../hooks/shared'
 
@@ -57,6 +57,7 @@ function world(on: On): World {
   })
   on('ui.panes', () => ({ value: (w.listed.value ?? []) as never }))
   on('ui.log', () => ({ value: undefined }))
+  on('ui.close', (_, e) => (w.closes.push(e.id), { value: undefined }))
   on('ui.status', (_, e) => {
     w.statuses.push(e.text)
     return { value: undefined }
@@ -80,7 +81,10 @@ function world(on: On): World {
     if (line === 'printenv HOME') return ok('/home/test\n')
     if (line === 'hostname -s') return ok('draco\n')
     if (line === 'agent-msg whoami') return w.whoami.value === undefined ? fail('agent-msg: this session has no verified Herdr placement') : ok(w.whoami.value)
-    if (line === 'agent-msg doctor --json') return w.relayFails.value ? fail('redis down') : ok('[]')
+    if (line === 'agent-msg doctor --json') {
+      if (w.relayFails.value) return fail('redis down')
+      return ok(JSON.stringify({ ok: true, checks: [] }))
+    }
     return fail(`not stubbed: ${line}`)
   })
   return w
@@ -261,7 +265,6 @@ test('the old per-view commands are aliases, and /band does not exist', async ($
 // ---------------------------------------------------------------- FR-004 detail view
 
 test('with a view open, opening another replaces it in the classic layout and keeps the dock in fullscreen', async ($, on) => {
-  trace("FR-004-AC-2", "FR-009-AC-6")
   const w = world(on)
   const o = options({ role: 'coordinator' })
   await runFactory(fake$(w) as never, o, 'focus', false)
@@ -404,10 +407,27 @@ test('while a source fails the band adds one line naming the problem under its r
   await startSession($)
   await settle()
   const ui = await drawBand($, CLASSIC)
-  expect(await ui.find({ key: 'relay' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /^relay: / }))?.text).toMatch(/relay: /)
+  const alerts = await ui.findAll({ type: 'Text', text: /^relay: / })
+  expect(alerts.map(a => a.text)).toEqual(['relay: redis down'])
+  expect((alerts[0]?.props as { color?: string }).color).toBe('warning')
+  // It is the only warning line: one line, not one per source.
+  const lines = (await ui.findAll({ type: 'Text' })).filter(t => (t.props as { wrap?: string }).wrap === 'truncate-end')
+  expect(lines.map(t => t.text)).toEqual(['relay: redis down'])
+  // The row of cells is still there above the line.
+  expect(await ui.find({ key: 'health' })).toBeDefined()
   await ui.unmount()
-  w.relayFails.value = false
+})
+
+test('with no failing source the band is only its row of cells', { options: { role: 'coordinator' } }, async ($, on) => {
+  trace("FR-001-AC-8")
+  world(on)
+  await startSession($)
+  await settle()
+  const ui = await drawBand($, CLASSIC)
+  expect(await ui.find({ key: 'health' })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /^relay: / })).toEqual([])
+  expect((await ui.findAll({ type: 'Text' })).filter(t => (t.props as { wrap?: string }).wrap === 'truncate-end')).toEqual([])
+  await ui.unmount()
 })
 
 // ---------------------------------------------------------------- FR-009 band cells
@@ -420,6 +440,9 @@ test('each cell drawn shows its digit, so a person can read which key opens it',
   const ui = await drawBand($, CLASSIC)
   const local = await ui.find({ key: 'local' })
   expect((local?.props as { hotkey?: string }).hotkey).toBe('1')
+  // The host draws the hotkey as the number before the button's text; the text itself does not repeat it.
+  expect(local?.text).not.toMatch(/^1/)
+  expect(local?.text.length).toBeGreaterThan(0)
   await ui.unmount()
 })
 
@@ -434,19 +457,66 @@ test('the digits follow the cells drawn: a module left out moves the others up',
   await ui.unmount()
 })
 
-const cell = (id: string): Cell => ({ id: id as Cell['id'], pane: 'factory', parts: [{ text: id }] })
+test('digits 1 to 9 go to the first nine cells and a tenth has none', () => {
+  trace("FR-009-AC-3")
+  expect(Array.from({ length: 10 }, (_, i) => digitFor(i))).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', undefined])
+})
 
-test('digits 1 to 9 go to the first nine cells; a tenth has none; a digit nobody carries opens nothing', () => {
-  trace("FR-009-AC-3", "FR-009-AC-5")
-  const cells = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].map(cell)
-  expect(cells.map((_, i) => digitFor(i))).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', undefined])
-  expect(cellForDigit(cells, '9')?.id).toBe('i')
-  expect(cellForDigit(cells, '0')).toBeUndefined()
-  expect(cellForDigit(cells.slice(0, 2), '5')).toBeUndefined()
+test('a mounted band numbers its buttons 1, 2, ... in the order drawn, and no button carries a digit beyond them', { options: { role: 'coordinator', bandModules: 'health,local' } }, async ($, on) => {
+  trace("FR-009-AC-5")
+  const w = world(on)
+  await startSession($)
+  await settle()
+  const ui = await drawBand($, CLASSIC)
+  const buttons = await ui.findAll({ type: 'Button' })
+  expect(buttons.map(b => b.key)).toEqual(['health', 'local'])
+  expect(buttons.map(b => (b.props as { hotkey?: string }).hotkey)).toEqual(['1', '2'])
+  // No button answers to 3, so that digit has nothing to open; drawing opened nothing either.
+  expect(buttons.some(b => (b.props as { hotkey?: string }).hotkey === '3')).toBe(false)
+  expect(w.opens).toEqual([])
+  await ui.unmount()
+})
+
+test('pressing the band button that carries a digit opens that cell\'s view and replaces the open one', { options: { role: 'coordinator', bandModules: 'health,local' } }, async ($, on) => {
+  trace("FR-004-AC-2", "FR-009-AC-6")
+  const w = world(on)
+  await startSession($)
+  await settle()
+  await $.command.run({ command: 'factory', args: 'focus' })
+  await settle()
+  w.opens.length = 0
+  w.closes.length = 0
+  const ui = await drawBand($, CLASSIC)
+  const first = (await ui.findAll({ type: 'Button' })).find(b => (b.props as { hotkey?: string }).hotkey === '1')
+  await ui.press({ key: first!.key! })
+  await settle()
+  expect(w.opens.map(o => o.id)).toEqual(['factory'])
+  expect(w.opens[0]?.focus).toBe(true)
+  expect(w.closes).toContain('focus')
+  await ui.unmount()
 })
 
 test('bandModules keeps the order written, drops unknown names and repeats', () => {
-  trace("FR-009-AC-4", "FR-002-AC-5")
+  trace("FR-009-AC-4")
   expect(parseModules('focus,nope,focus,local')).toEqual(['focus', 'local'])
   expect(modulesFor('coordinator', 'local,nope,focus')).toEqual(['local', 'focus'])
+})
+
+test('an answer given with /factory role outranks the role the relay address names', async ($, on) => {
+  trace("FR-005-AC-9")
+  const w = world(on)
+  const o = options()
+  w.whoami.value = 'draco:QSL:code'
+  await startRole(fake$(w) as never, o, '/proj')
+  expect(roleOf(o)).toBe('code-lead')
+  w.answer.value = 'Planner'
+  const text = await runFactory(fake$(w) as never, o, 'role', false)
+  expect(text).toBe('Your role here is planner.')
+  expect(roleOf(o)).toBe('planner')
+  // The answer is stored, so a later session there keeps it over the address and a plain /factory does not ask.
+  await startRole(fake$(w) as never, o, '/proj')
+  expect(roleOf(o)).toBe('planner')
+  w.asks.length = 0
+  await runFactory(fake$(w) as never, o, '', false)
+  expect(w.asks).toEqual([])
 })

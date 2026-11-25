@@ -12,6 +12,10 @@
 //   FR-004-AC-6   fullscreen: `/factory focus` focuses the docked Focus tab
 //   FR-009-AC-8   classic: a digit typed while the prompt holds text goes into the prompt
 //
+// These are Demonstration and capture criteria. Quire reads trace tags only from TypeScript, Python and
+// Rust symbols, not from .mjs, so they are deliberately NOT matrix-bound; the matrix shows them as
+// untagged and this script plus its evidence/ captures is their verification.
+//
 // Needs: node, tmux, claude on PATH, and the repository folder already trusted by Claude Code.
 // Run: node tests/e2e/layouts.mjs
 

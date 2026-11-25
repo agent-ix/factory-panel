@@ -32,12 +32,12 @@ The plugin shows what your role needs. The first time you type `/factory` in a p
 
 | Role | Band cells |
 | --- | --- |
-| coordinator | health, focus, attention, relay |
+| coordinator | health, focus, attention, relay, team |
 | code-lead | local, focus, lead, lanes |
 | planner | focus, queue, lead |
 | worker | local |
 
-The role comes from, in order: the `role` setting, the relay address of the session, the stored answer, then the question. A session with no role known is treated as a code lead until it is answered.
+The role comes from, in order: the `role` setting, the stored answer, the relay address of the session, then the question. An answer given with `/factory role` therefore replaces what the relay address says. A session with no role known is treated as a code lead until it is answered.
 
 ## Advanced settings
 
@@ -76,7 +76,8 @@ Point Claude Code at this folder with `claude --plugin-dir ~/dev/factory-panel`,
 ```bash
 claude plugin validate .
 claude plugin test .
+node --test tests/e2e/static.check.ts
 node tests/e2e/layouts.mjs
 ```
 
-The last command drives real sessions in tmux in both layouts and saves captures under `tests/e2e/evidence/`. Requirements and their tests are in `spec/`; see `docs/STYLE.md` for the colours, spacing and widgets the views share.
+`static.check.ts` checks this README and the hotkeys against the plugin's source. `layouts.mjs` drives real sessions in tmux in both layouts and saves captures under `tests/e2e/evidence/`. Requirements and their tests are in `spec/`; see `docs/STYLE.md` for the colours, spacing and widgets the views share.

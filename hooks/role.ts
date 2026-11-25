@@ -5,8 +5,9 @@ import type { Role } from './band/roles'
 import type { Options } from './shared'
 
 // The person's role decides what the band shows and which view `/factory` opens first. Order:
-// the `role` setting, the session's relay address, a stored answer for the working directory,
-// and finally a question asked once when the person types `/factory`. Never asked at session start.
+// the `role` setting, a stored answer for the working directory (an explicit `/factory role`
+// outranks detection), the session's relay address, and finally a question asked once when the
+// person types `/factory`. Never asked at session start.
 
 let detected: Role | undefined
 let stored: Role | undefined
@@ -43,9 +44,9 @@ export async function startRole($: EngineInterface, options: Options, sessionCwd
   }
 }
 
-/** The role in force: the setting, else the relay address, else the stored answer; undefined when none. */
+/** The role in force: the setting, else the stored answer, else the relay address; undefined when none. */
 export const roleOf = (options: Options): Role | undefined =>
-  isRole(options.role) ? options.role : (detected ?? stored)
+  isRole(options.role) ? options.role : (stored ?? detected)
 
 /** True when the person has not yet said (and nothing detected) what they do here. */
 export const isRoleUnknown = (options: Options): boolean => roleOf(options) === undefined && options.role === 'auto'

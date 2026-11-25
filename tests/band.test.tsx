@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { buildCells, machineTone } from '../hooks/band/modules'
+import { MODULE_IDS, buildCells, machineTone } from '../hooks/band/modules'
 import type { Snapshot } from '../hooks/band/modules'
 import { PRESETS, modulesFor, parseModules, roleFromAddress } from '../hooks/band/roles'
 import type { Machine, TeamView } from '../types'
@@ -158,4 +158,31 @@ test('the team cell shows the first tile of the first team and is left out when 
   expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null), teamView('QSL', 3)] })), 'team')).toBe('QSL Verified closures · 24h 3')
   expect(buildCells(['team'], snapshot({ teamViews: [] }))).toEqual([])
   expect(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null)] }))).toEqual([])
+})
+
+test('every module opens the view the module-to-view map names', () => {
+  trace("FR-009-AC-6")
+  const esc = { id: 'a', status: 'waiting' as const, ticket: '', lead: '', filed: '', machine: '', kind: '', context: '', options: [], recommendation: '', decision: '', hasDetail: false }
+  const s = snapshot({
+    escalations: [esc],
+    relay: { ok: true, redis: 'ok', watchers: [], warnings: 0, deadLetters: 1, inboxWaiting: 2, checks: [] },
+    teamViews: [teamView('ENG', 7)],
+  })
+  const cells = buildCells(MODULE_IDS, s)
+  // Every module has something to say here, so none is missing from the check.
+  expect(cells.map(c => c.id)).toEqual([...MODULE_IDS])
+  const pane = Object.fromEntries(cells.map(c => [c.id, c.pane]))
+  expect(pane).toEqual({
+    health: 'factory',
+    local: 'factory',
+    lanes: 'factory',
+    agents: 'factory',
+    spend: 'factory',
+    focus: 'focus',
+    queue: 'focus',
+    lead: 'focus',
+    attention: 'escalations',
+    relay: 'relay',
+    team: 'team',
+  })
 })
