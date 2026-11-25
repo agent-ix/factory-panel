@@ -7,6 +7,7 @@ import { pollBoard, pollDoctor, pollHerdr, pollPrometheus } from './factory'
 import { pollFocus } from './focus'
 import { isOnView, resetOnView } from './onview'
 import { pollRelay } from './relay'
+import { pollRoles } from './roles'
 import { isDue, markStale, track } from './schedule'
 import type { SourceId } from './schedule'
 import { getSelection, refreshSelection } from './selection'
@@ -40,7 +41,7 @@ const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   work: ['selection', 'focus', 'work', 'events'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['selection', 'team', 'retro'],
+  team: ['selection', 'team', 'retro', 'roles'],
 }
 
 const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
@@ -58,9 +59,14 @@ const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
   work: ['focus', 'work'],
 }
 
-/** The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams. */
-export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[] =>
-  isWidget && view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view]
+/**
+ * The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams, and the Team widget
+ * no roles.
+ */
+export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[] => {
+  if (!isWidget) return PANE_SOURCES[view]
+  return view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view].filter(s => s !== 'roles')
+}
 
 /**
  * The sources the band's selected modules draw. A module with nothing to say draws no cell, but its
@@ -76,7 +82,7 @@ async function readScope($: EngineInterface): Promise<boolean> {
   await refreshSelection($, true)
   const now = `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
   // The first refresh only records the scope: the first reads already wait for it.
-  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'retro')
+  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'retro', 'roles')
   lastScope = now
   $.ui.invalidate('ui.render')
   return true
@@ -112,6 +118,8 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollEvents($)
     case 'retro':
       return pollRetro($)
+    case 'roles':
+      return pollRoles($)
     // The identity lookup is part of the selection's refresh.
     case 'whoami':
       return Promise.resolve()

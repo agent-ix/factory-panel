@@ -18,6 +18,7 @@ export type SourceId =
   | 'work'
   | 'events'
   | 'retro'
+  | 'roles'
 
 const MINUTE = 60 * 1000
 /** The longest a failing or slow source is left alone, unless its own interval is longer. */
@@ -50,6 +51,7 @@ export const intervalOf = (id: SourceId): number => {
     // The stored retro snapshots change when a retro runs: every few minutes is often enough.
     case 'retro':
       return 5 * MINUTE
+    // 'roles' among them: a look at the shared gate, which runs the evaluation itself far less often.
     default:
       return MINUTE
   }

@@ -204,7 +204,7 @@ export type TeamMetric = {
   label: string
   /** the latest value, null when the series is absent */
   value: number | null
-  /** whether `value` is a lower bound: the largest 24 hour count of one of several scopes */
+  /** whether `value` is a lower bound: the largest count of one of several scopes */
   atLeast: boolean
   unit: 'count' | 'rate' | 'seconds' | 'share'
   /** higher is better (velocity) or worse (queues), for the trend's colour */
@@ -236,6 +236,18 @@ export type RetroClass = { id: string; rating: 'red' | 'amber' | 'green' | 'unkn
 export type RetroView = { team: string; classes: RetroClass[] | null; latest: string | null; reason: string | null }
 
 export type RetroMeta = { at: number | null; error: string | null }
+
+/** One rule of a role evaluation; `reason` and `rubric` say why one is not scored. */
+export type RoleRule = { id: string; status: string; query: string; value: number | null; comparator: string; target: number | null; reason: string | null; rubric: string | null }
+
+/** One role of an evaluation: the rules passed of those scored, and the change of the pass rate from the window before. */
+export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; rules: RoleRule[] }
+
+/** What the mod keeps of `ix-board retro eval --json`: the window (ms since the epoch) and its roles. */
+export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
+
+/** A team's Roles section: its latest evaluation, and what to say about it or its absence. */
+export type RolesView = { team: string; report: RoleReport | null; note: string | null; isError: boolean }
 
 // ---------------------------------------------------------------- Work pane
 
@@ -317,6 +329,8 @@ declare module 'claude-code' {
       retroMeta: Shaped<RetroMeta>
       retroOpen: string[]
       retroWarn: boolean
+      roles: Shaped<RolesView[]>
+      rolesOpen: string[]
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, WorkLast>>
       workMeta: Shaped<WorkMeta>

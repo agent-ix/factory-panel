@@ -43,6 +43,7 @@ The mod SHALL paint the band first from the fallback within the first-paint targ
 | Wait for one ix-board call (roadmap, initiative, combined or single) before the pane draws without it | 20 s | 20 s | Test |
 | Wait for `agent-msg focuses list` or `show`, or Prometheus before the pane draws without it | 5 s | 5 s | Test |
 | ix-board processes running at once per session | 4 | 4 | Test |
+| Wait for one `ix-board retro eval`, the rest of the Team view drawn meanwhile ([FR-031](../functional/FR-031-role-evaluations.md)) | 5 min | 5 min | Test |
 | Total time of one progress refresh | 60 s | 60 s | Test |
 | Bands drawn with a missing or malformed declaration or choice file | all | all | Test |
 

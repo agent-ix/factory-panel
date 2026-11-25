@@ -6,14 +6,14 @@ import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
 import { ACCENT, dots } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
-import { focusTeams } from './band/modules'
-import { getSelection, home, scopeOf, selectionReady } from './selection'
+import { drawRoles, retroTeams } from './roles'
+import { home, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
 // The Team pane: coder velocity, review quality and flow per team, from the same ix_team_* series as
 // Grafana's "Team flow and effort" dashboard, each tile with six hours of history and how much of its population was
 // measured, the completed issues and merged PRs of each of the last seven days, and above them the health of each
-// selected team's departments from its stored retro snapshots.
+// selected team's departments from its stored retro snapshots and its role evaluations (hooks/roles.tsx).
 
 const PANE = 'team'
 const TITLE = 'Team'
@@ -34,10 +34,11 @@ const teamMeta = atom(
 )
 
 /**
- * How the samples several exporter series of one team have at one time make one. `largest` is for the 24 hour counts:
- * scopes may count the same issues and PRs, so theirs are not added; the largest of one scope is a lower bound.
+ * How the samples several exporter series of one team have at one time make one. `max` is for durations, ages and
+ * shares. `largest` is for counts: scopes may count the same issues, PRs and agents, so theirs are not added; the
+ * largest of one scope is a lower bound.
  */
-type Combine = 'sum' | 'max' | 'largest'
+type Combine = 'max' | 'largest'
 type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage' | 'atLeast'> & { series: string; combine: Combine }
 
 // Velocity and effort, then review quality, then flow and capacity. Each tile is one series of the exporter, derived
@@ -53,13 +54,13 @@ const SPECS: Spec[] = [
   { key: 'medium', group: 'review', label: 'Confirmed findings · medium', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_medium_24h', combine: 'largest' },
   { key: 'low', group: 'review', label: 'Confirmed findings · low', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_low_24h', combine: 'largest' },
   { key: 'changes', group: 'review', label: 'Changes requested', unit: 'share', better: 'down', series: 'ix_team_pr_changes_requested_share', combine: 'max' },
-  { key: 'remaining', group: 'flow', label: 'Leaf work remaining', unit: 'count', better: 'down', series: 'ix_team_scope_leaf_remaining', combine: 'sum' },
-  { key: 'wip', group: 'flow', label: 'Work in progress', unit: 'count', better: 'down', series: 'ix_team_wip_active', combine: 'sum' },
-  { key: 'blocked', group: 'flow', label: 'Blocked', unit: 'count', better: 'down', series: 'ix_team_blocked_issues', combine: 'sum' },
-  { key: 'unmerged', group: 'flow', label: 'Ready, unmerged PRs', unit: 'count', better: 'down', series: 'ix_team_prs_ready_unmerged', combine: 'sum' },
+  { key: 'remaining', group: 'flow', label: 'Leaf work remaining', unit: 'count', better: 'down', series: 'ix_team_scope_leaf_remaining', combine: 'largest' },
+  { key: 'wip', group: 'flow', label: 'Work in progress', unit: 'count', better: 'down', series: 'ix_team_wip_active', combine: 'largest' },
+  { key: 'blocked', group: 'flow', label: 'Blocked', unit: 'count', better: 'down', series: 'ix_team_blocked_issues', combine: 'largest' },
+  { key: 'unmerged', group: 'flow', label: 'Ready, unmerged PRs', unit: 'count', better: 'down', series: 'ix_team_prs_ready_unmerged', combine: 'largest' },
   { key: 'oldest', group: 'flow', label: 'Oldest in a stage', unit: 'seconds', better: 'down', series: 'ix_team_stage_oldest_age_seconds', combine: 'max' },
-  { key: 'ready', group: 'flow', label: 'Ready issues', unit: 'count', better: 'up', series: 'ix_team_ready_issues', combine: 'sum' },
-  { key: 'agents', group: 'flow', label: 'Executing agents', unit: 'count', better: 'up', series: 'ix_team_executing_agents', combine: 'sum' },
+  { key: 'ready', group: 'flow', label: 'Ready issues', unit: 'count', better: 'up', series: 'ix_team_ready_issues', combine: 'largest' },
+  { key: 'agents', group: 'flow', label: 'Executing agents', unit: 'count', better: 'up', series: 'ix_team_executing_agents', combine: 'largest' },
 ]
 
 const DAYS = 7
@@ -100,7 +101,7 @@ function teamNamer(series: readonly RangeSeries[]): (s: RangeSeries) => { team: 
 }
 
 /** One team's samples, oldest first, from its series: at each time those with the team key are used where any has one. */
-function joined(series: readonly RangeSeries[], combine: 'sum' | 'max'): [number, number][] {
+function joined(series: readonly RangeSeries[]): [number, number][] {
   const keyed = new Map<number, number>()
   const keyless = new Map<number, number>()
   for (const s of series) {
@@ -109,7 +110,7 @@ function joined(series: readonly RangeSeries[], combine: 'sum' | 'max'): [number
       const value = Number(text)
       if (!Number.isFinite(value)) continue
       const had = into.get(time)
-      into.set(time, had === undefined ? value : combine === 'sum' ? had + value : Math.max(had, value))
+      into.set(time, had === undefined ? value : Math.max(had, value))
     }
   }
   return [...new Map([...keyless, ...keyed])].sort(([a], [b]) => a - b)
@@ -129,7 +130,7 @@ function currents(series: readonly RangeSeries[], part: (s: RangeSeries) => stri
   const parts = new Map<string, RangeSeries[]>()
   for (const s of series) parts.set(part(s), [...(parts.get(part(s)) ?? []), s])
   return [...parts.values()].flatMap(same => {
-    const value = currentOf(joined(same, 'max'), now)
+    const value = currentOf(joined(same), now)
     return value === null ? [] : [{ labels: same[0]!.metric, value }]
   })
 }
@@ -139,7 +140,7 @@ function largest(series: readonly RangeSeries[]): [number, number][] {
   const scopes = new Map<string, RangeSeries[]>()
   for (const s of series) scopes.set(scopeIn(s), [...(scopes.get(scopeIn(s)) ?? []), s])
   const most = new Map<number, number>()
-  for (const own of scopes.values()) for (const [time, value] of joined(own, 'max')) most.set(time, Math.max(value, most.get(time) ?? value))
+  for (const own of scopes.values()) for (const [time, value] of joined(own)) most.set(time, Math.max(value, most.get(time) ?? value))
   return [...most].sort(([a], [b]) => a - b)
 }
 
@@ -166,8 +167,9 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
     const [tiles, daily, coverage, scopes] = await Promise.all([
       Promise.all(
         SPECS.map(async spec => {
-          // A 24 hour count is asked for scope by scope, since its scopes are not added.
-          const promql = spec.combine === 'largest' ? `max by (team_id, team_key, scope_id) (${spec.series})` : `${spec.combine} by (team_id, team_key) (${spec.series})`
+          // A count is asked for scope by scope, since its scopes are not added.
+          const by = spec.combine === 'largest' ? 'team_id, team_key, scope_id' : 'team_id, team_key'
+          const promql = `max by (${by}) (${spec.series})`
           return { spec, series: await query(promql, HISTORY_SECS, STEP_SECS) }
         }),
       ),
@@ -185,10 +187,10 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
         const own = (series: readonly RangeSeries[]) => series.filter(s => nameOf(s).team === team)
         const measured = currents(own(coverage), s => `${scopeIn(s)}/${s.metric.metric}`, seconds)
         const byScope = [...tiles.filter(r => r.spec.combine === 'largest'), ...daily].flatMap(r => own(r.series))
-        const isShared = new Set([...byScope, ...own(coverage), ...own(scopes)].filter(s => currentOf(joined([s], 'max'), seconds) !== null).map(scopeIn)).size > 1
+        const isShared = new Set([...byScope, ...own(coverage), ...own(scopes)].filter(s => currentOf(joined([s]), seconds) !== null).map(scopeIn)).size > 1
         const metrics = tiles.map(({ spec, series }): TeamMetric => {
           const isCount = spec.combine === 'largest'
-          const samples = spec.combine === 'largest' ? largest(own(series)) : joined(own(series), spec.combine)
+          const samples = isCount ? largest(own(series)) : joined(own(series))
           // A scope's last sample may be a step older than another's and still be what it counts now.
           const counts = isCount ? currents(own(series), scopeIn, seconds).map(c => c.value) : []
           const value = !isCount ? currentOf(samples, seconds) : counts.length === 0 ? null : Math.max(...counts)
@@ -243,14 +245,6 @@ export function classesOf(metrics: readonly DeltaMetric[]): RetroClass[] {
       const rating: RetroClass['rating'] = regressing.length > 0 ? 'red' : unavailable === members.length ? 'unknown' : unavailable > 0 ? 'amber' : 'green'
       return { id, rating, regressing, unavailable, total: members.length }
     })
-}
-
-/** The teams whose retro health is shown: the teams the session's focus is about. */
-function retroTeams(): string[] {
-  const scope = scopeOf(getSelection())
-  const picked = focusTeams(scope)
-  if (picked !== null && picked.length > 0) return picked
-  return scope.ownTeam !== null ? [scope.ownTeam] : scope.teams
 }
 
 /** ix-board's exit code for a retro config it cannot read: the team has no retro. */
@@ -460,6 +454,7 @@ export function registerTeam(on: On, options: Options): void {
 
         {health.map(healthStrip)}
         {health.length === 0 && <Text dimColor size="caption">{rmeta.at === null && rmeta.error === null ? 'Health: reading retro snapshots…' : 'Health: no team selected'}</Text>}
+        {await drawRoles($, els)}
 
         {list.length === 0 && (
           <Box flexDirection="column" padding={1} backgroundColor={CARD_BG}>

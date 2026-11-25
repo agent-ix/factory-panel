@@ -309,7 +309,7 @@ test('a team no series gives a key is headed by the exporter id and says it has 
   await d.ui.unmount()
 })
 
-test('exporter ids with one team key make one team: counts added, durations at their largest', async ($, on) => {
+test('exporter ids with one team key make one team: counts as lower bounds, durations at their largest', async ($, on) => {
   trace("FR-029-AC-19")
   const w = await setup($, on, { published: [
     series('ready_issues', [2], { id: 'a', key: 'QSL' }),
@@ -319,7 +319,7 @@ test('exporter ids with one team key make one team: counts added, durations at t
   ] })
   const d = await draw($, w)
   expect(d.lines.filter(l => l === 'QSL')).toHaveLength(1)
-  expect(after(d.lines, 'Ready issues')).toBe('5')
+  expect(after(d.lines, 'Ready issues')).toBe('≥3')
   expect(after(d.lines, 'Oldest in a stage')).toBe('2.0h')
   await d.ui.unmount()
 })
@@ -432,6 +432,30 @@ test('a team with two scopes shows its 24 hour counts as at least the larger, an
   await widget.unmount()
 })
 
+const CURRENT_COUNTS: [string, string][] = [
+  ['Leaf work remaining', 'scope_leaf_remaining'], ['Work in progress', 'wip_active'], ['Blocked', 'blocked_issues'],
+  ['Ready, unmerged PRs', 'prs_ready_unmerged'], ['Ready issues', 'ready_issues'], ['Executing agents', 'executing_agents'],
+]
+
+test('a team with two scopes shows its current counts as at least the larger, never their sum, and one scope shows them exactly', async ($, on) => {
+  trace("FR-029-AC-30")
+  const w = await setup($, on, { published: [
+    ...CURRENT_COUNTS.flatMap(([, name], i) => [series(name, [i + 1], { key: 'QSL', scope: 'release' }), series(name, [10 + i], { key: 'QSL', scope: 'completion', ago: i % 2 === 0 ? 300 : 0 })]),
+    ...CURRENT_COUNTS.map(([, name], i) => series(name, [i], { id: 'swm', key: 'SWM' })),
+    // Only one of this team's two scopes reports a count: the other still makes it a bound.
+    series('wip_active', [4], { id: 'one', key: 'TWO' }),
+    scoped('release', { id: 'one', key: 'TWO' }),
+    scoped('completion', { id: 'one', key: 'TWO' }),
+  ] })
+  const d = await draw($, w)
+  const shown = (team: string, next?: string) => CURRENT_COUNTS.map(([label]) => after(under(d.lines, team, next), label))
+  expect(shown('QSL', 'SWM')).toEqual(['≥10', '≥11', '≥12', '≥13', '≥14', '≥15'])
+  expect(shown('SWM', 'TWO')).toEqual(['0', '1', '2', '3', '4', '5'])
+  expect(shown('TWO')).toEqual(['—', '≥4', '—', '—', '—', '—'])
+  expect(w.queries.filter(q => q.includes('sum by'))).toEqual([])
+  await d.ui.unmount()
+})
+
 for (const [name, published, shown] of [
   ['reports none of them', [series('verified_path_closed_24h', [6], { key: 'QSL' }), scoped('completion', { key: 'QSL' }), scoped('release', { key: 'QSL' })], '≥6'],
   ['reports them without the team key', [series('verified_path_closed_24h', [2], { key: 'QSL' }), series('verified_path_closed_24h', [9], { scope: 'release' })], '≥9'],
@@ -468,7 +492,7 @@ test('a tile says how much of its population was measured where that is not all 
   ] })
   const d = await draw($, w)
   const tile = (label: string) => d.lines.slice(d.lines.indexOf(label) + 1, d.lines.indexOf(label) + 3)
-  expect(tile('Executing agents')).toEqual(['3', '96% covered'])
+  expect(tile('Executing agents')).toEqual(['≥3', '96% covered'])
   expect(tile('Effort per closure')).toEqual(['—', '40% covered'])
   expect(tile('Oldest in a stage')).toEqual(['1.0h', '50% covered'])
   expect(tile('Changes requested')).toEqual(['—', '75% covered'])
