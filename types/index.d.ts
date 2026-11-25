@@ -204,6 +204,8 @@ export type TeamMetric = {
   label: string
   /** the latest value, null when the series is absent */
   value: number | null
+  /** whether `value` is a lower bound: the largest 24 hour count of one of several scopes */
+  atLeast: boolean
   unit: 'count' | 'rate' | 'seconds' | 'share'
   /** higher is better (velocity) or worse (queues), for the trend's colour */
   better: 'up' | 'down'

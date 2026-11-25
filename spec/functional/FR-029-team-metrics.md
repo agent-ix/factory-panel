@@ -30,15 +30,23 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 - A tile SHALL show a value only where its series has a sample no older than one 5 minute step. A series that has stopped SHALL read `—` and keep its history.
 - Each value SHALL be the exporter's own series: the mod SHALL derive none from other series where it is absent.
 - A share SHALL be drawn as a percentage.
-- The one-line widget SHALL say the verified closures of 24 hours over all teams, `≥N` where some team has no value and `—` where none has.
+- The one-line widget SHALL say the verified closures of 24 hours over all teams, `≥N` where some team has no value or only a lower bound, and `—` where none has a value.
 
 ### Teams
 
 - A team SHALL be headed by the Linear team key its series carry in the `team_key` label (ix-board's exporter 0.12.0 and later). The mod SHALL keep no table of exporter ids and team keys.
 - Series of an exporter `team_id` that carry no `team_key`, such as samples from before an upgrade, SHALL be joined to the team key that other series of that id carry, where those name exactly one key.
 - A team no series gives a key SHALL be headed by its exporter id, marked `exporter id, no team key`.
-- Where several exporter ids carry one team key, their values at one time SHALL be combined as the metric is: counts and rates added, the largest of durations, ages and shares.
+- Where several exporter ids carry one team key, their values at one time SHALL be combined as the metric is: the largest of durations, ages and shares; work remaining, in progress, blocked, ready unmerged PRs, ready issues and executing agents added; and the 24 hour counts as below.
 - Where a series with the key and one without it have a sample at one time, the one with the key SHALL be drawn.
+
+### Teams with several scopes
+
+- A scope of a team SHALL be a `team_id` and `scope_id` that a current series of the team names, `ix_team_source_available`, which the exporter publishes for every scope, among them.
+- Scopes may select the same issues and repositories, and a count says nothing of which, so the 24 hour counts of scopes SHALL NOT be added. These are verified closures, merged PRs per hour, confirmed findings of each severity, and the days of both daily rows.
+- Where a team has several scopes, each of those SHALL be drawn as `≥N`, with N the largest of one scope, also where only one scope reports it. With one scope it SHALL be drawn exactly.
+- The team cell of the band ([FR-009](./FR-009-band-cells.md)) SHALL draw a lower bound with its `≥`.
+- Where one scope has samples with and without the team key at one time, the keyed one SHALL be drawn; a scope without a key SHALL NOT be dropped for another scope's keyed sample.
 
 ### Closures and merges per day
 
@@ -46,7 +54,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 - A day of the `Completed` row counts Linear transitions into a completed state of the issues of the exporter's scope. It is not the `Verified closures · 24h` tile, which counts the verified closures on the configured gate path over the trailing 24 hours, and the two SHALL NOT be expected to agree.
 - A day of the `Merged PRs` row counts PRs of the scope's repositories by GitHub's merge time.
 - The mod SHALL draw only current samples, as for the tiles. A day with none SHALL read `—` and never 0.
-- Scopes may select the same issues and repositories, and a count says nothing of which, so where a team has several scopes (`team_id` and `scope_id`) each day SHALL be drawn as `≥N`, with N the largest count of one scope. Counts of scopes SHALL NOT be added.
+- Where a team has several scopes each day SHALL be drawn as `≥N`, as [above](#teams-with-several-scopes).
 - Each row SHALL say how yesterday, the newest whole day, compares with the average of the earlier whole days that have a value: `↑`, `↓` or `=` with that average. Today, a part day, SHALL take no part.
 - Where yesterday has no value, or the counts are lower bounds, the row SHALL claim no trend, and where no earlier day has a value it SHALL say there is none to compare.
 
@@ -91,14 +99,16 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-16 | A session with no team to ask for reads `no team selected` and asks for no delta. | Test |
 | FR-029-AC-17 | Series with `team_key` are headed by it; samples of the same id from before the label join that team, with the keyed sample drawn where both have one. | Test |
 | FR-029-AC-18 | Series with no `team_key` are headed by the exporter id and marked as having no team key. | Test |
-| FR-029-AC-19 | Two exporter ids with one team key make one team, counts added and durations taken at their largest. | Test |
+| FR-029-AC-19 | Two exporter ids with one team key make one team, its work counts added and durations taken at their largest. | Test |
 | FR-029-AC-20 | No query derives effort or changes-requested from other series: where those two are absent they read `—`. | Test |
 | FR-029-AC-21 | A series whose last sample is older than one step reads `—` while its history is drawn. | Test |
 | FR-029-AC-22 | The `Completed` and `Merged PRs` rows show the days `days_ago` 6 to 0 left to right, `—` for a day with no current sample, from the two daily series and no other. | Test |
 | FR-029-AC-23 | The rows say `↑`, `↓` or `=` for yesterday against the average of the earlier days with values, ignore today, claim no trend with no yesterday, and say there is nothing to compare with no earlier day. | Test |
-| FR-029-AC-24 | The widget reads the closures of all teams, `≥N` where a team has none, and `—` where none has. | Test |
+| FR-029-AC-24 | The widget reads the closures of all teams, `≥N` where a team has none or only a lower bound, and `—` where none has. | Test |
 | FR-029-AC-26 | A tile says `N% covered` for a current coverage below 1, with or without a value, taking the lowest over stages and scopes, and nothing for 1 or no sample. | Test |
 | FR-029-AC-27 | A team with two scopes shows each day as `≥` the larger count with no trend, and a team with one scope shows exact counts. | Test |
+| FR-029-AC-28 | A team with two scopes shows verified closures, merges per hour and confirmed findings as `≥` the larger, on the tiles, in the widget and in the band's team cell; one scope shows them exactly. | Test |
+| FR-029-AC-29 | A second scope that reports none of those counts, or reports them without the team key, still makes them lower bounds, and one scope's samples from before the key do not. | Test |
 | FR-029-AC-25 | Against the factory's Prometheus the Team view shows the values and days Prometheus answers. | Demonstration |
 
 ## Dependencies

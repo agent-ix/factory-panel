@@ -297,7 +297,7 @@ const team = (s: Snapshot): Cell | null => {
     const tile = t.metrics.find(m => m.value !== null)
     if (tile !== undefined && tile.value !== null) {
       const value = tile.unit === 'seconds' ? `${Math.round(tile.value)}s` : Number.isInteger(tile.value) ? String(tile.value) : tile.value.toFixed(1)
-      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: value }] }
+      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: tile.atLeast ? `≥${value}` : value }] }
     }
   }
   return null

@@ -403,6 +403,50 @@ test('a team with two scopes shows each day as at least the larger count, with n
   await d.ui.unmount()
 })
 
+/** A scope the exporter publishes: it says of every scope whether its sources answer. */
+const scoped = (scope: string, more: Partial<Series> = {}): Series => series('source_available', [1], { scope, ...more })
+const COUNT_TILES = ['Verified closures · 24h', 'PR merges / hour', 'Confirmed findings · high', 'Confirmed findings · medium', 'Confirmed findings · low']
+
+test('a team with two scopes shows its 24 hour counts as at least the larger, and one scope shows them exactly', async ($, on) => {
+  trace("FR-029-AC-28")
+  // One scope's latest closure sample is a step older than the other's: both are current.
+  const both = (name: string, release: number, completion: number) => [series(name, [release], { key: 'QSL', scope: 'release' }), series(name, [completion], { key: 'QSL', scope: 'completion', ago: name === 'verified_path_closed_24h' ? 300 : 0 })]
+  const w = await setup($, on, { published: [
+    ...both('verified_path_closed_24h', 4, 6),
+    ...both('pr_merges_per_hour_24h', 0.5, 0.25),
+    ...both('review_findings_confirmed_high_24h', 1, 3),
+    ...both('review_findings_confirmed_medium_24h', 2, 0),
+    ...both('review_findings_confirmed_low_24h', 0, 0),
+    series('verified_path_closed_24h', [2], { id: 'swm', key: 'SWM' }),
+    series('pr_merges_per_hour_24h', [1.5], { id: 'swm', key: 'SWM' }),
+  ] })
+  const d = await draw($, w)
+  const mine = under(d.lines, 'QSL', 'SWM')
+  expect(COUNT_TILES.map(label => after(mine, label))).toEqual(['≥6', '≥0.5', '≥3', '≥2', '≥0'])
+  const other = under(d.lines, 'SWM')
+  expect(COUNT_TILES.map(label => after(other, label))).toEqual(['2', '1.5', '—', '—', '—'])
+  await d.ui.unmount()
+  const widget = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'terminal' } as never)
+  await w.clock!.advance(1000)
+  expect((await widget.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('≥8 closures / 24h')
+  await widget.unmount()
+})
+
+for (const [name, published, shown] of [
+  ['reports none of them', [series('verified_path_closed_24h', [6], { key: 'QSL' }), scoped('completion', { key: 'QSL' }), scoped('release', { key: 'QSL' })], '≥6'],
+  ['reports them without the team key', [series('verified_path_closed_24h', [2], { key: 'QSL' }), series('verified_path_closed_24h', [9], { scope: 'release' })], '≥9'],
+  ['is only the same scope before the key', [series('verified_path_closed_24h', [4]), series('verified_path_closed_24h', [5], { key: 'QSL' }), scoped('completion'), scoped('completion', { key: 'QSL' })], '5'],
+] as [string, Series[], string][]) {
+  test(`the 24 hour counts of a team whose other scope ${name} read ${shown}`, async ($, on) => {
+    trace("FR-029-AC-29")
+    const w = await setup($, on, { published: [...published, ...daily('closures_day', { 1: 3 }, { key: 'QSL' })] })
+    const d = await draw($, w)
+    expect(after(d.lines, 'Verified closures · 24h')).toBe(shown)
+    expect(row(d.lines, 'Completed').days.at(-2)).toBe(shown.startsWith('≥') ? '≥3' : '3')
+    await d.ui.unmount()
+  })
+}
+
 test('a tile says how much of its population was measured where that is not all of it', async ($, on) => {
   trace("FR-029-AC-26")
   const w = await setup($, on, { published: [

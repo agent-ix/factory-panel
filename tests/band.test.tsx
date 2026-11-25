@@ -154,8 +154,8 @@ test('local does not draw old numbers as current, and relay is quiet until it ha
   expect(buildCells(['lanes'], snapshot({ boardError: 'timed out' }))[0]?.alert).toBe('ix-board: timed out')
 })
 
-const teamView = (team: string, value: number | null): TeamView =>
-  ({ team, metrics: [{ key: 'closures', label: 'Verified closures · 24h', unit: 'count', better: 'up', value, history: [] }] }) as never
+const teamView = (team: string, value: number | null, atLeast = false): TeamView =>
+  ({ team, metrics: [{ key: 'closures', label: 'Verified closures · 24h', unit: 'count', better: 'up', value, atLeast, history: [] }] }) as never
 
 test('the team cell shows the first tile of the first team and is left out when no team has a reading', () => {
   trace("FR-009-AC-7")
@@ -165,6 +165,11 @@ test('the team cell shows the first tile of the first team and is left out when 
   expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null), teamView('QSL', 3)] })), 'team')).toBe('QSL Verified closures · 24h 3')
   expect(buildCells(['team'], snapshot({ teamViews: [] }))).toEqual([])
   expect(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null)] }))).toEqual([])
+})
+
+test('the team cell draws a lower bound as one', () => {
+  trace("FR-029-AC-28")
+  expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('QSL', 6, true)] })), 'team')).toBe('QSL Verified closures · 24h ≥6')
 })
 
 test('every module opens the view the module-to-view map names', () => {

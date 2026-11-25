@@ -21,7 +21,7 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
-const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-3' })
+const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-4' })
 /** Teams whose health strip lists its regressing metrics. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
 const retro = atom({ plugin: 'factory-panel', key: 'retro' } as const, [] as RetroView[], { shape: 'retro-1' })
@@ -33,22 +33,25 @@ const teamMeta = atom(
   { shape: 'teamMeta-1' },
 )
 
-/** How the samples several exporter series of one team have at one time make one. */
-type Combine = 'sum' | 'max'
-type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage'> & { series: string; combine: Combine }
+/**
+ * How the samples several exporter series of one team have at one time make one. `largest` is for the 24 hour counts:
+ * scopes may count the same issues and PRs, so theirs are not added; the largest of one scope is a lower bound.
+ */
+type Combine = 'sum' | 'max' | 'largest'
+type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage' | 'atLeast'> & { series: string; combine: Combine }
 
 // Velocity and effort, then review quality, then flow and capacity. Each tile is one series of the exporter, derived
 // from nothing else: one it does not publish stays in its row as a tile reading "—", never 0.
 const SPECS: Spec[] = [
-  { key: 'closures', group: 'velocity', label: 'Verified closures · 24h', unit: 'count', better: 'up', series: 'ix_team_verified_path_closed_24h', combine: 'sum' },
+  { key: 'closures', group: 'velocity', label: 'Verified closures · 24h', unit: 'count', better: 'up', series: 'ix_team_verified_path_closed_24h', combine: 'largest' },
   { key: 'effort', group: 'velocity', label: 'Effort per closure', unit: 'seconds', better: 'down', series: 'ix_team_effort_per_verified_path_closure_seconds_24h', combine: 'max' },
-  { key: 'merges', group: 'velocity', label: 'PR merges / hour', unit: 'rate', better: 'up', series: 'ix_team_pr_merges_per_hour_24h', combine: 'sum' },
+  { key: 'merges', group: 'velocity', label: 'PR merges / hour', unit: 'rate', better: 'up', series: 'ix_team_pr_merges_per_hour_24h', combine: 'largest' },
   { key: 'cycle', group: 'velocity', label: 'PR cycle · median', unit: 'seconds', better: 'down', series: 'ix_team_pr_cycle_median_seconds_24h', combine: 'max' },
   { key: 'firstReview', group: 'review', label: 'First review · median', unit: 'seconds', better: 'down', series: 'ix_team_new_pr_first_review_median_seconds_24h', combine: 'max' },
   { key: 'findingsShare', group: 'review', label: 'PRs with findings', unit: 'share', better: 'down', series: 'ix_team_review_prs_with_findings_share_24h', combine: 'max' },
-  { key: 'high', group: 'review', label: 'Confirmed findings · high', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_high_24h', combine: 'sum' },
-  { key: 'medium', group: 'review', label: 'Confirmed findings · medium', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_medium_24h', combine: 'sum' },
-  { key: 'low', group: 'review', label: 'Confirmed findings · low', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_low_24h', combine: 'sum' },
+  { key: 'high', group: 'review', label: 'Confirmed findings · high', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_high_24h', combine: 'largest' },
+  { key: 'medium', group: 'review', label: 'Confirmed findings · medium', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_medium_24h', combine: 'largest' },
+  { key: 'low', group: 'review', label: 'Confirmed findings · low', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_low_24h', combine: 'largest' },
   { key: 'changes', group: 'review', label: 'Changes requested', unit: 'share', better: 'down', series: 'ix_team_pr_changes_requested_share', combine: 'max' },
   { key: 'remaining', group: 'flow', label: 'Leaf work remaining', unit: 'count', better: 'down', series: 'ix_team_scope_leaf_remaining', combine: 'sum' },
   { key: 'wip', group: 'flow', label: 'Work in progress', unit: 'count', better: 'down', series: 'ix_team_wip_active', combine: 'sum' },
@@ -67,6 +70,8 @@ const DAILY: { key: keyof TeamView['days']; label: string; series: string }[] = 
 ]
 /** How much of its population the exporter measured, 0 to 1, for the series its `metric` label names. */
 const COVERAGE = 'ix_team_metric_coverage'
+/** Published for every scope of the exporter, so it names a team's scopes even where one counts nothing. */
+const SCOPES = 'ix_team_source_available'
 
 const GROUPS: { id: TeamMetric['group']; title: string }[] = [
   { id: 'velocity', title: 'Velocity and effort' },
@@ -95,7 +100,7 @@ function teamNamer(series: readonly RangeSeries[]): (s: RangeSeries) => { team: 
 }
 
 /** One team's samples, oldest first, from its series: at each time those with the team key are used where any has one. */
-function joined(series: readonly RangeSeries[], combine: Combine): [number, number][] {
+function joined(series: readonly RangeSeries[], combine: 'sum' | 'max'): [number, number][] {
   const keyed = new Map<number, number>()
   const keyless = new Map<number, number>()
   for (const s of series) {
@@ -129,6 +134,15 @@ function currents(series: readonly RangeSeries[], part: (s: RangeSeries) => stri
   })
 }
 
+/** The largest sample of one scope at each time, each scope's own series joined as above. */
+function largest(series: readonly RangeSeries[]): [number, number][] {
+  const scopes = new Map<string, RangeSeries[]>()
+  for (const s of series) scopes.set(scopeIn(s), [...(scopes.get(scopeIn(s)) ?? []), s])
+  const most = new Map<number, number>()
+  for (const own of scopes.values()) for (const [time, value] of joined(own, 'max')) most.set(time, Math.max(value, most.get(time) ?? value))
+  return [...most].sort(([a], [b]) => a - b)
+}
+
 /**
  * A team's counts per day, oldest first and today last; `null` for a day with no current sample. Scopes may count the
  * same issues and PRs, so with several each day is the largest count of one, a lower bound.
@@ -149,12 +163,19 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
   try {
     const query = (promql: string, span: number, step: number) => promRange($, options.prometheusUrl, promql, span, step)
     // The daily counts and the coverage are drawn as they stand now, so one step of them is enough.
-    const [tiles, daily, coverage] = await Promise.all([
-      Promise.all(SPECS.map(async spec => ({ spec, series: await query(`${spec.combine} by (team_id, team_key) (${spec.series})`, HISTORY_SECS, STEP_SECS) }))),
+    const [tiles, daily, coverage, scopes] = await Promise.all([
+      Promise.all(
+        SPECS.map(async spec => {
+          // A 24 hour count is asked for scope by scope, since its scopes are not added.
+          const promql = spec.combine === 'largest' ? `max by (team_id, team_key, scope_id) (${spec.series})` : `${spec.combine} by (team_id, team_key) (${spec.series})`
+          return { spec, series: await query(promql, HISTORY_SECS, STEP_SECS) }
+        }),
+      ),
       Promise.all(DAILY.map(async day => ({ day, series: await query(`max by (team_id, team_key, scope_id, days_ago) (${day.series})`, STEP_SECS, STEP_SECS) }))),
       query(`min by (team_id, team_key, scope_id, metric) (${COVERAGE})`, STEP_SECS, STEP_SECS),
+      query(`max by (team_id, team_key, scope_id) (${SCOPES})`, STEP_SECS, STEP_SECS),
     ])
-    const every = [...tiles.flatMap(r => r.series), ...daily.flatMap(r => r.series), ...coverage]
+    const every = [...tiles.flatMap(r => r.series), ...daily.flatMap(r => r.series), ...coverage, ...scopes]
     const nameOf = teamNamer(every)
     // Every team any series names gets every tile: one the exporter lacks reads as unavailable, not as 0.
     const named = new Map<string, boolean>()
@@ -163,15 +184,19 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
       .map(([team, keyed]) => {
         const own = (series: readonly RangeSeries[]) => series.filter(s => nameOf(s).team === team)
         const measured = currents(own(coverage), s => `${scopeIn(s)}/${s.metric.metric}`, seconds)
+        const byScope = [...tiles.filter(r => r.spec.combine === 'largest'), ...daily].flatMap(r => own(r.series))
+        const isShared = new Set([...byScope, ...own(coverage), ...own(scopes)].filter(s => currentOf(joined([s], 'max'), seconds) !== null).map(scopeIn)).size > 1
         const metrics = tiles.map(({ spec, series }): TeamMetric => {
-          const samples = joined(own(series), spec.combine)
+          const isCount = spec.combine === 'largest'
+          const samples = spec.combine === 'largest' ? largest(own(series)) : joined(own(series), spec.combine)
+          // A scope's last sample may be a step older than another's and still be what it counts now.
+          const counts = isCount ? currents(own(series), scopeIn, seconds).map(c => c.value) : []
+          const value = !isCount ? currentOf(samples, seconds) : counts.length === 0 ? null : Math.max(...counts)
           const name = spec.series.slice('ix_team_'.length)
           // The oldest stage age is measured stage by stage; the tile is only as covered as the least covered of them.
           const covered = measured.filter(({ labels }) => labels.metric === name || (spec.key === 'oldest' && labels.metric?.startsWith(`${name}_`))).map(m => m.value)
-          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value: currentOf(samples, seconds), history: samples.map(([, v]) => v), coverage: covered.length === 0 ? null : Math.min(...covered) }
+          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value, atLeast: isCount && isShared && value !== null, history: samples.map(([, v]) => v), coverage: covered.length === 0 ? null : Math.min(...covered) }
         })
-        const counted = [...daily.flatMap(r => own(r.series)), ...own(coverage)]
-        const isShared = new Set(counted.filter(s => currentOf(joined([s], 'max'), seconds) !== null).map(scopeIn)).size > 1
         const days = {} as TeamView['days']
         for (const { day, series } of daily) days[day.key] = dailyRow(own(series), isShared, seconds)
         return { team, keyed, metrics, days }
@@ -283,13 +308,17 @@ const RATING_MARK: Record<RetroClass['rating'], { mark: string; color: string }>
 
 const format = (m: TeamMetric): string => {
   if (m.value === null) return '—'
+  return `${m.atLeast ? '≥' : ''}${plain(m, m.value)}`
+}
+
+const plain = (m: TeamMetric, value: number): string => {
   if (m.unit === 'seconds') {
-    const h = m.value / 3600
-    return h >= 1 ? `${h.toFixed(h >= 10 ? 0 : 1)}h` : `${Math.round(m.value / 60)}m`
+    const h = value / 3600
+    return h >= 1 ? `${h.toFixed(h >= 10 ? 0 : 1)}h` : `${Math.round(value / 60)}m`
   }
-  if (m.unit === 'share') return `${Math.round(m.value * 100)}%`
-  if (m.unit === 'rate') return m.value.toFixed(m.value >= 10 ? 0 : 1)
-  return Math.round(m.value).toLocaleString('en-US')
+  if (m.unit === 'share') return `${Math.round(value * 100)}%`
+  if (m.unit === 'rate') return value.toFixed(value >= 10 ? 0 : 1)
+  return Math.round(value).toLocaleString('en-US')
 }
 
 /**
@@ -330,10 +359,11 @@ export function registerTeam(on: On, options: Options): void {
     const dashboard = `${options.grafanaUrl.replace(/\/$/, '')}/d/ix-team-flow-effort`
 
     if (e.props.placement === 'widget') {
-      const closures = list.map(t => t.metrics.find(m => m.key === 'closures')?.value ?? null)
-      const known = closures.filter((v): v is number => v !== null)
-      // A team with no reading makes the sum a lower bound; with none at all it is unknown, not 0.
-      const total = known.length === 0 ? '—' : `${known.length < closures.length ? '≥' : ''}${Math.round(known.reduce((a, b) => a + b, 0))}`
+      const closures = list.map(t => t.metrics.find(m => m.key === 'closures'))
+      const known = closures.flatMap(m => (m === undefined || m.value === null ? [] : [{ value: m.value, atLeast: m.atLeast }]))
+      // A team with no reading, or only a lower bound, makes the sum one; with no reading at all it is unknown, not 0.
+      const isBound = known.length < closures.length || known.some(m => m.atLeast)
+      const total = known.length === 0 ? '—' : `${isBound ? '≥' : ''}${Math.round(known.reduce((a, m) => a + m.value, 0))}`
       return (
         <Box flexDirection="row" gap={1}>
           <Text weight="semibold">{list.length > 0 ? `${total} closures / 24h` : 'no team metrics'}</Text>

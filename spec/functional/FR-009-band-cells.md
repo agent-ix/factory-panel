@@ -42,7 +42,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
   | relay | Message |
   | team | Team |
 
-- The team module SHALL show the label and value of the first tile that has a reading, of the first team that has one.
+- The team module SHALL show the label and value of the first tile that has a reading, of the first team that has one, with `≥` before a value that is a lower bound ([FR-029](./FR-029-team-metrics.md)).
 - The mod SHALL leave out the team module when no team metrics exist.
 
 ### The work module
