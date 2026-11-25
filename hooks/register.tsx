@@ -6,7 +6,9 @@ import { PANE_SPEC as FOCUS_PANE, registerFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { resolveEndpoints } from './endpoints'
-import { lastDraw, registerBand, renderBand, startBand, syncStatus } from './band'
+import { renderBand, startBand, syncStatus } from './band'
+import { startRole } from './role'
+import { registerRouter } from './router'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
 
 // Each pane lives in its own file; open panes show as tabs beside the chat.
@@ -46,7 +48,7 @@ export const register: Register = (on, rawOptions) => {
   registerEscalations(on, options)
   registerRelay(on, options)
   registerTeam(on, options)
-  registerBand(on, options)
+  registerRouter(on, options)
 
   // One session-start hook for the whole mod: each pane registers its command and polls (a
   // failing one is logged, the others carry on). The panes are not opened here: see above.
@@ -58,7 +60,8 @@ export const register: Register = (on, rawOptions) => {
     await guarded($, 'Escalations start', () => startEscalations($, options))
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
-    await guarded($, 'Band start', () => startBand($, options))
+    await guarded($, 'Role start', () => startRole($, options, e.cwd))
+    await guarded($, 'Band start', () => startBand($))
     // The first draw happens before this hook finishes; draw again now the state and role are in.
     $.ui.invalidate('ui.render')
     return next(e)
@@ -70,18 +73,12 @@ export const register: Register = (on, rawOptions) => {
     decideLayout($, e.viewport, options.inlineView)
     // A classic layout has no dock, so the band is the compact view; fullscreen keeps its panes.
     // A layout the host has not reported counts as classic: a band is harmless, a blank is not.
-    lastDraw.at = Date.now()
-    lastDraw.isFullscreen = e.viewport?.isFullscreen
-    lastDraw.interactive = isInteractive
-    if (e.viewport?.isFullscreen === true) lastDraw.reason = 'panes dock in fullscreen, no band'
-    else if (options.inlineView !== 'band' && options.inlineView !== 'status') lastDraw.reason = 'inlineView is off'
-    else {
+    if (e.viewport?.isFullscreen !== true && (options.inlineView === 'band' || options.inlineView === 'status')) {
       await syncStatus($, options, false)
       if (options.inlineView === 'band') {
         const band = await renderBand($, e, options)
-        lastDraw.reason = band === null ? 'band has no modules with data' : 'band drawn'
         if (band !== null) return band
-      } else lastDraw.reason = 'status-line mode'
+      }
     }
     return next(e)
   })

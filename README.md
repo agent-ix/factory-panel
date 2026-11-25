@@ -1,18 +1,60 @@
 # factory-panel
 
-factory-panel is a Claude Code plugin that adds panes beside the chat for running the Agent IX factory. Each pane is a tab and refreshes in place.
+factory-panel is a Claude Code plugin that keeps the state of an Agent IX factory in view while you work: what is wrong, how far your project has come and what needs you.
 
-| Pane | Command | Shows | Source |
-| --- | --- | --- | --- |
-| Factory | `/factory` | Each machine's up/down, CPU, memory and temperature gauges, agents by status, and 24-hour spend. Also herdr, ix-relay health and ix-board team activity tiles. | Prometheus; `herdr api snapshot`; `agent-msg doctor`; `ix-board agents` |
-| Focus | `/focuses` | One card per named focus: the coordinator's focus line, overall progress, open projects with progress bars, items in progress and ready | The coordinator's `agent-msg work` report; `ix-board focus status` over its scope |
-| Escalations | `/escalations` | What the leads escalated, open first, with context, options and recommendation. One press resolves a row with its recommendation or hides it; the header has Hide all and Resolve all. | `agent-msg escalations`, `escalation show`, `resolve`, `investigate`, `send` |
-| Relay | `/relay` | Announcements: send to every lead or one lead, and the recent broadcasts. | `agent-msg send`, `log`, `who` |
-| Team | `/team` | Velocity and quality tiles per team with six-hour sparklines | The `ix_team_*` series behind Grafana's "Team flow and effort" dashboard |
+## What you see
 
-In the Escalations pane, Resolve on a row sends that row's recommendation in one press. Resolve all sends each open row's own recommendation after a confirm that names the count, skips rows with none and says how many, and reports any item that failed without stopping the rest. Hide and Hide all are local: nothing is sent, and a hidden row comes back if its status changes. A typed decision, a reply, an investigate and a Relay send take a second press to confirm.
+In the classic layout there is one line above the prompt. Each cell on it starts with a number and shows one thing: machines up or down, this machine's load, your focus and its progress, tickets ready, the lead, the lanes, escalations waiting, relay problems, team velocity. A cell with nothing to report is left out. A machine that has not reported shows as no data, never as healthy.
 
-ix-board reads share a rate-limit gate across sessions on a machine: it keeps each read's result and any Linear retry time in `~/.cache/factory-panel/linear-gate.json` (under `$HOME`), runs each read at most once every 15 minutes (60 seconds for a manual refresh), and calls ix-board again only after a Linear rate limit has passed.
+In the fullscreen layout the same views are docked at the right of the chat as tabs and there is no line above the prompt.
+
+The views behind the cells are:
+
+| View | Shows |
+| --- | --- |
+| Factory | Each machine's up or down, CPU, memory and temperature, agents by status, 24-hour spend, and the herdr, ix-relay and ix-board state |
+| Focus | One card per named focus: its progress, open projects, items in progress and ready |
+| Escalations | What the leads escalated, open first, with context, options and recommendation |
+| Relay | Announcements to every lead or one lead, and the recent broadcasts |
+| Team | Velocity and quality tiles per team with six-hour history |
+
+## How to use it
+
+- Open more: type `/factory`. It opens the view your role looks at first: Focus for a code lead or planner, Factory for a coordinator or worker. `/factory focus`, `/factory escalations`, `/factory relay`, `/factory team` and `/factory factory` open one view directly.
+- Switch: with a view open in the classic layout, type a cell's number at an empty prompt. A number typed while the prompt holds text goes into the prompt. In the fullscreen layout, click a tab or type `/factory` and the view name.
+- Refresh and close: `r` refreshes the open view and Esc closes it and gives the keyboard back to the prompt.
+- Help: `/factory help` answers these questions in the words of your layout.
+- Older commands `/focuses`, `/escalations`, `/relay` and `/team` still work as aliases for one release.
+
+## Roles
+
+The plugin shows what your role needs. The first time you type `/factory` in a project it asks what you do in that session, remembers the answer for the directory and does not ask again. `/factory role` asks again. Starting a session never asks.
+
+| Role | Band cells |
+| --- | --- |
+| coordinator | health, focus, attention, relay |
+| code-lead | local, focus, lead, lanes |
+| planner | focus, queue, lead |
+| worker | local |
+
+The role comes from, in order: the `role` setting, the relay address of the session, the stored answer, then the question. A session with no role known is treated as a code lead until it is answered.
+
+## Advanced settings
+
+All settings are optional and appear in the config menu.
+
+| Setting | What it does |
+| --- | --- |
+| `role` | Fixes the role: coordinator, code-lead, planner, worker, or auto |
+| `bandModules` | Comma list that replaces the role's cells, in the order written |
+| `bandFocus` | The focus the band bar follows: an address or part of its summary |
+| `inlineView` | What a classic session shows: band, status or off |
+| `prometheusUrl` | Prometheus to query. Empty uses the shared ix config, then this host's relay endpoint, then the factory's |
+| `grafanaUrl` | Grafana for dashboard links. Empty follows Prometheus's name |
+| `teams` | Comma-separated herdr workspace labels ix-board should report on |
+| `refreshSeconds` | How often Prometheus and herdr are polled |
+
+ix-board reads share a rate-limit gate across sessions on a machine. It keeps each read's result and any Linear retry time in `~/.cache/factory-panel/linear-gate.json`, runs each read at most once every 15 minutes (60 seconds for a manual refresh) and calls ix-board again only after a Linear rate limit has passed.
 
 ## Install
 
@@ -20,42 +62,21 @@ ix-board reads share a rate-limit gate across sessions on a machine: it keeps ea
 claude plugin install factory-panel --marketplace agent-ix/factory-panel
 ```
 
-Once the plugin is in the agent-ix marketplace, you can install it from there instead:
+Or from the agent-ix marketplace:
 
 ```bash
 claude plugin marketplace add agent-ix/agent-plugins
 claude plugin install factory-panel@agent-ix
 ```
 
-## Setup
-
-For development, point Claude Code at this folder, for example in `~/.claude/settings.json`:
-
-```json
-{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/dev/factory-panel" } }
-```
-
-Options appear in the config menu: Prometheus URL, Grafana URL, the ix-board teams for the
-Factory pane, and the Factory refresh interval.
-
 ## Developing
+
+Point Claude Code at this folder with `claude --plugin-dir ~/dev/factory-panel`, then:
 
 ```bash
 claude plugin validate .
 claude plugin test .
+node tests/e2e/layouts.mjs
 ```
 
-Style: see [docs/STYLE.md](docs/STYLE.md) for the colours, spacing, number formats and widgets the panes share.
-
-## The band (non-fullscreen sessions)
-
-Panes dock beside the chat only in the fullscreen layout (`/tui fullscreen`). Any other layout gets the band: one row above the prompt, one cell per module, each with a digit. Type the digit at an empty prompt, or focus the band, to open that module's full pane; Esc closes it.
-
-| Role | Default modules |
-| --- | --- |
-| coordinator | health, focus, attention, relay |
-| code-lead | local, focus, lead, lanes |
-| planner | focus, queue, lead |
-| worker | local |
-
-Set `role` (or leave it `auto`, which reads the relay address and falls back to code-lead), `bandModules` to replace the list, `bandFocus` to pick the focus the bar follows, and `inlineView` to `status` (one status-line summary) or `off`. `/band` changes it for the current session.
+The last command drives real sessions in tmux in both layouts and saves captures under `tests/e2e/evidence/`. Requirements and their tests are in `spec/`; see `docs/STYLE.md` for the colours, spacing and widgets the views share.

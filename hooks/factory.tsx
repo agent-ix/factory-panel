@@ -373,7 +373,7 @@ const staleness = (f: Freshness, now: number): number | null => {
 
 // ---------------------------------------------------------------- register
 
-async function refreshAll($: EngineInterface, options: Options): Promise<void> {
+export async function refreshAll($: EngineInterface, options: Options): Promise<void> {
   await Promise.all([pollPrometheus($, options), pollHerdr($), pollRelay($)])
 }
 
@@ -385,7 +385,8 @@ async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {
 export async function startFactory($: EngineInterface, options: Options): Promise<void> {
   await $.command.register({
     name: 'factory',
-    description: 'Open the factory panel (machines, herdr, ix-relay, ix-board)',
+    description: 'Open more detail for your role. /factory help says how',
+    argumentHint: 'help | focus | escalations | relay | team | role',
   })
 
   void refreshAll($, options)
@@ -397,12 +398,6 @@ export async function startFactory($: EngineInterface, options: Options): Promis
 }
 
 export function registerFactory(on: On, options: Options): void {
-  on('command.run', { command: 'factory' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
-    void refreshAll($, options)
-    return { text: opened.isPlaced ? 'Factory panel opened. Esc closes it; ctrl+x tab gives it the keys.' : `Factory panel waits: ${opened.reason}` }
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
@@ -636,6 +631,12 @@ export function registerFactory(on: On, options: Options): void {
           </Box>
         </Box>
 
+        {f.prometheusError !== null && (
+          <Text color="warning" size="caption">
+            {`Metrics unavailable: ${shortError('prometheus', f.prometheusError)}${f.prometheusAt !== null && list.length > 0 ? ` · values from ${ago(f.prometheusAt, now)}` : ''}`}
+          </Text>
+        )}
+
         {!Svg && list.length > 0 && summaryTiles}
 
         {Svg ? (
@@ -681,6 +682,11 @@ export function registerFactory(on: On, options: Options): void {
             {errors.length > 0 ? errors[0] : stale === null ? 'connecting…' : `updated ${ago(now - stale, now)}`}
           </Text>
         </Box>
+        {e.props.placement === 'inline' && (
+          <Text dimColor size="caption">
+            Type a band number to switch views · r refresh · Esc close
+          </Text>
+        )}
       </Box>
     )
   })

@@ -3,7 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import { buildCells, machineTone } from '../hooks/band/modules'
 import type { Snapshot } from '../hooks/band/modules'
 import { PRESETS, modulesFor, parseModules, roleFromAddress } from '../hooks/band/roles'
-import type { Machine } from '../types'
+import type { Machine, TeamView } from '../types'
+import { trace } from './trace'
 
 const machine = (name: string, extra: Partial<Machine> = {}): Machine => ({
   name,
@@ -45,6 +46,7 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   hiddenEscalations: [],
   localMachine: 'draco',
   teams: ['QSL'],
+  teamViews: [],
   focusName: '',
   prometheusError: null,
   relayAt: 1,
@@ -57,13 +59,17 @@ const text = (cells: ReturnType<typeof buildCells>, id: string): string =>
   cells.find(c => c.id === id)?.parts.map(p => p.text).join('') ?? ''
 
 test('a machine reads up, degraded, down or unknown from what its watcher last said', () => {
+  trace("FR-006-AC-1", "FR-006-AC-2")
   expect(machineTone(machine('a'))).toBe('success')
   expect(machineTone(machine('a', { cpuPct: 95 }))).toBe('warning')
   expect(machineTone(machine('a', { lastSeenSecs: 600 }))).toBe('error')
   expect(machineTone(machine('a', { lastSeenSecs: null }))).toBe('inactive')
+  expect(machineTone(machine('a', { lastSeenSecs: null }))).not.toBe('success')
+  expect(machineTone(machine('a', { lastSeenSecs: 600 }))).toBe('error')
 })
 
 test('health lists every machine with a mark, and says which are not reporting', () => {
+  trace("FR-006-AC-3", "FR-006-AC-8")
   const [cell] = buildCells(['health'], snapshot())
   expect(text([cell!], 'health')).toMatch(/● draco/)
   expect(text([cell!], 'health')).toMatch(/○ titan/)
@@ -72,6 +78,7 @@ test('health lists every machine with a mark, and says which are not reporting',
   const [none] = buildCells(['health'], snapshot({ machines: [], prometheusError: 'prometheus: timed out' }))
   expect(none?.parts[0]?.tone).toBe('inactive')
   expect(none?.alert).toBe('prometheus: timed out')
+  expect(none?.parts.map(p => p.text).join('')).toBe('hosts —')
 })
 
 test('local shows this machine only', () => {
@@ -129,11 +136,26 @@ test('the role is read from a relay address when it names one', () => {
 })
 
 test('local does not draw old numbers as current, and relay is quiet until it has been asked', () => {
+  trace("FR-006-AC-4", "FR-006-AC-5", "FR-006-AC-7")
   const stale = snapshot({ machines: [machine('draco', { lastSeenSecs: 900 })] })
   expect(text(buildCells(['local'], stale), 'local')).toBe('draco ▲ no data')
+  expect(text(buildCells(['local'], stale), 'local')).not.toMatch(/%/)
   expect(buildCells(['local'], stale)[0]?.alert).toBe('draco is not reporting')
   expect(buildCells(['relay'], snapshot({ relayAt: null }))).toEqual([])
   const failed = snapshot({ relayError: 'redis down' })
   expect(buildCells(['relay'], failed)[0]?.alert).toBe('relay: redis down')
   expect(buildCells(['lanes'], snapshot({ boardError: 'timed out' }))[0]?.alert).toBe('ix-board: timed out')
+})
+
+const teamView = (team: string, value: number | null): TeamView =>
+  ({ team, metrics: [{ key: 'closures', label: 'Verified closures · 24h', unit: 'count', better: 'up', value, history: [] }] }) as never
+
+test('the team cell shows the first tile of the first team and is left out when no team has a reading', () => {
+  trace("FR-009-AC-7")
+  const cells = buildCells(['team'], snapshot({ teamViews: [teamView('ENG', 7), teamView('QSL', 3)] }))
+  expect(text(cells, 'team')).toBe('ENG Verified closures · 24h 7')
+  // A team with no reading is skipped; the next team's first tile shows.
+  expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null), teamView('QSL', 3)] })), 'team')).toBe('QSL Verified closures · 24h 3')
+  expect(buildCells(['team'], snapshot({ teamViews: [] }))).toEqual([])
+  expect(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null)] }))).toEqual([])
 })

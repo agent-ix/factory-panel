@@ -1,13 +1,13 @@
-import type { BoardView, Escalation, FocusView, Machine, RelayView } from '../../types'
+import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView } from '../../types'
 import { cellBar, loadColor, tempColor, usd } from '../ui/glyphs'
 
 // The band's modules. Each is a pure function of a snapshot of what the panes already collected,
 // so a test seeds a snapshot and reads the cell back. A module with nothing to say returns null
 // and drops out of the band.
 
-export type ModuleId = 'health' | 'local' | 'focus' | 'queue' | 'lead' | 'lanes' | 'attention' | 'relay' | 'agents' | 'spend'
+export type ModuleId = 'health' | 'local' | 'focus' | 'queue' | 'lead' | 'lanes' | 'attention' | 'relay' | 'team' | 'agents' | 'spend'
 
-export const MODULE_IDS: readonly ModuleId[] = ['health', 'local', 'focus', 'queue', 'lead', 'lanes', 'attention', 'relay', 'agents', 'spend']
+export const MODULE_IDS: readonly ModuleId[] = ['health', 'local', 'focus', 'queue', 'lead', 'lanes', 'attention', 'relay', 'team', 'agents', 'spend']
 
 export type Tone = 'success' | 'warning' | 'error' | 'inactive' | 'claude'
 
@@ -26,6 +26,8 @@ export type Snapshot = {
   /** Short name of the machine this session runs on, lower-case; '' when unknown. */
   localMachine: string
   teams: readonly string[]
+  /** The Team view's tiles per team. */
+  teamViews: readonly TeamView[]
   /** Which focus the bar follows: an address or part of a summary; '' for the first. */
   focusName: string
   prometheusError: string | null
@@ -150,6 +152,18 @@ const relay = (s: Snapshot): Cell | null => {
   return { id: 'relay', pane: 'relay', parts: [{ text: `relay ${r.inboxWaiting} waiting`, tone: 'warning' }, { text: r.deadLetters > 0 ? ` · ${r.deadLetters} dead` : '', dim: true }] }
 }
 
+/** The first tile of the first team that has a reading: the one the Team view shows first. */
+const team = (s: Snapshot): Cell | null => {
+  for (const t of s.teamViews) {
+    const tile = t.metrics.find(m => m.value !== null)
+    if (tile !== undefined && tile.value !== null) {
+      const value = tile.unit === 'seconds' ? `${Math.round(tile.value)}s` : Number.isInteger(tile.value) ? String(tile.value) : tile.value.toFixed(1)
+      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: value }] }
+    }
+  }
+  return null
+}
+
 const agents = (s: Snapshot): Cell | null => {
   if (s.machines.length === 0) return null
   const sum = (pick: (m: Machine) => number) => s.machines.reduce((a, m) => a + pick(m), 0)
@@ -162,7 +176,14 @@ const spend = (s: Snapshot): Cell | null => {
   return { id: 'spend', pane: 'factory', parts: [{ text: `${usd(known.reduce((a, m) => a + (m.spend24hUsd ?? 0), 0))} / 24h`, dim: true }] }
 }
 
-const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local, focus, queue, lead, lanes, attention, relay, agents, spend }
+const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local, focus, queue, lead, lanes, attention, relay, team, agents, spend }
+
+/** Digits 1 to 9 go to the cells in the order drawn; a cell past the ninth has none. */
+export const MAX_DIGITS = 9
+export const digitFor = (index: number): string | undefined => (index < MAX_DIGITS ? String(index + 1) : undefined)
+
+/** The cell a pressed digit opens; undefined when no cell carries it. */
+export const cellForDigit = (cells: readonly Cell[], digit: string): Cell | undefined => cells.find((_, i) => digitFor(i) === digit)
 
 /** The cells for the listed modules, in order; a module with nothing to say is left out. */
 export const buildCells = (ids: readonly ModuleId[], s: Snapshot): Cell[] =>

@@ -41,7 +41,7 @@ export function parseAnnouncements(text: string): Announcement[] {
 
 // ---------------------------------------------------------------- polling
 
-async function pollRelay($: EngineInterface): Promise<void> {
+export async function pollRelay($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   const failed: string[] = []
   const read1 = (what: string, argv: string[], timeoutMs: number) =>
@@ -115,18 +115,12 @@ async function cancelArmed($: EngineInterface): Promise<void> {
 
 /** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startRelay($: EngineInterface, _options: Options): Promise<void> {
-  await $.command.register({ name: 'relay', description: 'Open the Relay pane: announcements to the leads' })
+  await $.command.register({ name: 'relay', description: 'Same as /factory relay' })
   void pollRelay($)
   $.clock.every(POLL_MS, () => pollRelay($))
 }
 
 export function registerRelay(on: On, _options: Options): void {
-  on('command.run', { command: 'relay' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
-    void pollRelay($)
-    return { text: opened.isPlaced ? 'Relay pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Relay pane waits: ${opened.reason}` }
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Input, Select } = $.ui.resolve(e)
     const [posts, meta, leads, announce, target, confirm, said] = await Promise.all([
@@ -216,6 +210,11 @@ export function registerRelay(on: On, _options: Options): void {
             {meta.error ?? `updated ${ago(meta.at, now)}`}
           </Text>
         </Box>
+        {e.props.placement === 'inline' && (
+          <Text dimColor size="caption">
+            Type a band number to switch views · r refresh · Esc close
+          </Text>
+        )}
       </Box>
     )
   })

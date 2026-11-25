@@ -115,7 +115,7 @@ async function focusOf($: EngineInterface, lead: string, report: WorkReport, man
   return view
 }
 
-async function pollFocus($: EngineInterface, manual = false): Promise<void> {
+export async function pollFocus($: EngineInterface, manual = false): Promise<void> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     const leads = await listLeads($)
@@ -148,18 +148,12 @@ async function toggleShowDone($: EngineInterface): Promise<void> {
 
 /** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startFocus($: EngineInterface, _options: Options): Promise<void> {
-  await $.command.register({ name: 'focuses', description: 'Open the Focus pane: named focuses and their progress' })
+  await $.command.register({ name: 'focuses', description: 'Same as /factory focus' })
   void pollFocus($)
   $.clock.every(POLL_MS, () => pollFocus($))
 }
 
 export function registerFocus(on: On, _options: Options): void {
-  on('command.run', { command: 'focuses' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
-    void pollFocus($)
-    return { text: opened.isPlaced ? 'Focus pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Focus pane waits: ${opened.reason}` }
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
@@ -341,6 +335,11 @@ export function registerFocus(on: On, _options: Options): void {
             {meta.error ?? (meta.busy ? 'refreshing…' : `updated ${ago(meta.at, now)}`)}
           </Text>
         </Box>
+        {e.props.placement === 'inline' && (
+          <Text dimColor size="caption">
+            Type a band number to switch views · r refresh · Esc close
+          </Text>
+        )}
       </Box>
     )
   })
