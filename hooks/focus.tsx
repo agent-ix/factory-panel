@@ -324,7 +324,7 @@ export function registerFocus(on: On, _options: Options): void {
       return (
         <Box flexDirection="row" gap={1}>
           <Text weight="semibold">{list.length} focus{list.length === 1 ? '' : 'es'}</Text>
-          {first && total > 0 && <Text dimColor>· {Math.round((100 * done) / total)}% {first.address}</Text>}
+          {first && total > 0 && <Text dimColor>· {Math.min(first.header && (first.header.partial || first.header.oldestAt !== null || first.header.notExpanded > 0) ? 99 : 100, Math.round((100 * done) / total))}% {first.address}</Text>}
         </Box>
       )
     }
@@ -336,21 +336,23 @@ export function registerFocus(on: On, _options: Options): void {
     const oldNote = (at: number | null) => (at === null ? null : `includes old data (oldest ${age(at)})`)
 
     /** The columns every bar of the card shares: set by the card before its rows are drawn. */
-    let cols = { name: 16, bar: 12, count: 7 }
+    let cols = { name: 16, bar: 12 }
+    /** The count column is a constant: `999/999 13m` fits, so no row's content ever moves a bar. */
+    const COUNT = 12
     const clip = (t: string, cells: number) => (t.length > cells ? `${t.slice(0, Math.max(1, cells - 1))}…` : t)
 
     /** One row: a name (or a button) in the name column, a bar of the shared width and `done/total` in the right column; a failed one has a dim empty bar and a dash. */
-    const row = (key: string, name: any, x: { done: number; total: number; inProgress: number; failed: boolean; ageText?: string }, indent: number, complete: boolean) => {
+    const row = (key: string, name: any, x: { done: number; total: number; inProgress: number; failed: boolean; ageText?: string; stale?: boolean }, indent: number, complete: boolean) => {
       const total = x.failed ? 1 : x.total
       const done = x.failed ? 0 : x.done
       const inProgress = x.failed ? 0 : x.inProgress
       return (
         <Box key={key} flexDirection="row" gap={1} alignItems="center">
-          {indent > 0 && <Box width={indent} />}
-          <Box width={cols.name}>{name}</Box>
+          <Box width={cols.name + indent} paddingLeft={indent}>{name}</Box>
           {Svg ? bar(done, inProgress, 0, total, cols.bar - indent, complete) : segmentBar(`${key}-bar`, done, inProgress, 0, total, cols.bar - indent)}
-          <Box width={cols.count} justifyContent="flex-end">
-            <Text dimColor size="caption" tabular wrap="truncate-end">{x.failed ? '—' : `${x.done}/${x.total}${x.ageText ? ` ${x.ageText}` : ''}`}</Text>
+          <Box width={COUNT} flexDirection="row" justifyContent="flex-end">
+            <Text dimColor size="caption" tabular wrap="truncate-end">{x.failed ? '—' : `${x.done}/${x.total}`}</Text>
+            {!x.failed && x.ageText ? <Text dimColor={!x.stale} color={x.stale ? 'warning' : undefined} size="caption" tabular>{` ${x.ageText}`}</Text> : null}
           </Box>
         </Box>
       )
@@ -361,7 +363,7 @@ export function registerFocus(on: On, _options: Options): void {
     const projectRow = (p: FocusProject, prefix: string, indent: number) => {
       const label = clip(projectLabel(p), cols.name)
       const dim = p.failed || isDone(p) || p.old
-      return row(`${prefix}-${p.key}`, <Text dimColor={dim} wrap="truncate-end">{label}</Text>, { ...p, ageText: !p.failed && p.old && p.at !== null ? age(p.at) : '' }, indent, isDone(p) && !p.old)
+      return row(`${prefix}-${p.key}`, <Text dimColor={dim} wrap="truncate-end">{label}</Text>, { ...p, ageText: !p.failed && p.old && p.at !== null ? age(p.at) : '', stale: p.at !== null && now - p.at > STALE_MS }, indent, isDone(p) && !p.old)
     }
 
     const plural = (n: number) => (n === 1 ? '1 initiative not expanded' : `${n} initiatives not expanded`)
@@ -400,14 +402,10 @@ export function registerFocus(on: On, _options: Options): void {
       // Two fixed bar columns, functions of the card width only: top-level rows start their bar at A, child rows at A plus the
       // indent, both ending at the same right edge, so no bar moves when rows come, go, collapse or fail.
       const nameCol = Math.max(10, Math.floor(width * 0.35))
-      // The count column is as wide as the widest done/total shown (an old row adds its age); the bars take the rest.
-      const countOf = (p: FocusProject) => (p.failed ? 1 : `${p.done}/${p.total}`.length + (p.old && p.at !== null ? 1 + age(p.at).length : 0))
-      const shownRows = [...f.initiatives.flatMap(i => (collapsed.includes(i.key) || i.failed !== null ? [] : visible(i.projects))), ...visible(f.loose)]
-      const countCol = Math.max(1, hd === null ? 0 : `${hd.done}/${hd.total}`.length, ...f.initiatives.map(i => (i.failed !== null ? 1 : `${i.done}/${i.total}`.length)), ...shownRows.map(countOf))
-      cols = { name: nameCol, bar: Math.max(6 + INDENT, width - 3 - nameCol - countCol - 2), count: countCol }
+      cols = { name: nameCol, bar: Math.max(6 + INDENT, width - 3 - nameCol - COUNT - 2) }
 
       // The overall bar spans the card: the width minus the count column, on one row with the total.
-      const headBar = Math.max(8, width - 3 - cols.count - 1)
+      const headBar = Math.max(8, width - 3 - COUNT - 1)
 
       const initiativeBlock = (i: FocusInitiative) => {
         const shut = collapsed.includes(i.key)
@@ -438,7 +436,7 @@ export function registerFocus(on: On, _options: Options): void {
             <Box flexDirection="column">
               <Box key={`head-${f.address}`} flexDirection="row" gap={1} alignItems="center">
                 {Svg ? bar(barDone, hd.inProgress, 0, hd.total, headBar, reached) : segmentBar(`all-${f.address}`, barDone, hd.inProgress, 0, hd.total, headBar)}
-                <Box width={cols.count} justifyContent="flex-end">
+                <Box width={COUNT} justifyContent="flex-end">
                   <Text dimColor size="caption" tabular>{hd.done}/{hd.total}</Text>
                 </Box>
               </Box>

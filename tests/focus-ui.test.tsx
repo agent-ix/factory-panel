@@ -308,7 +308,10 @@ test('one failed project shows ⚠ 1 in the warning tone on the freshness row', 
   const mark = (await ui.findAll({ type: 'Text' })).find(t => t.text === '⚠')
   expect((mark!.props as { color?: string }).color).toBe('warning')
   const rows = (await ui.findAll({ type: 'Box' })).filter(b => (b.props as { flexDirection?: string }).flexDirection === 'row')
-  expect(rows.filter(r => /updated \d+s ago/.test(JSON.stringify(r)) && JSON.stringify(r).includes('⚠')).length).toBeGreaterThan(0)
+  const footer = rows.filter(r => /updated \d+s ago/.test(JSON.stringify(r)) && JSON.stringify(r).includes('⚠'))
+  expect(footer.length).toBeGreaterThan(0)
+  // the icon is left of the freshness text in that row
+  expect(JSON.stringify(footer[0]).indexOf('⚠')).toBeLessThan(JSON.stringify(footer[0]).indexOf('updated'))
   await ui.unmount()
 })
 
@@ -372,14 +375,25 @@ test('/factory show lists each source with its full error text', async ($, on) =
 async function columns($: $t) {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const boxes = await ui.findAll({ type: 'Box' })
+  const props = (b: { props: unknown }) => b.props as { width?: number; paddingLeft?: number; justifyContent?: string }
   const bars = boxes.filter(b => /-bar$/.test(b.key ?? ''))
   const header = boxes.filter(b => (b.key ?? '').startsWith('all-'))
-  const isTop = (b: { key?: string }) => (b.key ?? '').startsWith('irow-') || (b.key ?? '').includes('-loose-')
-  const top = bars.filter(isTop)
-  const child = bars.filter(b => !isTop(b))
-  const lens = (list: typeof bars) => [...new Set(list.map(b => (b.text ?? '').length))]
-  const rows = boxes.filter(b => (b.key ?? '').startsWith('head-'))
-  const out = { header: lens(header), top: lens(top), child: lens(child), countWidths: [...new Set(boxes.filter(b => /^(\d+\/\d+( \d+m)?|—)$/.test(b.text ?? '') && (b.props as { width?: number }).width !== undefined).map(b => (b.props as { width: number }).width))], names: [...new Set(boxes.filter(b => (b.props as { width?: number }).width === 35).map(b => (b.props as { width: number }).width))], headRow: rows[0]?.text ?? '', totalRight: boxes.some(b => (b.props as { justifyContent?: string }).justifyContent === 'flex-end' && /^\d+\/\d+$/.test(b.text ?? '')) }
+  // a row is a name box (width and indent), a bar and a count box, in this order
+  const names = boxes.filter(b => props(b).width !== undefined && props(b).paddingLeft !== undefined)
+  const rows = bars.map((bar, i) => {
+    const n = props(names[i]!)
+    const len = (bar.text ?? '').length
+    const start = n.width! + 1
+    return { indent: n.paddingLeft!, start, end: start + len, len }
+  })
+  const out = {
+    top: [...new Set(rows.filter(r => r.indent === 0).map(r => JSON.stringify(r)))],
+    child: [...new Set(rows.filter(r => r.indent > 0).map(r => JSON.stringify(r)))],
+    header: [...new Set(header.map(b => (b.text ?? '').length))],
+    countWidths: [...new Set(boxes.filter(b => /^(\d+\/\d+( \d+[smh])?|—)$/.test(b.text ?? '') && props(b).width !== undefined).map(b => props(b).width!))],
+    headRow: boxes.find(b => (b.key ?? '').startsWith('head-'))?.text ?? '',
+    totalRight: boxes.some(b => props(b).justifyContent === 'flex-end' && /^\d+\/\d+$/.test(b.text ?? '')),
+  }
   await ui.unmount()
   return out
 }
@@ -401,24 +415,81 @@ test('top-level bars share one column, child bars share a second one inside it, 
   await startSession($)
   await w.clock!.advance(1000)
   const first = await columns($)
-  // two initiative rows with different name lengths share one bar width; the five child rows, failed and old ones included, share another
+  const W = PANE.props.bodyColumns
+  const COUNT = 12
+  const top = JSON.parse(first.top[0]!) as { start: number; end: number }
+  const child = JSON.parse(first.child[0]!) as { start: number; end: number }
+  // every top-level bar starts at one column and every child bar at another, exactly the indent to its right; both end at one right edge
   expect(first.top).toHaveLength(1)
   expect(first.child).toHaveLength(1)
-  expect(first.top[0]! - first.child[0]!).toBe(2)
-  expect(first.child[0]!).toBeGreaterThan(0)
-  // the header bar spans the card, on one row with its total at the right edge
-  // the count column is as wide as the widest count (`2/4 13m`, 7 cells) and the bars run up to it, one gap apart
-  expect(first.countWidths).toEqual([7])
-  expect(first.header).toEqual([PANE.props.bodyColumns - 3 - 7 - 1])
-  expect(first.top).toEqual([PANE.props.bodyColumns - 3 - 35 - 7 - 2])
+  expect(child.start).toBe(top.start + 2)
+  expect(child.end).toBe(top.end)
+  // the right edge is followed by one gap and the constant count column, which ends at the card's inner right edge
+  expect(top.end + 1 + COUNT).toBe(W - 3)
+  expect(first.countWidths).toEqual([COUNT])
+  // the overall bar spans the card on one row with its total at the right edge
+  expect(first.header).toEqual([W - 3 - COUNT - 1])
   expect(first.headRow).toContain('/')
   expect(first.totalRight).toBe(true)
-  // the same columns with fewer rows: a project fails and an initiative collapses
+  // the same columns with other row sets: the widest initiative collapses, then another
+  for (const key of ['ini-draco:QSL:code-Initiative alpha with a long name', 'ini-draco:QSL:code-B']) {
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+    await ui.press({ key })
+    await ui.unmount()
+    const next = await columns($)
+    expect(next.top.every(t => t === first.top[0])).toBe(true)
+    expect(next.child.every(t => t === first.child[0])).toBe(true)
+    expect(next.header).toEqual(first.header)
+    expect(next.countWidths).toEqual(first.countWidths)
+  }
+})
+
+test('an old row shows a dim age after its counts, a stale one the age in the warning tone, and the bars do not move', async ($, on) => {
+  trace("FR-017-AC-4")
+  const w = world(on, true)
+  w.leads.set(LEAD, report(LEAD, 'QSL layer 4', ['running'], { initiatives: ['A'] }))
+  const T0 = Date.UTC(2026, 10, 24, 12, 0)
+  const rec = (n: string, id: string, minutes: number) => [`project:${id}`, { at_ms: T0 - minutes * 60_000, seen_ms: T0 - 60_000, done: 2, total: 4, inProgress: 0, ready: 0, id, name: n }] as const
+  const ids = ['00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000b2']
+  w.files.set('/home/test/.ix/factory-panel/progress.json', JSON.stringify(Object.fromEntries([rec('Recent', ids[0]!, 13), rec('Stale', ids[1]!, 40)])))
+  ix(w, { roadmap: [{ name: 'A', projects: [{ name: 'Recent', id: ids[0] }, { name: 'Stale', id: ids[1] }] }], projects: { [ids[0]!]: MILESTONE, [ids[1]!]: MILESTONE } })
+  await startSession($)
+  await w.clock!.advance(1000)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await ui.press({ key: 'ini-draco:QSL:code-B' })
+  const ages = (await ui.findAll({ type: 'Text' })).filter(t => /^ \d+[mh]$/.test(t.text ?? ''))
+  const by = (t: string) => ages.find(a => a.text === t)!.props as { dimColor?: boolean; color?: string }
+  expect(ages.map(a => a.text)).toEqual([' 13m', ' 40m'])
+  expect(by(' 13m').color).toBeUndefined()
+  expect(by(' 13m').dimColor).toBe(true)
+  expect(by(' 40m').color).toBe('warning')
   await ui.unmount()
-  const second = await columns($)
-  expect(second.top).toEqual(first.top)
-  expect(second.child).toEqual(first.child)
-  expect(second.names).toEqual(first.names)
+})
+
+test('the widget never shows 100% for a partial total', async ($, on) => {
+  trace("FR-022-AC-3")
+  await setup($, on, { initiatives: ['A'] }, eighteen(1))
+  const d = await draw($, 'terminal', 'widget')
+  expect(d.text).toMatch(/99%/)
+  expect(d.text).not.toMatch(/100%/)
+  await d.unmount()
+})
+
+test('initiative A whose 4 projects all fail reads as a failed row, B is drawn, the header sums B only and the warning counts 4', async ($, on) => {
+  trace("FR-022-AC-9", "FR-024-AC-2")
+  await setup($, on, { initiatives: ['A', 'B'] }, {
+    roadmap: [
+      { name: 'A', projects: [{ name: 'A1' }, { name: 'A2' }, { name: 'A3' }, { name: 'A4' }] },
+      { name: 'B', projects: [{ name: 'B1' }, { name: 'B2' }] },
+    ],
+    projects: { A1: MILESTONE, A2: MILESTONE, A3: MILESTONE, A4: MILESTONE, B1: project('B1', 3, 4), B2: project('B2', 1, 2) },
+  })
+  const d = await draw($)
+  expect(warnCount(d)).toBe(4)
+  expect(d.text).toMatch(m(/^4\/6$/))
+  expect(d.lines.filter(l => l === '—')).toHaveLength(5)
+  await d.press('warnings-toggle')
+  expect(d.text).toMatch(/A: 0 of 4 projects, partial/)
+  expect(d.text).toMatch(/B: 2 of 2 projects$/m)
+  expect(d.text).toMatch(/total: 2 of 6 projects, partial/)
+  await d.unmount()
 })

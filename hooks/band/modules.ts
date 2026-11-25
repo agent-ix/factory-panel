@@ -185,7 +185,7 @@ const focus = (s: Snapshot): Cell | null => {
   const parts: Part[] = [
     { text: `${fit(label, 18)} `, bold: true },
     { text: cellBar(share, 8), tone: 'claude' },
-    { text: share === null ? ' —' : f.header?.partial === true ? ` ~${Math.min(99, Math.round(share * 100))}%` : ` ${Math.round(share * 100)}%` },
+    { text: share === null ? ' —' : f.header !== null && (f.header.partial || f.header.oldestAt !== null || f.header.notExpanded > 0) ? ` ~${Math.min(99, Math.round(share * 100))}%` : ` ${Math.round(share * 100)}%` },
   ]
   const count = scoped(s).length
   if (count > 1) parts.push({ text: ` +${count - 1}`, dim: true })
