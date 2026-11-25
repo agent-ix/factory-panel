@@ -122,6 +122,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-024 | Warnings as a footer icon | [FR-024](functional/FR-024-warning-icon-in-footer.md) |
 | FR-025 | Last good progress per project | [FR-025](functional/FR-025-per-project-last-good.md) |
 | FR-026 | Per-project progress calls | [FR-026](functional/FR-026-per-project-calls.md) |
+| FR-027 | Fetch only what is on screen | [FR-027](functional/FR-027-fetch-only-on-screen.md) |
 
 ### 4.3 Non-Functional Requirements
 
