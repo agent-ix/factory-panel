@@ -1,19 +1,21 @@
 import type { EngineInterface, RenderSurface } from 'claude-code'
 
 import type { ModuleId } from './band/modules'
+import { pollCapacity } from './capacity'
 import { originOf } from './endpoints'
 import { pollEscalations } from './escalations'
 import { pollBoard, pollDoctor, pollHerdr, pollPrometheus } from './factory'
 import { pollFocus } from './focus'
 import { isOnView, resetOnView } from './onview'
 import { pollRelay } from './relay'
+import { pollRoles } from './roles'
 import { isDue, markStale, track } from './schedule'
 import type { SourceId } from './schedule'
 import { getSelection, refreshSelection } from './selection'
 import { guarded } from './shared'
 import type { Options } from './shared'
 import { pollRetro, pollTeam } from './team'
-import { pollWork } from './workview'
+import { pollEvents, pollTickets, pollWork } from './workview'
 import { VIEW_SPECS } from './views'
 import type { ViewId } from './views'
 
@@ -37,10 +39,10 @@ export const HEARTBEAT_MS = 15 * 1000
 const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   factory: ['selection', 'prometheus', 'herdr', 'relay', 'board'],
   focus: ['selection', 'focus'],
-  work: ['selection', 'focus', 'work'],
+  work: ['selection', 'focus', 'work', 'events', 'tickets'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['team', 'retro'],
+  team: ['selection', 'team', 'retro', 'roles', 'capacity'],
 }
 
 const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
@@ -55,11 +57,17 @@ const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
   attention: ['escalations'],
   relay: ['relay'],
   team: ['team'],
+  work: ['focus', 'work', 'tickets'],
 }
 
-/** The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams. */
-export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[] =>
-  isWidget && view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view]
+/**
+ * The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams, and the Team widget
+ * no roles and no capacity.
+ */
+export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[] => {
+  if (!isWidget) return PANE_SOURCES[view]
+  return view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view].filter(s => s !== 'roles' && s !== 'capacity')
+}
 
 /**
  * The sources the band's selected modules draw. A module with nothing to say draws no cell, but its
@@ -67,15 +75,15 @@ export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[]
  */
 export const bandSources = (modules: readonly ModuleId[]): readonly SourceId[] => [...new Set<SourceId>(['selection', ...modules.flatMap(m => MODULE_SOURCES[m])])]
 
-/** The focus and teams the leads and lanes were read for. */
+/** The focus and teams the leads, lanes and retro health were read for. */
 let lastScope: string | undefined
 
-/** Re-reads who the session is and what it chose; a changed focus or teams value makes the leads and lanes stale. */
+/** Re-reads who the session is and what it chose; a changed focus or teams value makes what was read for it stale. */
 async function readScope($: EngineInterface): Promise<boolean> {
   await refreshSelection($, true)
   const now = `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
   // The first refresh only records the scope: the first reads already wait for it.
-  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board')
+  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'tickets', 'retro', 'roles')
   lastScope = now
   $.ui.invalidate('ui.render')
   return true
@@ -107,8 +115,16 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollTeam($, options)
     case 'work':
       return pollWork($)
+    case 'events':
+      return pollEvents($)
+    case 'tickets':
+      return pollTickets($)
     case 'retro':
       return pollRetro($)
+    case 'roles':
+      return pollRoles($)
+    case 'capacity':
+      return pollCapacity($, options)
     // The identity lookup is part of the selection's refresh.
     case 'whoami':
       return Promise.resolve()
@@ -139,7 +155,7 @@ function dueNow(options: Options, sources: readonly SourceId[], now: number): So
   // A view can be drawn before session start has found the metrics address. Nothing is asked of an
   // unknown address, so it counts as no read; the redraw that ends session start asks.
   const isFound = originOf(options.prometheusUrl) !== undefined
-  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team')) && isDue(id, now))
+  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity')) && isDue(id, now))
 }
 
 async function readDue($: EngineInterface, options: Options, surface: Surface, sources: readonly SourceId[], seat: Seat): Promise<void> {

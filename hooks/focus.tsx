@@ -4,7 +4,9 @@ import type { EngineInterface, On } from 'claude-code'
 import type { FocusInitiative, FocusMeta, FocusProject, FocusView, FocusWarning, SourceError } from '../types'
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
-import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar, runJson, runText } from './shared'
+import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar } from './shared'
+import { LEAD_REUSE_MS, listLeads, readLead } from './leads'
+import type { LeadRead, WorkReport } from './leads'
 import { REFRESH_BUDGET_MS, resetBoard, selectorsOfScope } from './board'
 import { loadProgress, progressKeyOf } from './progressview'
 import { holdBoard, keepBoards } from './work'
@@ -28,9 +30,9 @@ import type { Options } from './shared'
 const PANE = 'focus'
 const TITLE = 'Focus'
 export const PANE_SPEC = { id: PANE, title: TITLE }
-/** an agent-msg call is given up on after this long. */
-export const WORK_TIMEOUT_MS = 5_000
 export const NO_SELECTORS = 'no selectors'
+/** The first drawing of a choice waits at most this long for the leads' reports; the rest are drawn when they answer. */
+const FIRST_DRAW_MS = 5_000
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
   shape: 'focuses-5',
@@ -46,31 +48,6 @@ const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as 
 const focusWarnings = atom({ plugin: 'factory-panel', key: 'focusWarnings' } as const, false)
 
 // ---------------------------------------------------------------- data
-
-export type WorkReport = {
-  binding?: { machine?: string; kind?: string; address?: string }
-  agents?: { name?: string; ticket?: string; role?: string; status?: string; reported_at_ms?: number }[]
-  scope?: { initiatives?: string[]; projects?: string[]; tickets?: string[]; reported_at_ms?: number } | null
-  focus?: { summary?: string; reported_at_ms?: number } | null
-}
-
-/** The verified lead addresses `agent-msg who` lists; unverified rows start with `-`. */
-export async function listLeads($: EngineInterface): Promise<string[]> {
-  const text = await runText($, ['agent-msg', 'who'], WORK_TIMEOUT_MS)
-  return text
-    .split('\n')
-    .map(line => line.trim().split(/\s+/)[0] ?? '')
-    .filter(address => address.split(':').length === 3)
-}
-
-/** `agent-msg work show` prints `null` for a lead that has reported nothing: that is no report, not a failure. */
-export async function readReport($: EngineInterface, lead: string): Promise<{ report: WorkReport | null } | { error: string }> {
-  try {
-    return { report: await runJson<WorkReport | null>($, ['agent-msg', 'work', '--lead', lead, 'show'], WORK_TIMEOUT_MS) }
-  } catch (error) {
-    return { error: errorText(error) }
-  }
-}
 
 type Entry = { view: FocusView; selectors: Selector[] }
 
@@ -92,9 +69,10 @@ const blank = (address: string): FocusView => ({
   notes: [],
 })
 
-const leadEntry = (lead: string, report: WorkReport): Entry => ({
+const leadEntry = (lead: string, report: WorkReport, note: string | null): Entry => ({
   view: {
     ...blank(report.binding?.address ?? lead),
+    notes: note === null ? [] : [note],
     machine: report.binding?.machine ?? lead.split(':')[0] ?? '',
     kind: report.binding?.kind ?? '',
     summary: report.focus?.summary ?? '',
@@ -166,22 +144,32 @@ export async function focusDetailNow($: EngineInterface, sel: Selection): Promis
 let running: Promise<void> | null = null
 let again = false
 let againManual = false
+let againAnew = false
 
-export function pollFocus($: EngineInterface, manual = false): Promise<void> {
+/** Reads every focus. `anew` reads the leads' reports again even where the other view has just read them. */
+export function pollFocus($: EngineInterface, manual = false, anew = manual): Promise<void> {
   if (running !== null) {
     again = true
     againManual ||= manual
+    againAnew ||= anew
     return running
   }
   running = (async () => {
     try {
       let asManual = manual
+      let asAnew = anew
+      let isFirstPass = true
       do {
         again = false
         againManual = false
+        againAnew = false
         const how = asManual
-        await track($, 'focus', () => refreshFocus($, how))
+        const reuse = asAnew ? 0 : LEAD_REUSE_MS
+        const early = isFirstPass
+        isFirstPass = false
+        await track($, 'focus', () => refreshFocus($, how, reuse, early))
         asManual = againManual
+        asAnew = againAnew
       } while (again)
     } finally {
       running = null
@@ -199,8 +187,14 @@ export const COMMAND_WAIT_MS = 5_000
  * reads for what is now selected; otherwise only a source that is due is read, and a read under way is waited for.
  */
 export async function readForCommand($: EngineInterface, changed: boolean): Promise<void> {
-  const reading = changed || isDue('focus', await $.clock.now()) ? pollFocus($) : running
+  const reading = changed || isDue('focus', await $.clock.now()) ? pollFocus($, false, changed) : running
   if (reading !== null) await Promise.race([reading, after($, COMMAND_WAIT_MS)])
+}
+
+/** Whether a read of the focuses has ended, well or not: the focus statuses it asked for are then held. */
+export async function focusWasRead($: EngineInterface): Promise<boolean> {
+  const meta = await read($, focusMeta)
+  return meta.at !== null || meta.error !== null
 }
 
 /** Forgets the refresh state of an earlier session; the tests start each session from nothing. */
@@ -209,10 +203,14 @@ export function resetFocus(): void {
   running = null
   again = false
   againManual = false
+  againAnew = false
 }
 
-/** One refresh of every focus; false when the relay could not be read (ix-board's reads have their own gate). */
-async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolean> {
+/**
+ * One refresh of every focus; false when the relay could not be read (ix-board's reads have their own gate). With
+ * `early`, a choice not yet drawn is drawn from the reports in after FIRST_DRAW_MS, and another refresh is asked for.
+ */
+async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number, early: boolean): Promise<boolean> {
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     // The scope needs to know who this session is before it knows which leads to read.
@@ -225,7 +223,10 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
 
     // Where the leads cannot be listed nothing is known of them: this read says nothing about what is absent.
     let listed = true
-    const gather = async (): Promise<{ lead: string; report: WorkReport }[]> => {
+    // The same where some leads have not answered yet.
+    let isPartial = false
+    const isNewChoice = (await read($, focusMeta)).scope !== scopeKeyOf(scope)
+    const gather = async (): Promise<{ lead: string; report: WorkReport; note: string | null }[]> => {
       let leads: string[]
       try {
         leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
@@ -235,19 +236,35 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
         sourceFailed('agent-msg work', errorText(error))
         return []
       }
-      const read = await Promise.all(leads.map(async lead => ({ lead, read: await readReport($, lead) })))
-      const failedReads = read.flatMap(r => ('error' in r.read ? [{ lead: r.lead, error: r.read.error }] : []))
+      const answered: LeadRead[] = []
+      const all = Promise.all(leads.map(async lead => void answered.push(await readLead($, lead, reuseMs))))
+      isPartial = early && isNewChoice && (await Promise.race([all.then(() => false), after($, FIRST_DRAW_MS)]))
+      if (!isPartial) await all
+      else {
+        listed = false
+        again = true
+        againManual ||= manual
+      }
+      const reports = [...answered]
+      // A lead another session is reading says nothing yet, so this read says nothing about what is absent.
+      if (reports.some(r => r.pending === true)) listed = false
+      const failedReads = reports.flatMap(r => (r.error === null ? [] : [{ lead: r.address, error: r.error }]))
       // A failure is shown for the leads the scope is about: those inside the team filter, those whose address is
       // the name typed, and, when every lead is read, any lead if all of them failed (one with no live agent is normal there).
       const named = isName ? matchLeads(name, leads).map(a => a.toLowerCase()) : []
-      const shownFails = failedReads.filter(x => teams !== null || named.includes(x.lead.toLowerCase()) || failedReads.length === read.length)
+      const shownFails = failedReads.filter(x => teams !== null || named.includes(x.lead.toLowerCase()) || failedReads.length === reports.length)
+      // Whether the relay failed is told once every lead has answered.
+      if (isPartial) return drawn(reports, await $.clock.now())
       if (shownFails.length > 0) {
         const text = shownFails.map(x => `${x.lead}: ${x.error}`).join(' · ')
         errors.push({ source: 'agent-msg work', text })
         sourceFailed('agent-msg work', text)
       } else sourceOk('agent-msg work', await $.clock.now())
-      return read.flatMap(r => ('report' in r.read && r.read.report !== null ? [{ lead: r.lead, report: r.read.report }] : []))
+      return drawn(reports, await $.clock.now())
     }
+    // A report that could not be read now is drawn as it was last read, and says so.
+    const drawn = (reports: readonly LeadRead[], now: number): { lead: string; report: WorkReport; note: string | null }[] =>
+      reports.flatMap(r => (r.report ? [{ lead: r.address, report: r.report, note: r.error === null ? null : `work report not read, as read ${ago(r.at, now)}` }] : []))
     const lookup = async (): Promise<Resolved[]> => {
       if (!isName) return []
       let failed: string | null = null
@@ -264,7 +281,7 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
 
     const leadEntries = reports
       .filter(r => selectorsOfScope(r.report.scope).length > 0 || Boolean(r.report.focus?.summary))
-      .map(r => leadEntry(r.lead, r.report))
+      .map(r => leadEntry(r.lead, r.report, r.note))
     let entries: Entry[]
     if (!isName) entries = leadEntries
     else if (defs.length > 0) entries = defs.map(definitionEntry)
@@ -296,9 +313,10 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
       entries.map(async e => {
         if (e.selectors.length === 0) return
         const loaded = await loadProgress($, e.selectors, manual, endsAt, failed)
+        // Another session is reading and has left nothing yet: this focus has not answered.
+        await holdBoard($, progressKeyOf(e.selectors), loaded?.board ?? { board: null, at: null, error: null })
         if (loaded === null) return
         const { progress } = loaded
-        if (loaded.board !== null) await holdBoard($, progressKeyOf(e.selectors), loaded.board)
         await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
       }),
     )
@@ -310,7 +328,8 @@ async function refreshFocus($: EngineInterface, manual: boolean): Promise<boolea
     if (entries.every(e => e.selectors.length === 0)) sourceClear('ix-board')
     setSelectorErrors(failed)
     const now = await $.clock.now()
-    await update($, focusMeta, () => ({ at: now, busy: false, error: null, errors, ...(listed ? { scope: scopeKeyOf(scope) } : {}) }))
+    // With nothing to draw and reports still coming in, the views keep saying that the focuses are being read.
+    await update($, focusMeta, m => ({ at: isPartial && entries.length === 0 ? m.at : now, busy: isPartial, error: null, errors, ...(listed ? { scope: scopeKeyOf(scope) } : {}) }))
     return errors.length === 0
   } catch (error) {
     await update($, focusMeta, m => ({ ...m, busy: false, error: errorText(error) }))

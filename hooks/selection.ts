@@ -12,7 +12,7 @@ import { errorText } from './shared'
 // the choice file; it never writes a declaration. Nothing here asks a question.
 
 /** The modules shown when neither the user nor a declaration selects any. */
-export const FALLBACK_MODULES: readonly ModuleId[] = ['local', 'focus', 'lead', 'lanes']
+export const FALLBACK_MODULES: readonly ModuleId[] = ['local', 'focus', 'lead', 'lanes', 'work']
 
 export const FEATURES = ['modules', 'hosts', 'focus', 'teams'] as const
 export type Feature = (typeof FEATURES)[number]

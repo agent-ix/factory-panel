@@ -13,7 +13,7 @@ const MIN = 60 * SEC
 const LEAD = 'draco:QSL:code'
 
 /** Every read the mod makes, by the source behind it. */
-type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; work: number; retro: number; whoami: number }
+type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; events: number; retro: number; evals: number; capacity: number; whoami: number }
 
 const VIEWS = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'] as const
 type View = (typeof VIEWS)[number]
@@ -23,7 +23,8 @@ function watched(on: Parameters<TestBody>[1]) {
   const w = world(on, true)
   w.leads.set(LEAD, report(LEAD, 'QSL layer 4'))
   const fetched: string[] = []
-  w.fetch.value = url => (fetched.push(url), undefined)
+  const fleet: string[] = []
+  w.fetch.value = (url, body) => ((body.includes('ix_fleet_') ? fleet : fetched).push(url), undefined)
   const prior = w.stub.value
   w.stub.value = (argv, init) => {
     const line = argv.join(' ')
@@ -42,8 +43,11 @@ function watched(on: Parameters<TestBody>[1]) {
     escalations: count(l => l === 'agent-msg escalations'),
     announcements: count(l => l.startsWith('agent-msg log')),
     team: fetched.filter(u => u.endsWith('/api/v1/query_range')).length,
-    work: count(l => l.startsWith('agent-msg work events')),
-    retro: count(l => l.startsWith('ix-board --json retro')),
+    events: count(l => l.startsWith('agent-msg work events')),
+    retro: count(l => l.startsWith('ix-board --json retro delta')),
+    evals: count(l => l.startsWith('ix-board --json retro eval')),
+    // The capacity's ledger query and its series.
+    capacity: count(l => l.startsWith('ix-board --json fleet')) + fleet.length,
     whoami: count(l => l === 'agent-msg whoami'),
   })
   return { w, reads }
@@ -70,7 +74,7 @@ test('with nothing on screen no source is read, however long the session runs', 
   const { w, reads } = watched(on)
   await startSession($)
   await pass(w, 20 * MIN)
-  expect(since({ ...reads(), prometheus: 0, herdr: 0, doctor: 0, board: 0, focus: 0, escalations: 0, announcements: 0, team: 0, work: 0, retro: 0 }, reads())).toEqual([])
+  expect(since({ ...reads(), prometheus: 0, herdr: 0, doctor: 0, board: 0, focus: 0, escalations: 0, announcements: 0, team: 0, events: 0, retro: 0, evals: 0, capacity: 0 }, reads())).toEqual([])
   expect(w.ran.filter(l => l.startsWith('agent-msg who') && l !== 'agent-msg whoami')).toEqual([])
   expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual([])
 })
@@ -86,10 +90,10 @@ test('a session with nobody at it reads nothing and does not ask who it is', asy
 const DRAWS: Record<View, string[]> = {
   factory: ['prometheus', 'herdr', 'doctor', 'board'],
   focus: ['focus'],
-  work: ['focus', 'work'],
+  work: ['focus', 'events'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['team', 'retro'],
+  team: ['team', 'retro', 'evals', 'capacity'],
 }
 
 for (const view of VIEWS) {
@@ -118,6 +122,18 @@ test('the Factory widget reads the machines, herdr and the relay, and no agents'
   await ui.unmount()
 })
 
+test('the Team widget reads its series and the retro delta, and no role evaluation or capacity', { options: { teams: 'QSL' } }, async ($, on) => {
+  trace("FR-027-AC-3")
+  const { w, reads } = watched(on)
+  await startSession($)
+  await pass(w, SEC)
+  const before = reads()
+  const ui = await openPane($, 'team', 'widget')
+  await pass(w, 3 * MIN)
+  expect(since(before, reads())).toEqual(['team', 'retro'])
+  await ui.unmount()
+})
+
 const BANDS: [string[], string[]][] = [
   [['local'], ['prometheus']],
   [['health', 'agents', 'spend'], ['prometheus']],
@@ -127,6 +143,8 @@ const BANDS: [string[], string[]][] = [
   [['attention'], ['escalations']],
   [['relay'], ['doctor']],
   [['team'], ['team']],
+  // The leads' work reports, which the Focus view reads with the same command; the events are the Work pane's alone.
+  [['work'], ['focus']],
 ]
 
 for (const [modules, expected] of BANDS) {
@@ -377,6 +395,26 @@ test('a changed focus choice reads the leads and lanes again at the next drawing
   await pass(w, 35 * SEC)
   expect(reads().board).toBe(2)
   expect(w.ran.filter(l => l.startsWith('ix-board --json agents')).at(-1)).toBe('ix-board --json agents ENG')
+  await ui.unmount()
+})
+
+test('a changed teams choice reads the work reports again at the next drawing', async ($, on) => {
+  trace("FR-027-AC-15")
+  const { w } = watched(on)
+  const eng = report('draco:ENG:code', 'Payments')
+  w.leads.set('draco:ENG:code', { ...eng, agents: eng.agents.map(a => ({ ...a, ticket: 'ENG-9' })) })
+  declare(w, ['work'])
+  await startSession($)
+  const ui = await openBand($)
+  await pass(w, 2 * SEC)
+  const cell = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('')
+  expect(await cell()).toMatch(/1 ticket /)
+  w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify({ modules: ['work'], focus: 'team', teams: ['ENG'] }))
+  // The cell's own interval of 60 seconds is not up.
+  await pass(w, 35 * SEC)
+  expect(await cell()).toMatch(/2 tickets /)
+  // The focus and the work cell ask for the new lead's report once between them.
+  expect(w.ran.filter(l => l === 'agent-msg work --lead draco:ENG:code show')).toHaveLength(1)
   await ui.unmount()
 })
 

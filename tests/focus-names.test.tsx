@@ -320,7 +320,7 @@ test('a show that fails or prints text that is not JSON shows a source error and
 })
 
 test('a list or show that never returns is given up on after 5 seconds and the lead steps follow', async ($, on) => {
-  trace("FR-020-AC-14", "NFR-004-M-2")
+  trace("FR-020-AC-14", "NFR-004-M-5")
   const w = world(on, true)
   lead(w, null, 'Beta')
   choose(w, 'Beta')
@@ -388,7 +388,7 @@ test('two active definitions with the same name of one team are both shown and t
 })
 
 test('a show that never returns is given up on after 5 seconds, the error is shown and the lead steps follow', async ($, on) => {
-  trace("FR-020-AC-14", "NFR-004-M-2")
+  trace("FR-020-AC-14", "NFR-004-M-5")
   const w = world(on, true)
   lead(w, null, 'Beta')
   choose(w, 'Beta')

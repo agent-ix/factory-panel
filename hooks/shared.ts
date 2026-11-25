@@ -159,6 +159,15 @@ export async function runText($: EngineInterface, argv: string[], timeoutMs: num
   return ran.stdout
 }
 
+const MAX_MESSAGE = 200
+
+/** What ix-board said as it failed: its `error:` line where it leads with one, else its last line. */
+export function failureText(stderr: string, exitCode: number): string {
+  const lines = stderr.split('\n').map(l => l.trim()).filter(l => l !== '')
+  const said = (lines[0]?.startsWith('error:') ? lines[0] : lines[lines.length - 1]) ?? `ix-board exited ${exitCode}`
+  return said.length > MAX_MESSAGE ? `${said.slice(0, MAX_MESSAGE - 1)}…` : said
+}
+
 // ---------------------------------------------------------------- drawing
 
 // Status steps from the dataviz reference palette: they read on light and dark surfaces.

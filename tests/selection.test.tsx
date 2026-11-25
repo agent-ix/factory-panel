@@ -84,7 +84,7 @@ test('the third segment of the address is not interpreted: plan, code and zzz gi
     seen.push(await bandCells(ui))
     await ui.unmount()
   }
-  expect(seen[0]).toEqual(['local', 'focus', 'lead', 'lanes'])
+  expect(seen[0]).toEqual(['local', 'focus', 'lead', 'lanes', 'work'])
   expect(seen[1]).toEqual(seen[0])
   expect(seen[2]).toEqual(seen[0])
 })
@@ -107,21 +107,21 @@ test('a stored 0.4.0 role answer and a role setting change nothing', { options: 
   fullWorld(w)
   w.store.set('role./proj', 'coordinator')
   const ui = await band($)
-  expect(await bandCells(ui)).toEqual(['local', 'focus', 'lead', 'lanes'])
+  expect(await bandCells(ui)).toEqual(['local', 'focus', 'lead', 'lanes', 'work'])
   await ui.unmount()
 })
 
 // ---------------------------------------------------------------- FR-002 and FR-010 fallback and features
 
-test('with nothing selected the band shows local, focus, lead and lanes and no host list', async ($, on) => {
+test('with nothing selected the band shows local, focus, lead, lanes and work and no host list', async ($, on) => {
   trace("FR-002-AC-1", "FR-002-AC-2")
   const w = world(on)
   fullWorld(w)
   const ui = await band($)
-  expect(await bandCells(ui)).toEqual(['local', 'focus', 'lead', 'lanes'])
+  expect(await bandCells(ui)).toEqual(['local', 'focus', 'lead', 'lanes', 'work'])
   expect(await ui.find({ key: 'health' })).toBeUndefined()
   await ui.unmount()
-  expect(FALLBACK_MODULES).toEqual(['local', 'focus', 'lead', 'lanes'])
+  expect(FALLBACK_MODULES).toEqual(['local', 'focus', 'lead', 'lanes', 'work'])
 })
 
 test('with hosts all selected the band names each machine and with hosts local only this one', () => {
@@ -164,7 +164,7 @@ test('with nothing selected and whoami failing the band shows the fallback modul
   expect(modulesToDraw(sel)).toEqual(['health', ...FALLBACK_MODULES])
   w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4'))
   const ui = await band($)
-  expect(await bandCells(ui)).toEqual(['health', 'local', 'focus', 'lead'])
+  expect(await bandCells(ui)).toEqual(['health', 'local', 'focus', 'lead', 'work'])
   await ui.unmount()
 })
 
@@ -292,7 +292,8 @@ test('with no ~/.ix/factory-panel directory the band shows the fallback, no note
   trace("FR-011-AC-8")
   const w = world(on)
   w.whoami.value = undefined // no team, so no board read: the Linear cache is the one other writer under this directory
-  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4'))
+  // No agent, so no ticket to ask ix-board about.
+  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'QSL layer 4', []))
   const ui = await band($)
   expect(await bandCells(ui)).toContain('local')
   expect(await bandLine(ui)).toMatch(/could not tell who this session is/)
@@ -640,7 +641,7 @@ test('/factory reset returns each feature to its declaration or default and show
   expect(await run(w, 'show')).toMatch(/hosts +local +\[user\]/)
   const reset = await run(w, 'reset')
   expect(reset).toMatch(/hosts +all +\[declaration\]/)
-  expect(reset).toMatch(/modules +local, focus, lead, lanes +\[default\]/)
+  expect(reset).toMatch(/modules +local, focus, lead, lanes, work +\[default\]/)
   expect(reset).toMatch(/Your choices: none/)
   expect(hasNoMark(reset)).toBe(false)
   expect(await run(w, 'show')).toMatch(/Your choices: none/)
@@ -709,6 +710,8 @@ test('only an old cache is read once as the initial cache, later writes go to th
   fullWorld(w)
   const old = JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at: Date.UTC(2026, 10, 24, 11, 50), claimAt: null, data: { agents: [{ team: 'QSL', agent: 'draco:QSL:code', status: 'idle', machine: 'draco', paneId: '', title: '', lastTurnAgeSecs: 1 }], notes: [] } } } })
   w.files.set(`${HOME_CACHE}/linear-gate.json`, old)
+  // Without the work module, whose read of single tickets would be the first write.
+  w.files.set(`${FP}/features/default.json`, JSON.stringify({ modules: ['local', 'focus', 'lead', 'lanes'] }))
   await startSession($)
   const standing = await drawBand($, CLASSIC)
   await w.clock!.advance(1000)
@@ -754,7 +757,7 @@ test('a whoami that never returns leaves the band painted from the fallback, is 
 })
 
 test('a missing and a malformed declaration and a malformed choice file each still draw the band', async ($, on) => {
-  trace("NFR-004-M-5")
+  trace("NFR-004-M-9")
   const w = world(on)
   fullWorld(w)
   for (const [declaration, chosen] of [[undefined, undefined], ['{ nope', undefined], [undefined, '[1,2'], ['{ nope', '"x"']] as const) {
@@ -763,7 +766,7 @@ test('a missing and a malformed declaration and a malformed choice file each sti
     if (declaration !== undefined) feature(w, declaration)
     if (chosen !== undefined) choice(w, chosen)
     const ui = await band($)
-    expect(await bandCells(ui)).toEqual(['local', 'focus', 'lead', 'lanes'])
+    expect(await bandCells(ui)).toEqual(['local', 'focus', 'lead', 'lanes', 'work'])
     await ui.unmount()
   }
 })
@@ -787,6 +790,8 @@ function snapshotOf() {
     relayAt: 1,
     relayError: null,
     boardError: null,
+    now: Date.UTC(2026, 10, 24, 12, 0),
+    work: { leads: [], at: 1, relayError: null, listed: 0, boards: [] },
   } as Parameters<typeof buildCells>[1]
 }
 

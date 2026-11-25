@@ -204,17 +204,34 @@ export type TeamMetric = {
   label: string
   /** the latest value, null when the series is absent */
   value: number | null
+  /** whether `value` is a lower bound: the largest count of one of several scopes */
+  atLeast: boolean
   unit: 'count' | 'rate' | 'seconds' | 'share'
   /** higher is better (velocity) or worse (queues), for the trend's colour */
   better: 'up' | 'down'
   history: number[]
+  /** the share of its population the exporter measured, 0 to 1; null where it does not say */
+  coverage: number | null
+  /** why there is no `value`; null where there is one */
+  reason: string | null
 }
 
-export type TeamView = { team: string; metrics: TeamMetric[] }
+/** The counts of 7 UTC days, oldest first and today last; null for a day with no sample. `atLeast` marks lower bounds. */
+export type DailyRow = { counts: (number | null)[]; atLeast: boolean; /** why a day has no count */ reason: string }
+
+export type TeamView = {
+  /** the Linear team key, else the exporter's team id */
+  team: string
+  /** whether `team` is a team key the series carry */
+  keyed: boolean
+  metrics: TeamMetric[]
+  /** completed issues and merged PRs per day */
+  days: { closures: DailyRow; merges: DailyRow }
+}
 
 export type TeamMeta = { at: number | null; error: string | null }
 
-/** One department class of a team's retro delta: its mark and the metrics that regress. */
+/** One metric class of a team's retro delta: its mark and the metrics that regress. */
 export type RetroClass = { id: string; rating: 'red' | 'amber' | 'green' | 'unknown'; regressing: string[]; unavailable: number; total: number }
 
 /** A team's retro health: its classes, or `null` classes with the reason there is no baseline. */
@@ -222,29 +239,83 @@ export type RetroView = { team: string; classes: RetroClass[] | null; latest: st
 
 export type RetroMeta = { at: number | null; error: string | null }
 
+/** One rule of a role evaluation; `reason` and `rubric` say why one is not scored. */
+export type RoleRule = { id: string; status: string; query: string; value: number | null; comparator: string; target: number | null; reason: string | null; rubric: string | null }
+
+/**
+ * One role of an evaluation: the rules passed of those scored, and `trend`, the change from the window before over the
+ * `matched` rules scored in both; `matched` is null where the answer does not say.
+ */
+export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; matched: number | null; rules: RoleRule[]; objectives: RoleObjective[] }
+
+/** One objective metric of a role; a null `value` has no measurement, and `reason` says why. */
+export type RoleObjective = { id: string; query: string; value: number | null; unit: string; reason: string | null }
+
+/** What the mod keeps of `ix-board retro eval --json`: the window (ms since the epoch) and its roles. */
+export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
+
+/** A team's Roles section: its latest evaluation, and what to say about it or its absence. */
+export type RolesView = { team: string; report: RoleReport | null; note: string | null; isError: boolean }
+
+export type CapacityMetric = 'busy' | 'deficit' | 'output'
+
+/** One host's figure: its words, or why it is unavailable; `sampleAt` (ms since the epoch) where its sample says when. */
+export type CapacityCell = { metric: CapacityMetric; state: 'ok' | 'stale' | 'unavailable'; text: string; sampleAt: number | null }
+
+/** The fleet's capacity as read at `at`: each host's figures, and the metrics a whole source gives nothing of. */
+export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; missing: { metric: CapacityMetric; reason: string }[]; at: number }
+
 // ---------------------------------------------------------------- Work pane
 
 /** A pull request of a ticket, as ix-board's focus status lists it. */
 export type WorkPr = { url: string; repo: string; number: number | null; status: string; draft: boolean }
 
 /** A ticket of the focus status: started, or closed lately. `prs` is null where ix-board is too old to say. */
-export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null }
+export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null; /** when the answer naming it was read */ at?: number | null }
 
 /** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
 export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
 
-/** What one focus status answer says of tickets; `activity` is null where ix-board has no such field. */
-export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null }
+/**
+ * What one answer of ix-board says of tickets; `activity` is null where ix-board has no such field. `cutAt` is set
+ * where ix-board cut the activity at its cap: entries older than this time (ms since the epoch) are missing. Of an
+ * answer held for the views, `at` is when it was read, null where none ever was, and `error` why the latest read
+ * failed. `ticketsOnly` marks the read of single tickets, which says nothing of what was merged.
+ */
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[] }
+
+/** The gated `ix-board issues` answer: the tickets asked for, those answered, and when. */
+export type TicketsAnswer = { at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
 
 export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
 
-/** A lead of `agent-msg who` with the agents of its work report. */
-export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[] }
+/**
+ * A lead of `agent-msg who` with the agents of its work report. `error` is why the latest read failed, and `readAt`
+ * when the report drawn was read: null where none ever was, so that nothing is known of the lead.
+ */
+export type WorkLead = { address: string; status: string; reportedAt: number | null; agents: WorkAgent[]; focus: WorkLeadFocus | null; error: string | null; readAt: number | null }
+
+/** What a lead last said it is doing: the summary, the tickets it named, and when. */
+export type WorkLeadFocus = { summary: string; tickets: string[]; at: number | null }
 
 /** The latest transition of one agent on one ticket, from `agent-msg work events`. */
 export type WorkLast = { role: string; status: string; at: number }
 
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null }
+/**
+ * `relayError` is why the last read of the leads gave nothing new: no list of leads, or no report of any lead.
+ * `listed` counts the leads that read asked, `silent` names those that answered with no report, and `pending` counts
+ * those another session was reading.
+ */
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number }
+
+/** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
+export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }
+
+/**
+ * What the event stream has said of those roles: the latest events, oldest first, and where each assignment
+ * (lead, agent, ticket) stands, so that a repeated report adds no event. `error` is the last read's problem.
+ */
+export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -282,12 +353,19 @@ declare module 'claude-code' {
       retro: Shaped<RetroView[]>
       retroMeta: Shaped<RetroMeta>
       retroOpen: string[]
+      teamOpen: string[]
       retroWarn: boolean
+      roles: Shaped<RolesView[]>
+      rolesOpen: string[]
+      capacity: Shaped<CapacityView | null>
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, WorkLast>>
       workMeta: Shaped<WorkMeta>
+      workFeed: Shaped<WorkFeed>
       workBoards: Shaped<Record<string, WorkBoard>>
+      workTickets: Shaped<WorkBoard | null>
       workCollapsed: string[]
+      workOpen: string[]
       workAll: boolean
       workWarnings: boolean
     }

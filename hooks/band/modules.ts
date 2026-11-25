@@ -1,13 +1,15 @@
-import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView } from '../../types'
+import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead } from '../../types'
+import { agoShort } from '../shared'
 import { cellBar, loadColor, tempColor, usd } from '../ui/glyphs'
+import { workCounts } from '../work'
 
 // The band's modules. Each is a pure function of a snapshot of what the panes already collected,
 // so a test seeds a snapshot and reads the cell back. A module with nothing to say returns null
 // and drops out of the band.
 
-export type ModuleId = 'health' | 'local' | 'focus' | 'queue' | 'lead' | 'lanes' | 'attention' | 'relay' | 'team' | 'agents' | 'spend'
+export type ModuleId = 'health' | 'local' | 'focus' | 'queue' | 'lead' | 'lanes' | 'work' | 'attention' | 'relay' | 'team' | 'agents' | 'spend'
 
-export const MODULE_IDS: readonly ModuleId[] = ['health', 'local', 'focus', 'queue', 'lead', 'lanes', 'attention', 'relay', 'team', 'agents', 'spend']
+export const MODULE_IDS: readonly ModuleId[] = ['health', 'local', 'focus', 'queue', 'lead', 'lanes', 'work', 'attention', 'relay', 'team', 'agents', 'spend']
 
 export type Tone = 'success' | 'warning' | 'error' | 'inactive' | 'claude'
 
@@ -51,7 +53,13 @@ export type Snapshot = {
   relayAt: number | null
   relayError: string | null
   boardError: string | null
+  /** When the snapshot was taken, ms since the epoch. */
+  now: number
+  work: WorkState
 }
+
+/** What the Work view holds: the leads and how their last read went (see WorkMeta), and the focus statuses. */
+export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; boards: readonly WorkBoard[] }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
 const DOWN_AFTER_SECS = 120
@@ -257,13 +265,71 @@ const relay = (s: Snapshot): Cell | null => {
   return { id: 'relay', pane: 'relay', parts: [{ text: `relay ${r.inboxWaiting} waiting`, tone: 'warning' }, { text: r.deadLetters > 0 ? ` · ${r.deadLetters} dead` : '', dim: true }] }
 }
 
+/** The leads' tickets, their open PRs and the day's merges; an unknown number is a dash, never a smaller one. */
+const work = (s: Snapshot): Cell | null => {
+  const w = s.work
+  if (w.at === null && w.relayError === null) return null // not asked yet
+  const known = w.leads.filter(l => l.readAt !== null)
+  const unread = w.leads.length - known.length
+  const old = known.filter(l => l.error !== null).length
+  // With no report in hand, now or from an earlier read, nothing is known of the tickets.
+  const isKnown = known.length > 0 || (unread === 0 && w.relayError === null)
+  const c = workCounts(w.leads, w.boards, s.now, isKnown, w.listed)
+  const dash = (n: number | null, isAtLeast = false) => (n === null ? '—' : `${isAtLeast ? '≥' : ''}${n}`)
+  // Each dash of the cell says why, a reason two share once.
+  const why = [...new Set([c.prsWhy, c.mergedWhy].filter(r => r !== null))]
+  // A lead that was never read, reports nothing or reports old work may hold more tickets and PRs than are counted.
+  const isShort = c.reporting < c.listed
+  const of = c.tickets !== null && isShort ? ` (${c.reporting}/${c.listed} leads)` : ''
+  const parts: Part[] = [
+    { text: `${dash(c.tickets, isShort)} ${c.tickets === 1 ? 'ticket' : 'tickets'}`, tone: c.tickets === null ? 'inactive' : undefined },
+    { text: `${of}${c.oldTickets > 0 ? ` · +${c.oldTickets} old` : ''}`, dim: true },
+    { text: ` · ${dash(c.prsOpen, isShort || c.prsPartial)} ${c.prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
+    { text: ` · ${dash(c.merged, c.mergedPartial)} merged 24h`, dim: true },
+    { text: c.oldAt === null ? '' : ` · ix-board ${agoShort(c.oldAt, s.now)} old`, tone: 'warning' },
+    { text: why.length === 0 ? '' : ` (${why.join('; ')})`, dim: true },
+  ]
+  // The merges and PRs are ix-board's: where it fails, the focus's own warning says why.
+  const board = scoped(s).flatMap(f => f.warnings).find(x => x.kind === 'source')?.text
+  const failed = unread + old
+  const earlier = old > 0 ? `, ${old} shown from an earlier read` : ''
+  const partly = failed > 0 ? `agent-msg work: ${failed} of ${w.listed} leads not read${earlier}` : undefined
+  const alert = w.relayError === null ? (partly ?? board) : `agent-msg work: ${w.relayError}`
+  return { id: 'work', pane: 'work', parts, alert }
+}
+
+/**
+ * The teams the Team view and the team cell read: those the user or a declaration chose, whatever the focus; where none
+ * is chosen, those of the session's focus, else its own team. None: every team.
+ */
+export const selectedTeams = (scope: Scope): string[] => (scope.teamsSelected ? [...scope.teams] : (focusTeams(scope) ?? [...scope.teams]))
+
+/**
+ * The team views a selection reads: `shown`, those keyed with a selected team, in the selection's order; `unmatched`,
+ * the exporter ids with no key, which cannot be matched to one; and the selected teams that have no series. With no
+ * team selected every view is shown, those with a key first.
+ */
+export function viewsOf(views: readonly TeamView[], selected: readonly string[]): { shown: TeamView[]; unmatched: TeamView[]; missing: string[] } {
+  const keyed = views.filter(v => v.keyed)
+  const unkeyed = views.filter(v => !v.keyed)
+  if (selected.length === 0) return { shown: [...keyed, ...unkeyed], unmatched: [], missing: [] }
+  const of = (name: string) => keyed.filter(v => same(v.team, name))
+  return { shown: selected.flatMap(of), unmatched: unkeyed, missing: selected.filter(name => of(name).length === 0) }
+}
+
+/** The views a one-line summary reads: the selected teams that have series, else the ids with no key. */
+export const headlineViews = (views: readonly TeamView[], selected: readonly string[]): TeamView[] => {
+  const { shown, unmatched } = viewsOf(views, selected)
+  return shown.length > 0 ? shown : unmatched
+}
+
 /** The first tile of the first team that has a reading: the one the Team view shows first. */
 const team = (s: Snapshot): Cell | null => {
-  for (const t of s.teamViews) {
+  for (const t of headlineViews(s.teamViews, selectedTeams(s.scope))) {
     const tile = t.metrics.find(m => m.value !== null)
     if (tile !== undefined && tile.value !== null) {
       const value = tile.unit === 'seconds' ? `${Math.round(tile.value)}s` : Number.isInteger(tile.value) ? String(tile.value) : tile.value.toFixed(1)
-      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: value }] }
+      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: tile.atLeast ? `≥${value}` : value }] }
     }
   }
   return null
@@ -282,7 +348,7 @@ const spend = (s: Snapshot): Cell | null => {
   return { id: 'spend', pane: 'factory', parts: [{ text: `${usd(known.reduce((a, m) => a + (m.spend24hUsd ?? 0), 0))} / 24h`, dim: true }] }
 }
 
-const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local, focus, queue, lead, lanes, attention, relay, team, agents, spend }
+const BUILDERS: Record<ModuleId, (s: Snapshot) => Cell | null> = { health, local, focus, queue, lead, lanes, work, attention, relay, team, agents, spend }
 
 /** Digits 1 to 9 go to the cells in the order drawn; a cell past the ninth has none. */
 export const MAX_DIGITS = 9

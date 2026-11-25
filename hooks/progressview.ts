@@ -1,14 +1,14 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { FocusView } from '../types'
-import { SourceFailure, compose, membershipsOf,projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
+import { SourceFailure, WORK_SHAPE, compose, membershipsOf,projectKeyOfWarning, recordsOf, refreshProgress, selectorKey } from './board'
 import type { Refresh, Selector } from './board'
 import { gatedBoard } from './linear'
 import { mergeInitiatives, mergeRecords, readFile, saveFile } from './progress'
 import type { Records } from './progress'
 import { ago, pausedText } from './shared'
 import { sourceFailed, sourceOk } from './sources'
-import type { WorkBoard } from '../types'
+import type { BoardRead } from './work'
 
 /** The key a focus's progress read is gated and held under. */
 export const progressKeyOf = (selectors: readonly Selector[]): string => `progress:${selectors.map(selectorKey).join(' ')}`
@@ -16,8 +16,8 @@ export const progressKeyOf = (selectors: readonly Selector[]): string => `progre
 /** The progress part of a focus: what the pane reads from `initiatives`, `loose`, `header`, `warnings`, `fetchedAt` and `notes`. */
 export type Progress = Pick<FocusView, 'initiatives' | 'loose' | 'header' | 'warnings' | 'fetchedAt' | 'notes'>
 
-/** A focus's progress with the tickets and activity of the same answer, which the Work tab reads. */
-export type Loaded = { progress: Progress; board: WorkBoard | null }
+/** A focus's progress with what the same read says of tickets and activity, which the Work tab reads. */
+export type Loaded = { progress: Progress; board: BoardRead }
 
 /**
  * What one focus shows of its progress, from ix-board and the records of earlier successes. `failed` collects the
@@ -41,7 +41,7 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
         throw error
       })
     },
-    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true, repeats: (r: Refresh) => r.unproven === true },
+    { manual, keep: (r: Refresh) => r.sourceError === null && r.pending !== true, repeats: (r: Refresh) => r.unproven === true, outdated: (r: Refresh) => r.work !== WORK_SHAPE },
   )
   const now = await $.clock.now()
   const sourceError = read.backoffUntil !== null ? pausedText(read.backoffUntil, now) : read.error
@@ -68,5 +68,5 @@ export async function loadProgress($: EngineInterface, selectors: Selector[], ma
   const when = read.holdMs === undefined ? 'after 5 minutes, r asks now' : `after ${Math.round(read.holdMs / 60_000)} minutes, r asks after 60 seconds`
   const held = read.held === true && refresh !== null ? [`earlier outcome from ${ago(refresh.at, now)}: ix-board is asked again ${when}`] : []
   // The Work tab reads the tickets and activity of the same answer: no further call is made for them.
-  return { progress: { initiatives: composed.initiatives, loose: composed.loose, header: composed.header, warnings: composed.warnings, fetchedAt: composed.fetchedAt, notes: held }, board: refresh?.board ?? null }
+  return { progress: { initiatives: composed.initiatives, loose: composed.loose, header: composed.header, warnings: composed.warnings, fetchedAt: composed.fetchedAt, notes: held }, board: { board: refresh?.board ?? null, at: refresh?.at ?? null, error: source } }
 }
