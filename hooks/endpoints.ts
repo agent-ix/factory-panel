@@ -58,6 +58,9 @@ async function relayEndpoint($: EngineInterface): Promise<string | undefined> {
  * holds that one object, and says where each came from in the debug log. Never throws.
  */
 export async function resolveEndpoints($: EngineInterface, options: Options): Promise<void> {
+  // A setting that is not an http(s) address is ignored, as if it were empty.
+  if (originOf(options.prometheusUrl) === undefined) options.prometheusUrl = ''
+  if (originOf(options.grafanaUrl) === undefined) options.grafanaUrl = ''
   let from = 'plugin setting'
   if (options.prometheusUrl === '') {
     const shared = await ixConfig($, 'observability.prometheusUrl')

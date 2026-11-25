@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Breaking: `/band` is removed. `/factory` is the one command: `/factory` opens the view for your role, `/factory <view>` opens one, `/factory role` asks the role question again and `/factory help` explains in the words of your layout. Band cell digits switch views while one is open.
+- `/focuses`, `/escalations`, `/relay` and `/team` remain as aliases for one release and will be removed after it.
+- The role is read from the relay address, else asked once for each directory the first time `/factory` is typed. Starting a session never asks a question or takes the keyboard.
+- Band cells carry digits 1 to 9 in the order drawn; a team cell shows the first team tile.
+- Honest states: a machine that never reported is grey no-data, a stale one is not reporting, and the Factory view says when metrics are unavailable and marks old values.
+- README rewritten around tasks; spec and tests traced to every requirement; end-to-end check in both layouts (`tests/e2e/layouts.mjs`).
+
 ## 0.3.1
 
 - Metrics addresses are no longer hard-coded to localhost. `prometheusUrl` and `grafanaUrl` default to empty and are found at session start: the plugin setting, then the shared ix config (`ix config get observability.prometheusUrl` / `observability.grafanaUrl`), then this host's relay endpoint (`otlp_endpoint` in ~/.ix/relay/config.toml), then http://prometheus.luna.ix. Grafana follows Prometheus's `prometheus.<domain>` name when nothing else names it.

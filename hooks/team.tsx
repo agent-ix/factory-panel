@@ -37,7 +37,7 @@ const SPECS: Spec[] = [
   { key: 'agents', label: 'Executing agents', unit: 'count', better: 'up', query: 'sum by (team_id) (ix_team_executing_agents)' },
 ]
 
-async function pollTeam($: EngineInterface, options: Options): Promise<void> {
+export async function pollTeam($: EngineInterface, options: Options): Promise<void> {
   const now = await $.clock.now()
   try {
     const results = await Promise.all(
@@ -94,18 +94,12 @@ const trendInk = (m: TeamMetric): string => {
 
 /** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startTeam($: EngineInterface, options: Options): Promise<void> {
-  await $.command.register({ name: 'team', description: 'Open the Team pane: coder velocity and quality' })
+  await $.command.register({ name: 'team', description: 'Same as /factory team' })
   void pollTeam($, options)
   $.clock.every(POLL_MS, () => pollTeam($, options))
 }
 
 export function registerTeam(on: On, options: Options): void {
-  on('command.run', { command: 'team' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
-    void pollTeam($, options)
-    return { text: opened.isPlaced ? 'Team pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Team pane waits: ${opened.reason}` }
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
@@ -187,6 +181,11 @@ export function registerTeam(on: On, options: Options): void {
             {meta.error ?? `updated ${ago(meta.at, now)}`}
           </Text>
         </Box>
+        {e.props.placement === 'inline' && (
+          <Text dimColor size="caption">
+            Type a band number to switch views · r refresh · Esc close
+          </Text>
+        )}
       </Box>
     )
   })

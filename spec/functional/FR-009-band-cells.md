@@ -26,7 +26,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 - When a digit is pressed at an empty prompt, the mod SHALL open the view of the cell that carries it, replacing any view already open.
 - A pressed digit that no cell carries SHALL do nothing.
 - The module-to-view map SHALL open Factory from health, local, lanes, agents and spend; Focus from focus, queue and lead; Escalations from attention; Relay from relay; and Team from team.
-- The team module SHALL show the label and value of the first tile of the first team in the Team view.
+- The team module SHALL show the label and value of the first tile that has a reading, of the first team that has one.
 - The mod SHALL leave out the team module when no team metrics exist.
 
 ## Acceptance Criteria
@@ -39,7 +39,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 | FR-009-AC-4 | With `bandModules` set to `focus,nope,focus,local`, the band shows focus then local, with digits 1 and 2. | Test |
 | FR-009-AC-5 | Pressing a digit that no cell carries opens nothing and changes nothing. | Test |
 | FR-009-AC-6 | Pressing the digit of a cell opens the view named in the module-to-view map, for every module in the map. | Test |
-| FR-009-AC-7 | The team cell shows the first tile of the first team, and is left out when no team metrics exist. | Test |
+| FR-009-AC-7 | The team cell shows the first tile with a reading of the first team that has one, and is left out when no team metrics exist. | Test |
 | FR-009-AC-8 | In a real classic session a digit typed while the prompt holds text is typed into the prompt and opens nothing. | Demonstration |
 
 ## Dependencies

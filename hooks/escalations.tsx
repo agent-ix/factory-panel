@@ -140,7 +140,7 @@ function viewOf(all: readonly Escalation[], hidden: readonly string[], filter: E
 
 // ---------------------------------------------------------------- polling
 
-async function pollEscalations($: EngineInterface): Promise<void> {
+export async function pollEscalations($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   const started = ++tick
   try {
@@ -554,19 +554,13 @@ function filedAgo(filed: string, now: number): string {
 
 /** Registers the command and starts polling; called once at session start. register.tsx opens the pane. */
 export async function startEscalations($: EngineInterface, _options: Options): Promise<void> {
-  await $.command.register({ name: 'escalations', description: 'Open the Escalations pane: resolve or hide what the leads escalated' })
+  await $.command.register({ name: 'escalations', description: 'Same as /factory escalations' })
   await loadHidden($)
   void pollEscalations($)
   $.clock.every(POLL_MS, () => pollEscalations($))
 }
 
 export function registerEscalations(on: On, _options: Options): void {
-  on('command.run', { command: 'escalations' }, async $ => {
-    const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true })
-    void pollEscalations($)
-    return { text: opened.isPlaced ? 'Escalations pane opened. Esc closes it; ctrl+x tab gives it the keys.' : `Escalations pane waits: ${opened.reason}` }
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Input } = els
@@ -833,6 +827,11 @@ export function registerEscalations(on: On, _options: Options): void {
             {meta.error ?? `updated ${ago(meta.at, now)}`}
           </Text>
         </Box>
+        {e.props.placement === 'inline' && (
+          <Text dimColor size="caption">
+            Type a band number to switch views · r refresh · Esc close
+          </Text>
+        )}
       </Box>
     )
   })

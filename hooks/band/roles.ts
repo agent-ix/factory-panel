@@ -8,7 +8,7 @@ export const ROLES: readonly Role[] = ['coordinator', 'code-lead', 'planner', 'w
 // What each role sees by default. Hosts belong to the program coordinator; a code lead sees this
 // machine and its project. Changing a default is an edit to this table.
 export const PRESETS: Record<Role, readonly ModuleId[]> = {
-  coordinator: ['health', 'focus', 'attention', 'relay'],
+  coordinator: ['health', 'focus', 'attention', 'relay', 'team'],
   'code-lead': ['local', 'focus', 'lead', 'lanes'],
   planner: ['focus', 'queue', 'lead'],
   worker: ['local'],
@@ -34,6 +34,7 @@ export const parseModules = (text: string): ModuleId[] =>
     .split(',')
     .map(t => t.trim().toLowerCase())
     .filter((t): t is ModuleId => (MODULE_IDS as readonly string[]).includes(t))
+    .filter((t, i, all) => all.indexOf(t) === i)
 
 /** The band's modules: the person's list when set, else the role's preset (a code lead when the role is unknown). */
 export const modulesFor = (role: Role | undefined, override: string): readonly ModuleId[] => {

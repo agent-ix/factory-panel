@@ -1,6 +1,6 @@
 {
   "name": "factory-panel",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Panes beside the chat for running an Agent IX factory: machines, named focuses, an escalations inbox, ix-relay announcements, and team health.",
   "author": {
     "name": "Agent IX"
@@ -32,7 +32,7 @@
     },
     "teams": {
       "type": "string",
-      "description": "Comma-separated herdr workspace labels ix-board agents should report on",
+      "description": "Comma-separated herdr workspace labels ix-board should report on",
       "default": "",
       "title": "ix-board teams"
     },
@@ -44,13 +44,13 @@
     },
     "role": {
       "type": "string",
-      "description": "Which role this session plays: coordinator, code-lead, planner, worker, or auto (read from the relay address; a code lead when unknown)",
+      "description": "Which role this session plays: coordinator, code-lead, planner, worker, or auto (read from the relay address, else asked once with /factory; a code lead until answered)",
       "default": "auto",
       "title": "Role"
     },
     "bandModules": {
       "type": "string",
-      "description": "Comma list that replaces the role preset: health, local, focus, queue, lead, lanes, attention, relay, agents, spend",
+      "description": "Comma list that replaces the role preset: health, local, focus, queue, lead, lanes, attention, relay, team, agents, spend",
       "default": "",
       "title": "Band modules"
     },
@@ -62,7 +62,7 @@
     },
     "inlineView": {
       "type": "string",
-      "description": "What a non-fullscreen session shows: band, status or off",
+      "description": "What a classic-layout session shows above the prompt: band, status or off",
       "default": "band",
       "title": "Non-fullscreen view"
     }

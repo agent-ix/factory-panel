@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { shortError } from '../hooks/shared'
+import { trace } from './trace'
 
 const PANE = {
   plugin: 'factory-panel',
@@ -94,6 +95,7 @@ const doctor = JSON.stringify({
 const engine = (on: Parameters<TestBody>[1]) => {
   on('command.register', () => ({ value: { command: 'factory' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.log', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('clock.now', () => ({ value: 1795237300000 }))
   on('clock.every', () => ({ value: undefined }))
@@ -308,4 +310,49 @@ test('only a real timeout is shortened; other errors, and a bad_data error namin
   expect(shortError('prometheus', 'connection refused')).toBe('connection refused')
   const badData = 'invalid parameter "timeout": cannot parse "x" to a valid duration'
   expect(shortError('prometheus', badData)).toBe(badData)
+})
+
+const factoryWorld = (on: Parameters<TestBody>[1], prometheus: { up: boolean }) => {
+  engine(on)
+  on('http.fetch', (_, e) => {
+    if (!prometheus.up) return { value: { status: 503, ok: false, headers: {}, text: 'down' } }
+    const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
+    return { value: { status: 200, ok: true, headers: {}, text: prometheusAnswer(body) } }
+  })
+  on('process.run', (_, e) => {
+    const [bin] = e.argv
+    if (bin === 'printenv') return run('/home/test\n')
+    if (bin === 'herdr') return run(herdrSnapshot)
+    if (bin === 'agent-msg') return run(doctor)
+    return run('{}', 4)
+  })
+}
+
+test('with no answer from the metrics service the Factory view says so with the reason', async ($, on) => {
+  trace("FR-006-AC-9")
+  factoryWorld(on, { up: false })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const note = (await ui.find({ type: 'Text', text: /^Metrics unavailable: / }))?.text ?? ''
+  expect(note).toMatch(/^Metrics unavailable: .*503/)
+  // Nothing was ever read, so there is no earlier value to mark as old.
+  expect(note).not.toMatch(/values from/)
+  await ui.unmount()
+})
+
+test('when the metrics service stops answering the earlier values stay, marked as old', async ($, on) => {
+  trace("FR-006-AC-9")
+  const prometheus = { up: true }
+  factoryWorld(on, prometheus)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /● node-a/ }))?.text).toMatch(/node-a/)
+  expect(await ui.find({ type: 'Text', text: /^Metrics unavailable/ })).toBeUndefined()
+  prometheus.up = false
+  await ui.press({ key: 'refresh' })
+  const note = (await ui.find({ type: 'Text', text: /^Metrics unavailable: / }))?.text ?? ''
+  expect(note).toMatch(/503/)
+  expect(note).toMatch(/values from /)
+  expect((await ui.find({ type: 'Text', text: /● node-a/ }))?.text).toMatch(/node-a/)
+  await ui.unmount()
 })
