@@ -60,6 +60,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 - A number that is unknown SHALL read `—` and never 0: M where no answer of ix-board names the PRs of any of those tickets, and K where no focus status has an `activity` key.
 - Where M or K reads `—`, the cell SHALL say why in brackets, a reason both share once: no focus status read, ix-board not read yet or could not be read, no PRs named, ix-board older than 0.9.0, or leads not read.
 - An answer of ix-board more than 35 minutes old SHALL NOT be drawn as current: the cell SHALL say its age, `ix-board <age> old`, and K SHALL be a lower bound where a focus status is that old or was never answered.
+- K SHALL be a lower bound where the latest refresh of a focus status failed in whole or part, however new the answer held.
 - Wherever N is drawn as a lower bound, M SHALL be too.
 - The mod SHALL leave out the work module until the first read of the relay's leads has ended or failed.
 - A report held from an earlier read SHALL count as any other by its age ([FR-030](./FR-030-lead-report-reads.md)).
@@ -88,7 +89,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 | FR-009-AC-13 | Where a lead was never read, tickets and PRs read as lower bounds; the band says how many leads were not read and how many are shown from an earlier read. | Test |
 | FR-009-AC-14 | Where an `activity[]` of 200 entries reaches back less than 24 hours, the merges read as a lower bound. | Test |
 | FR-009-AC-15 | With fewer current reports than leads listed the cell reads `≥N tickets (r/t leads)`, and the tickets only reports over 2 hours old name are counted apart. | Test |
-| FR-009-AC-16 | An ix-board answer over 35 minutes old has its age said and makes the merges a lower bound, as a focus status never answered does. | Test |
+| FR-009-AC-16 | An ix-board answer over 35 minutes old has its age said and makes the merges a lower bound, as a focus status never answered or cut short by a source error does. | Test |
 | FR-009-AC-17 | A cell with `—` for PRs or merges says why. | Test |
 
 ## Dependencies

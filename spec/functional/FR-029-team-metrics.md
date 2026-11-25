@@ -52,7 +52,9 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 - With no team selected, every team SHALL be drawn, those with a key first.
 - An exporter id with no team key cannot be matched to a selected team. Where a team is selected, each SHALL be drawn after the selected teams as one closed row, its id, `exporter id, no team key` and `N of M metrics have a value`, which opens and closes its tiles.
 - Where a selected team has no series, the view SHALL say `No team series carries the key <keys>.`, and where there are exporter ids with no key, that they have no `team_key` (ix-board publishes it from 0.12.0), so which team each is cannot be told.
-- The widget and the band's team cell SHALL read the selected teams that have series, and where none has, the exporter ids with no key. The widget's number SHALL be a lower bound where a selected team has no series beside one that has.
+- The widget and the band's team cell SHALL read the selected teams that have series. The widget's number SHALL be a lower bound where a selected team has no series beside one that has.
+- Where there are series and a team is selected but no series carries a selected key, the widget SHALL say `closures / 24h unknown · no series carries the key <keys>` and give no number.
+- Where no selected team has series, the band's team cell SHALL read the exporter ids with no key, each named by its id.
 
 ### Teams with several scopes
 
@@ -130,7 +132,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 | FR-029-AC-31 | With one team selected, the tiles of that team key are drawn and those of another key are not; selected teams are drawn in the order of the selection, and with no team selected all are drawn, keyed first. | Test |
 | FR-029-AC-32 | With a team selected, an exporter id with no key is one closed row with the count of metrics that have a value, which opens to its tiles and closes again. | Test |
 | FR-029-AC-33 | A selected team with no series is named, with why an exporter id with no key cannot be told apart. | Test |
-| FR-029-AC-34 | The widget and the band team cell read the selected teams' series, a lower bound where one of them has none, and the keyless ids where no selected team has any. | Test |
+| FR-029-AC-34 | The widget and the band team cell read the selected teams' series, the widget a lower bound where one of them has none. Where no selected team has any, the widget says the closures are unknown and which keys no series carries, and the band cell reads the keyless ids by their id. | Test |
 | FR-029-AC-35 | With a stage coverage of 0 and no age above zero the oldest age reads `—`; with a stage coverage below 1 and an age it reads `≥`; with every stage covered it reads exactly. | Test |
 | FR-029-AC-36 | A teams choice or declaration selects the Team view's teams under the focus `own`, `team` and a name; with none chosen each of those selects the session's own team. | Test |
 | FR-029-AC-37 | A tile and a daily row with no value say why: no series published, no current sample, or an age not measured. | Test |

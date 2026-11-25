@@ -12,7 +12,7 @@ import { focusTeams, statusOf, teamOf } from './band/modules'
 import { markStale, track } from './schedule'
 import { getSelection, scopeOf, selectionReady } from './selection'
 import { sourceClear, sourceFailed, sourceOk } from './sources'
-import { boardNotes, composeWork, foldFeed, focusBoards, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf, workCounts } from './work'
+import { TICKET_ID, activeIds, boardNotes, composeWork, foldFeed, focusBoards, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf, workCounts } from './work'
 import type { RecentEntry, WorkTicket } from './work'
 import type { Options } from './shared'
 
@@ -32,8 +32,6 @@ const RECENT_ROWS = 10
 const TICKETS_AGAIN_MS = 5 * 60 * 1000
 /** At most this many tickets are asked for at once. */
 const TICKETS_MAX = 100
-/** What `ix-board issues` takes: a ticket identifier; a lead may report other words. */
-const TICKET_ID = /^[A-Za-z][A-Za-z0-9]*-\d+$/
 
 const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
 const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, WorkLast>, { shape: 'workLast-1' })
@@ -141,7 +139,8 @@ let lastTickets = ''
 async function runIssues($: EngineInterface, ids: string[]): Promise<TicketsAnswer> {
   const ran = await $.process.run(['ix-board', '--json', 'issues', ...ids], { timeoutMs: CALL_TIMEOUT_MS })
   if (ran.exitCode === 2 && ran.stderr.includes("unrecognized subcommand 'issues'")) throw new Error('this ix-board has no `issues` command')
-  if (ran.exitCode !== 0) throw new Error(failureText(ran.stderr, ran.exitCode))
+  // Where Linear has none of the tickets asked for, ix-board answers all the same and exits 3 with nothing to say.
+  if (ran.exitCode !== 0 && !(ran.exitCode === 3 && ran.stderr.trim() === '')) throw new Error(failureText(ran.stderr, ran.exitCode))
   if (ran.isStdoutTruncated) throw new Error('the answer was cut at 4 MiB')
   const answer: unknown = JSON.parse(ran.stdout)
   return { at: await $.clock.now(), asked: ids, issues: issuesOf(answer), unknown: unknownOf(answer) }
@@ -157,7 +156,10 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
       return true
     }
     const named = new Set(boards.flatMap(b => b.issues.map(i => i.identifier)))
-    const wanted = ticketIds(leads).filter(id => TICKET_ID.test(id) && !named.has(id)).sort().slice(0, TICKETS_MAX)
+    const askable = (ids: string[]) => ids.filter(id => TICKET_ID.test(id) && !named.has(id)).sort()
+    // Where there are more than can be asked for, those in hand come first.
+    const inHand = askable(activeIds(leads))
+    const wanted = [...inHand, ...askable(ticketIds(leads)).filter(id => !inHand.includes(id))].slice(0, TICKETS_MAX).sort()
     if (wanted.length === 0) {
       await holdTickets($, () => null)
       sourceClear('ix-board issues')
@@ -173,7 +175,7 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
     const data = got.data
     await holdTickets($, held =>
       data !== null
-        ? { issues: data.issues, activity: null, at: data.at, error, ticketsOnly: true, unknown: data.unknown ?? [] }
+        ? { issues: data.issues, activity: null, at: data.at, error, ticketsOnly: true, unknown: data.unknown ?? [], asked: data.asked }
         : held !== null
           ? { ...held, error }
           : error === null ? null : { issues: [], activity: null, at: null, error, ticketsOnly: true },

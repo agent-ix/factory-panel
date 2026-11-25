@@ -248,6 +248,8 @@ test('the work cell says how many leads report, counts old reports apart and say
   expect(workText({ boards: [{ ...board(), at: NOW - 35 * 60_000 }] })).toBe('2 tickets · 2 PRs open · 2 merged 24h')
   // A focus that never answered leaves merges out, so the number is at least this.
   expect(workText({ boards: [{ ...board(), at: NOW }, { issues: [], activity: null, at: null, error: 'ix-board timed out' }] })).toBe('2 tickets · 2 PRs open · ≥2 merged 24h')
+  // A refresh a source error cut short keeps what was answered, so its merges are a lower bound however new.
+  expect(workText({ boards: [{ ...board(), at: NOW, error: 'a project timed out' }] })).toBe('2 tickets · 2 PRs open · ≥2 merged 24h')
   // The read of single tickets gives states and PRs, and nothing of merges.
   const single = { issues: board().issues, activity: null, at: NOW, ticketsOnly: true as const }
   expect(workText({ boards: [single] })).toBe('2 tickets · 2 PRs open · — merged 24h (no focus status read)')

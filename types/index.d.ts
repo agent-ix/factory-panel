@@ -282,7 +282,7 @@ export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; i
  * answer held for the views, `at` is when it was read, null where none ever was, and `error` why the latest read
  * failed. `ticketsOnly` marks the read of single tickets, which says nothing of what was merged.
  */
-export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[] }
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[] }
 
 /** The gated `ix-board issues` answer: the tickets asked for, those answered, and when. */
 export type TicketsAnswer = { at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }

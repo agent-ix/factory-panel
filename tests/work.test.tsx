@@ -735,6 +735,57 @@ test('a ticket Linear has no record of, or that ix-board could not be asked for,
   await ui.unmount()
 })
 
+test('where Linear has none of the asked tickets, ix-board exits 3 with its answer and each reads not in Linear', async ($, on) => {
+  trace("FR-028-AC-28")
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [agent('a', 'QSL-404', 'coder', 'running', 1)] })
+  ix(w, { issues: ids => out(JSON.stringify({ complete: false, missing: ids, issues: [] }), 3, '') })
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 not in Linear +coder running/)
+  // The read did not fail: the warnings say nothing of an exit.
+  await ui.press({ key: 'warnings-toggle' })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('\n')).not.toMatch(/ix-board exited|ix-board issues/)
+  await ui.unmount()
+})
+
+test('exit 3 of ix-board issues with a message is a failure', async ($, on) => {
+  trace("FR-028-AC-28")
+  const w = world(on, true)
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [agent('a', 'QSL-404', 'coder', 'running', 1)] })
+  ix(w, { issues: () => out('', 3, 'ix-board refused the request') })
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 state not read +coder running/)
+  await ui.unmount()
+})
+
+test('of more than 100 tickets no focus names, those in hand are asked for first and one left out reads state not read', async ($, on) => {
+  trace("FR-028-AC-30")
+  const w = world(on, true)
+  // 100 finished tickets whose ids sort before the one in hand.
+  const done = Array.from({ length: 100 }, (_, i) => agent(`d${i}`, `AAA-${100 + i}`, 'coder', 'done', 1))
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [...done, agent('a', 'QSL-1', 'coder', 'running', 1)] })
+  const board = ix(w, { issues: ids => out(JSON.stringify({ complete: true, missing: [], issues: ids.map(id => single(id, 'Specced', [])) })) })
+  await startSession($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  const asked = board.calls.find(c => c.startsWith('issues'))!.split(' ').slice(1)
+  expect(asked).toHaveLength(100)
+  expect(asked).toContain('QSL-1')
+  expect(asked).not.toContain('AAA-199')
+  await ui.press({ key: `finished-${LEAD}` })
+  const rows = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(rows.find(l => l.trim().startsWith('QSL-1 '))).toContain('QSL-1 Specced')
+  expect(rows.find(l => l.trim().startsWith('AAA-199 '))).toContain('AAA-199 state not read')
+  expect(rows.find(l => l.trim().startsWith('AAA-198 '))).toContain('AAA-198 Specced')
+  await ui.unmount()
+})
+
 test('where no focus names tracker work, Recent says there is no focus status to read merges from', async ($, on) => {
   trace("FR-028-AC-29")
   const w = world(on, true)

@@ -43,7 +43,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - The last action SHALL be the latest transition of an agent on that ticket in `agent-msg work events`. The stream starts at its oldest event, so the mod SHALL read it in pages of 1000 after a cursor it keeps between reads, at most 5 pages per read, so that a later read asks only for newer events; where more than 5 pages are behind it SHALL warn and carry on at the next read; where the events cannot be read it SHALL be the latest report of an agent on the ticket.
 - The badges SHALL be `[pr]` for a ticket with an open or draft PR, `[review×N]` for N agents in a reviewer role on the ticket (`[review]` when N is 1), `[spec]` for a spec role or the state Specify or Specced, and `[gate]` for a gate role.
 - A ticket that is in progress in the focus status but that no lead reports SHALL NOT be listed under a lead.
-- A ticket with no state drawn SHALL say why where ix-board has answered or failed: `not in Linear` where the tickets read names it as unknown, and `state not read` where that read never succeeded.
+- A ticket with no state drawn SHALL say why where ix-board has answered or failed: `not in Linear` where the tickets read names it as unknown, which it may say by exiting 3 with its answer and no message, and `state not read` where that read never succeeded or did not ask for it.
 - A lead SHALL collapse to one row that says how many tickets it has in hand, and expand again, by the arrow beside it.
 
 ### Recent
@@ -68,7 +68,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 ### Data and drawing
 
 - The states and PRs of the tickets and the activity SHALL come from the gated `ix-board --json focus status` answers the Focus view reads, and the Work view SHALL read an answer wrapped in a `result` key as the object inside.
-- The reported tickets that no focus status names SHALL be read with one `ix-board --json issues <ids>`, once the leads and the focus statuses have been read, of at most 100 identifiers of the form `KEY-123`, within the limit of ix-board processes of [NFR-004](../non-functional/NFR-004-selection-never-blocks.md). `focus status --issue` is not used for it: it gives states and PRs of started and lately closed tickets only, and fails as a whole for one unknown identifier.
+- The reported tickets that no focus status names SHALL be read with one `ix-board --json issues <ids>`, once the leads and the focus statuses have been read, of at most 100 identifiers of the form `KEY-123`, those of tickets in hand first, within the limit of ix-board processes of [NFR-004](../non-functional/NFR-004-selection-never-blocks.md). `focus status --issue` is not used for it: it gives states and PRs of started and lately closed tickets only, and fails as a whole for one unknown identifier.
 - That answer SHALL be shared by the sessions through the gate file of [FR-025](./FR-025-per-project-last-good.md), by the teams read. It SHALL be read again after 30 minutes, or after 5 minutes where a reported ticket was not asked for.
 - Where the attachments of a ticket are cut short, nothing SHALL be said of its PRs.
 - The Work view SHALL make no other Linear or ix-board call.
@@ -112,8 +112,9 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-25 | The tickets answer is read again after 5 minutes where a ticket was not asked for, else after 30 minutes. | Test |
 | FR-028-AC-26 | A failed ix-board read is a warning on the footer, and an answer more than 35 minutes old says its age in Recent, with no claim that nothing merged lately. | Test |
 | FR-028-AC-27 | A lead whose report is more than 2 hours old has the hollow mark and reads `old <age>`, and the widget counts its tickets apart. | Test |
-| FR-028-AC-28 | A ticket Linear has no record of reads `not in Linear`, and one whose read failed `state not read`. | Test |
+| FR-028-AC-28 | A ticket Linear has no record of reads `not in Linear`, also where ix-board exits 3 with its answer and no message, and one whose read failed `state not read`. | Test |
 | FR-028-AC-29 | With no focus naming tracker work, Recent says there is no focus status to read merges from, and neither that it is waiting nor that nothing merged. | Test |
+| FR-028-AC-30 | Of more than 100 tickets no focus names, those in hand are asked for first, and one left out reads `state not read`. | Test |
 
 ## Dependencies
 

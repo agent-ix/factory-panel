@@ -153,6 +153,9 @@ export function mergeBoards(boards: readonly WorkBoard[]): WorkBoard {
   return { issues: [...issues.values()], activity, ...(cuts.length === 0 ? {} : { cutAt: Math.max(...cuts) }) }
 }
 
+/** What `ix-board issues` takes: a ticket identifier; a lead may report other words. */
+export const TICKET_ID = /^[A-Za-z][A-Za-z0-9]*-\d+$/
+
 /** The identifiers an `ix-board --json issues` answer says Linear has no record of. */
 export function unknownOf(answer: unknown): string[] {
   const top = obj(answer)
@@ -190,14 +193,15 @@ const isAnswer = (b: WorkBoard): boolean => b.ticketsOnly !== true && b.at !== n
 
 /**
  * What ix-board's held answers lack: `oldAt` is when the oldest old focus status was read, `isShort` true where a
- * focus never answered or its merges are of an old answer, and `errors` why the latest reads failed.
+ * focus never answered, its latest refresh failed in whole or part or its merges are of an old answer, and `errors`
+ * why the latest reads failed.
  */
 export function boardNotes(boards: readonly WorkBoard[], now: number): { oldAt: number | null; isShort: boolean; errors: string[] } {
   const old = boards.filter(b => isOldAt(b.at, now)).map(b => b.at!)
   const focuses = boards.filter(b => b.ticketsOnly !== true)
   return {
     oldAt: old.length === 0 ? null : Math.min(...old),
-    isShort: focuses.some(b => b.at === null || b.activity === null || isOldAt(b.at, now)),
+    isShort: focuses.some(b => b.at === null || b.activity === null || Boolean(b.error) || isOldAt(b.at, now)),
     errors: [...new Set(boards.flatMap(b => (b.error ? [b.error] : [])))],
   }
 }
@@ -253,10 +257,13 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, Wor
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
   const unknown = new Set(boards.flatMap(b => b.unknown ?? []))
   const isUnread = boards.some(b => b.ticketsOnly === true && b.at === null)
+  // The tickets the read of single tickets asked for: one left out of it was not read.
+  const asked = boards.find(b => b.ticketsOnly === true)?.asked
   /** The state drawn for a ticket: Linear's, or why there is none where ix-board has answered that. */
   const stateOf = (id: string, issue: WorkIssue | undefined): string | null => {
     if (issue !== undefined) return issue.state === '' ? null : issue.state
-    return unknown.has(id) ? 'not in Linear' : isUnread ? 'state not read' : null
+    if (unknown.has(id)) return 'not in Linear'
+    return isUnread || (asked !== undefined && TICKET_ID.test(id) && !asked.includes(id)) ? 'state not read' : null
   }
   const views = leads.map((lead): WorkLeadView => {
     const tickets = ticketsOf(lead).map((id): WorkTicket => {

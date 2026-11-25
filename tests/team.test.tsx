@@ -368,7 +368,8 @@ const closures = (n: number, id: string, key?: string) => series('verified_path_
 const WIDGET: [string, Series[], string[], string][] = [
   ['the selected team only', [closures(4, 'fsl', 'QSL'), closures(9, 'swm', 'SWM'), closures(7, 'blank')], ['QSL'], '4 closures / 24h'],
   ['a lower bound where a selected team has no series', [closures(4, 'fsl', 'QSL')], ['QSL', 'ENG'], '≥4 closures / 24h'],
-  ['the keyless ids where no selected team has series', [closures(7, 'fsl'), closures(2, 'swarm-tools'), closures(9, 'swm', 'SWM')], ['QSL'], '9 closures / 24h'],
+  ['no number where no series carries a selected key', [closures(7, 'fsl'), closures(2, 'swarm-tools'), closures(9, 'swm', 'SWM')], ['QSL'], 'closures / 24h unknown · no series carries the key QSL'],
+  ['no number where no series carries any of the selected keys', [closures(9, 'swm', 'SWM')], ['QSL', 'ENG'], 'closures / 24h unknown · no series carries the key QSL, ENG'],
 ]
 for (const [name, published, teams, text] of WIDGET)
   test(`the widget reads ${name} of the selection`, async ($, on) => {
@@ -652,7 +653,8 @@ for (const [name, published, text] of [
 ] as [string, Series[], string][]) {
   test(`the widget reads ${name}`, async ($, on) => {
     trace("FR-029-AC-24")
-    const w = await setup($, on, { published })
+    // A session that cannot say who it is selects no team, so the widget reads every one.
+    const w = await setup($, on, { published, arrange: w => { w.whoami.value = undefined } })
     const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'terminal' } as never)
     await w.clock!.advance(1000)
     expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain(text)

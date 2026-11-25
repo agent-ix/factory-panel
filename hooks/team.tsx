@@ -377,9 +377,14 @@ export function registerTeam(on: On, options: Options): void {
       const isBound = known.length < closures.length || known.some(m => m.atLeast) || (shown.length > 0 && missing.length > 0)
       const total = known.length === 0 ? '—' : `${isBound ? '≥' : ''}${Math.round(known.reduce((a, m) => a + m.value, 0))}`
       const why = known.length > 0 ? '' : ` · ${closures.find(m => m !== undefined && m.reason !== null)?.reason ?? NO_SERIES}`
+      // Series that carry no selected key are not known to be the selected teams': no number is read from them.
+      const isUnmatched = list.length > 0 && selected.length > 0 && shown.length === 0
+      const line = isUnmatched
+        ? `closures / 24h unknown · no series carries the key ${selected.join(', ')}`
+        : headline.length > 0 ? `${total} closures / 24h${why}` : 'no team metrics'
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{headline.length > 0 ? `${total} closures / 24h${why}` : 'no team metrics'}</Text>
+          <Text weight="semibold">{line}</Text>
         </Box>
       )
     }
