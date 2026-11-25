@@ -1,14 +1,13 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On, RenderElement, RenderInput } from 'claude-code'
 
-import type { BoardView, Escalation, Freshness, FocusView, Machine, RelayView, TeamView } from '../../types'
-import { roleOf } from '../role'
+import type { BoardView, Escalation, Freshness, FocusMeta, FocusView, Machine, RelayView, TeamView } from '../../types'
+import { getBandNote, getSelection, modulesToDraw, scopeOf } from '../selection'
 import { errorText } from '../shared'
 import type { Options } from '../shared'
 import { showView, isViewId } from '../views'
-import { buildCells, digitFor } from './modules'
+import { buildCells, digitFor, scopeNotes } from './modules'
 import type { Cell, Part, Snapshot, Tone } from './modules'
-import { modulesFor } from './roles'
 
 // The band: one row above the prompt for sessions that are not in the fullscreen layout, where a
 // pane can only sit over the chat. Each module is a Button with a digit hotkey, so a bare digit at
@@ -21,7 +20,8 @@ const machines = atom({ plugin: 'factory-panel', key: 'machines' } as const, [] 
 const relay = atom({ plugin: 'factory-panel', key: 'relay' } as const, { ok: true, redis: '', watchers: [], warnings: 0, deadLetters: 0, inboxWaiting: 0, checks: [] } as RelayView, { shape: 'relay-1' })
 const board = atom({ plugin: 'factory-panel', key: 'board' } as const, { teams: [], agents: [], error: null } as BoardView, { shape: 'board-1' })
 const freshness = atom({ plugin: 'factory-panel', key: 'freshness' } as const, { prometheusAt: null, prometheusError: null, nodeMetricsSeen: false, herdrAt: null, herdrError: null, relayAt: null, relayError: null, boardAt: null, boardBusy: false } as Freshness, { shape: 'freshness-1' })
-const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], { shape: 'focuses-2' })
+const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], { shape: 'focuses-3' })
+const focusMeta = atom({ plugin: 'factory-panel', key: 'focusMeta' } as const, { at: null, busy: false, error: null } as FocusMeta, { shape: 'focusMeta-1' })
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], { shape: 'escalations-1' })
 const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden' } as const, [] as string[])
 const teamViews = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-1' })
@@ -42,10 +42,10 @@ export async function startBand($: EngineInterface): Promise<void> {
 
 type ModuleState = { off: boolean; ids: readonly string[] }
 
-/** The `bandModules` setting when set, else the role's preset. */
+/** The modules the selection lists, with the host list first where the hosts scope is `all`. */
 export const bandPlan = (options: Options): ModuleState => ({
   off: options.inlineView === 'off',
-  ids: modulesFor(roleOf(options), options.bandModules),
+  ids: modulesToDraw(getSelection()),
 })
 
 // A state key the panes have not written yet reads as an empty value of the wrong kind, so each
@@ -54,7 +54,7 @@ const list = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[])
 const EMPTY_RELAY = { ok: true, redis: '', watchers: [], warnings: 0, deadLetters: 0, inboxWaiting: 0, checks: [] }
 
 async function snapshot($: EngineInterface, options: Options): Promise<Snapshot> {
-  const [fresh, rel, brd, mach, foc, esc, hid, tms] = await Promise.all([
+  const [fresh, rel, brd, mach, foc, esc, hid, tms, fmeta] = await Promise.all([
     read($, freshness) as Promise<Partial<Freshness>>,
     read($, relay) as Promise<Partial<Snapshot['relay']>>,
     read($, board) as Promise<Partial<Snapshot['board']>>,
@@ -63,6 +63,7 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     read($, escalations),
     read($, escalationHidden),
     read($, teamViews),
+    read($, focusMeta) as Promise<Partial<FocusMeta>>,
   ])
   return {
     machines: list(mach),
@@ -72,9 +73,9 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     escalations: list(esc),
     hiddenEscalations: list(hid),
     localMachine,
-    teams: options.teams,
+    scope: scopeOf(getSelection()),
     teamViews: list(tms),
-    focusName: options.bandFocus,
+    focusesLoaded: fmeta?.at !== undefined && fmeta.at !== null,
     prometheusError: fresh?.prometheusError ?? null,
     relayAt: fresh?.relayAt ?? null,
     relayError: fresh?.relayError ?? null,
@@ -82,10 +83,13 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
   }
 }
 
-async function cellsFor($: EngineInterface, options: Options): Promise<Cell[]> {
+async function cellsFor($: EngineInterface, options: Options): Promise<{ cells: Cell[]; notes: string[] }> {
   const plan = bandPlan(options)
-  if (plan.off) return []
-  return buildCells(plan.ids as Parameters<typeof buildCells>[0], await snapshot($, options))
+  if (plan.off) return { cells: [], notes: [] }
+  const snap = await snapshot($, options)
+  // The one-time note about an ignored file or value, then what the scope has to say.
+  const note = getBandNote()
+  return { cells: buildCells(plan.ids, snap), notes: [...(note === undefined ? [] : [note]), ...scopeNotes(snap)] }
 }
 
 /** The same cells as one line of plain text, for the status line. */
@@ -94,15 +98,15 @@ export const cellText = (cells: readonly Cell[]): string =>
 
 /** Draws the band for a classic-layout session; null when it has nothing to show. */
 export async function renderBand($: EngineInterface, e: RenderInput, options: Options): Promise<RenderElement | null> {
-  const cells = await cellsFor($, options)
-  if (cells.length === 0) return null
+  const { cells, notes } = await cellsFor($, options)
+  if (cells.length === 0 && notes.length === 0) return null
   const { Box, Text, Button } = $.ui.resolve(e)
   const part = (p: Part, i: number) => (
     <Text key={String(i)} color={p.tone as Tone | undefined} dimColor={p.dim} weight={p.bold ? 'semibold' : undefined}>
       {p.text}
     </Text>
   )
-  const alerts = cells.flatMap(c => (c.alert === undefined ? [] : [c.alert]))
+  const alerts = [...cells.flatMap(c => (c.alert === undefined ? [] : [c.alert])), ...notes]
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" gap={2}>
@@ -131,7 +135,7 @@ export async function renderBand($: EngineInterface, e: RenderInput, options: Op
 /** Keeps the status line in step with the band while the person has chosen `inlineView: status`. */
 export async function syncStatus($: EngineInterface, options: Options, isFullscreen: boolean | undefined): Promise<void> {
   if (options.inlineView !== 'status' || isFullscreen !== false) return
-  const text = cellText(await cellsFor($, options))
+  const text = cellText((await cellsFor($, options)).cells)
   // Write only a change: the status line is shared with the waiting notice and the layout hint.
   if (text === lastStatus) return
   lastStatus = text

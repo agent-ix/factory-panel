@@ -27,23 +27,40 @@ export type Gated<T> = {
   error: string | null
 }
 
+/** The cache file, and the one an older version wrote, read once when the new one does not exist. */
+const GATE_FILE = 'linear-gate.json'
 let gatePath: string | null = null
+let oldPath: string | null = null
+let oldCache: GateFile | undefined
 /** Reads under way in this process, by key: a second asker shares the first's. */
 const inFlight = new Map<string, Promise<Gated<unknown>>>()
 
 async function pathOf($: EngineInterface): Promise<string> {
   if (gatePath) return gatePath
   const ran = await $.process.run(['printenv', 'HOME'], { timeoutMs: 5_000 })
-  gatePath = `${ran.stdout.trim()}/.cache/factory-panel/linear-gate.json`
+  const home = ran.stdout.trim()
+  oldPath = `${home}/.cache/factory-panel/${GATE_FILE}`
+  gatePath = `${home}/.ix/factory-panel/${GATE_FILE}`
   return gatePath
 }
 
 async function load($: EngineInterface): Promise<GateFile> {
-  try {
-    const parsed = JSON.parse(await $.fs.read(await pathOf($))) as Partial<GateFile>
+  const parse = (text: string): GateFile => {
+    const parsed = JSON.parse(text) as Partial<GateFile>
     return { backoffUntil: parsed.backoffUntil ?? null, entries: parsed.entries ?? {} }
+  }
+  try {
+    return parse(await $.fs.read(await pathOf($)))
   } catch {
-    return { backoffUntil: null, entries: {} }
+    // With no new file the old cache is the initial one: read once, kept, and never written.
+    if (oldCache === undefined) {
+      try {
+        oldCache = parse(await $.fs.read(oldPath ?? ''))
+      } catch {
+        oldCache = { backoffUntil: null, entries: {} }
+      }
+    }
+    return structuredClone(oldCache)
   }
 }
 

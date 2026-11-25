@@ -20,24 +20,38 @@ The views behind the cells are:
 
 ## How to use it
 
-- Open more: type `/factory`. It opens the view your role looks at first: Focus for a code lead or planner, Factory for a coordinator or worker. `/factory focus`, `/factory escalations`, `/factory relay`, `/factory team` and `/factory factory` open one view directly.
+- Open more: type `/factory`. It opens Focus when the focus cell is shown and Factory otherwise. `/factory focus`, `/factory escalations`, `/factory relay`, `/factory team` and `/factory factory` open one view directly.
 - Switch: with a view open in the classic layout, type a cell's number at an empty prompt. A number typed while the prompt holds text goes into the prompt. In the fullscreen layout, click a tab or type `/factory` and the view name.
 - Refresh and close: `r` refreshes the open view and Esc closes it and gives the keyboard back to the prompt.
 - Help: `/factory help` answers these questions in the words of your layout.
 - Older commands `/focuses`, `/escalations`, `/relay` and `/team` still work as aliases for one release.
 
-## Roles
+## Choosing what to show
 
-The plugin shows what your role needs. The first time you type `/factory` in a project it asks what you do in that session, remembers the answer for the directory and does not ask again. `/factory role` asks again. Starting a session never asks.
+The mod asks no question. It reads who the session is from the relay (`agent-msg whoami`, an address like `host:TEAM:segment`) and shows this machine, your own focus and your own team's lanes: the cells local, focus, lead and lanes. If the relay does not answer within five seconds the band is drawn anyway, shows everything, and says it could not tell who this session is.
 
-| Role | Band cells |
+What is shown is decided one feature at a time, from the first of these that selects it:
+
+1. Your choice, made with `/factory`.
+2. A declaration an agent wrote for this session, usually because a skill told it to.
+3. The automatic view from the relay.
+
+The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus scope (`own`, `team` or a focus name) and the teams list.
+
+| Command | Effect |
 | --- | --- |
-| coordinator | health, focus, attention, relay, team |
-| code-lead | local, focus, lead, lanes |
-| planner | focus, queue, lead |
-| worker | local |
+| `/factory use queue,lanes` | Show these cells, in this order |
+| `/factory focus team` | Show the leads of your teams, grouped by team. `own` shows your own focus. Any other text, such as `/factory focus Release Train`, shows the focus whose summary equals it ignoring case, else those that contain it, and says how many matched |
+| `/factory teams QSL,ENG` | The teams whose leads and lanes show. A team that matches nothing is kept and the band says so |
+| `/factory hosts all` | `all` shows every machine (and puts the host list first), `local` only this one |
+| `/factory show` | Prints each feature, its value and whether it came from you, a declaration or the default, with the session key |
+| `/factory reset` | Clears your choices |
 
-The role comes from, in order: the `role` setting, the stored answer, the relay address of the session, then the question. An answer given with `/factory role` therefore replaces what the relay address says. A session with no role known is treated as a code lead until it is answered.
+Your choices are kept in `~/.ix/factory-panel/choices/<key>.json`. The key is the relay address with `:` and any character outside letters, digits, `_`, `.` and `-` replaced by `_` (`host1:QSL:code` is `host1_QSL_code`), or `default` when the session has no placement. Without a file for the key the mod reads `default.json` in the same folder.
+
+A skill selects cells for its agent by telling it to write `~/.ix/factory-panel/features/<key>.json` for its own key. The file is a JSON object with the optional keys `modules`, `hosts`, `focus` and `teams`. Writing it replaces everything an earlier write selected, and the mod re-reads it on every refresh. `/factory help` prints a snippet to paste into a skill. A file that is not a JSON object, or a value of the wrong kind, is ignored with one note naming the file and the reason. The mod never writes a declaration.
+
+All of the mod's own files are under `~/.ix/factory-panel/`: the choices, the declarations it reads and the Linear rate-limit cache.
 
 ## Advanced settings
 
@@ -45,16 +59,13 @@ All settings are optional and appear in the config menu.
 
 | Setting | What it does |
 | --- | --- |
-| `role` | Fixes the role: coordinator, code-lead, planner, worker, or auto |
-| `bandModules` | Comma list that replaces the role's cells, in the order written |
-| `bandFocus` | The focus the band bar follows: an address or part of its summary |
 | `inlineView` | What a classic session shows: band, status or off |
 | `prometheusUrl` | Prometheus to query. Empty uses the shared ix config, then this host's relay endpoint, then the factory's |
 | `grafanaUrl` | Grafana for dashboard links. Empty follows Prometheus's name |
-| `teams` | Comma-separated herdr workspace labels ix-board should report on |
-| `refreshSeconds` | How often Prometheus and herdr are polled |
+| `teams` | Comma-separated herdr workspace labels ix-board may be asked about when no choice or declaration names teams |
+| `refreshSeconds` | How often Prometheus and herdr are polled, and the declaration and choice files are re-read |
 
-ix-board reads share a rate-limit gate across sessions on a machine. It keeps each read's result and any Linear retry time in `~/.cache/factory-panel/linear-gate.json`, runs each read at most once every 15 minutes (60 seconds for a manual refresh) and calls ix-board again only after a Linear rate limit has passed.
+ix-board reads share a rate-limit gate across sessions on a machine. It keeps each read's result and any Linear retry time in `~/.ix/factory-panel/linear-gate.json`, runs each read at most once every 15 minutes (60 seconds for a manual refresh) and calls ix-board again only after a Linear rate limit has passed. A cache an earlier version left in `~/.cache/factory-panel/` is read once as the starting point and never written.
 
 ## Install
 

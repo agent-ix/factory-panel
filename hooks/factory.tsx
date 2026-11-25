@@ -15,6 +15,7 @@ import { CARD_BG, INK, ago, errorText, pausedText, promQuery, shortError } from 
 import { ACCENT, tempColor, usd } from './ui/glyphs'
 import { widgets } from './ui/widgets'
 import { gatedBoard } from './linear'
+import { getSelection, selectionReady } from './selection'
 import type { Options, Sample } from './shared'
 
 type Detail = 'none' | 'herdr' | 'relay' | 'board'
@@ -265,27 +266,35 @@ type BoardOutput = {
 
 type BoardRead = { agents: BoardAgent[]; notes: string[] }
 
-async function pollBoard($: EngineInterface, options: Options): Promise<void> {
-  if (options.teams.length === 0) return
+/** The teams ix-board is asked about: those the selection names, else the `teams` setting. */
+const boardTeams = (options: Options): string[] => {
+  const picked = getSelection().teams.value
+  return picked.length > 0 ? picked : options.teams
+}
+
+export async function pollBoard($: EngineInterface, options: Options): Promise<void> {
+  await selectionReady()
+  const teams = boardTeams(options)
+  if (teams.length === 0) return
   await update($, freshness, f => ({ ...f, boardBusy: true }))
   try {
-    const read = await gatedBoard($, `agents:${options.teams.join(',')}`, () => readBoard($, options))
+    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams))
     const now = await $.clock.now()
     const notes = read.data?.notes ?? []
     const error =
       read.backoffUntil !== null
         ? pausedText(read.backoffUntil, now)
         : (read.error ?? (notes.length > 0 ? notes.join(' · ').slice(0, 200) : null))
-    await update($, board, b => ({ teams: options.teams, agents: read.data?.agents ?? b.agents, error }))
+    await update($, board, b => ({ teams, agents: read.data?.agents ?? b.agents, error }))
     await update($, freshness, f => ({ ...f, boardAt: read.at }))
   } finally {
     await update($, freshness, f => ({ ...f, boardBusy: false }))
   }
 }
 
-async function readBoard($: EngineInterface, options: Options): Promise<BoardRead> {
+async function readBoard($: EngineInterface, teams: string[]): Promise<BoardRead> {
   {
-    const ran = await $.process.run(['ix-board', '--json', 'agents', ...options.teams], {
+    const ran = await $.process.run(['ix-board', '--json', 'agents', ...teams], {
       timeoutMs: 180_000,
     })
     if (ran.isStdoutTruncated) throw new Error('ix-board output was cut at 4 MiB')
@@ -392,8 +401,8 @@ async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {
 export async function startFactory($: EngineInterface, options: Options): Promise<void> {
   await $.command.register({
     name: 'factory',
-    description: 'Open more detail for your role. /factory help says how',
-    argumentHint: 'help | focus | escalations | relay | team | role',
+    description: 'Open more detail, and choose what the band shows. /factory help says how',
+    argumentHint: 'help | focus | escalations | relay | team | use | teams | hosts | show | reset',
   })
 
   void refreshAll($, options)

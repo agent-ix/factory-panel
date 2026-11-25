@@ -2,7 +2,6 @@ import { expect, test } from 'claude-code/testing'
 
 import { MODULE_IDS, buildCells, machineTone } from '../hooks/band/modules'
 import type { Snapshot } from '../hooks/band/modules'
-import { PRESETS, modulesFor, parseModules, roleFromAddress } from '../hooks/band/roles'
 import type { Machine, TeamView } from '../types'
 import { trace } from './trace'
 
@@ -31,6 +30,7 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
       kind: 'claude',
       model: null,
       summary: 'QSL layer 4',
+      status: 'working',
       scope: { initiatives: 0, projects: 2, tickets: 0 },
       focusReportedAt: null,
       fetchedAt: null,
@@ -45,9 +45,9 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   escalations: [],
   hiddenEscalations: [],
   localMachine: 'draco',
-  teams: ['QSL'],
+  scope: { hosts: 'all', focus: 'own', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' },
   teamViews: [],
-  focusName: '',
+  focusesLoaded: true,
   prometheusError: null,
   relayAt: 1,
   relayError: null,
@@ -89,9 +89,9 @@ test('local shows this machine only', () => {
 test('focus draws one bar for the whole focus, and +N when there are more', () => {
   expect(text(buildCells(['focus'], snapshot()), 'focus')).toBe('QSL layer 4 ████░░░░ 50%'.replace('████░░░░', '████░░░░'))
   const two = snapshot()
-  const more = snapshot({ focuses: [...two.focuses, { ...two.focuses[0]!, address: 'hub:ENG:arch', summary: 'Payments' }] })
+  const more = snapshot({ focuses: [...two.focuses, { ...two.focuses[0]!, address: 'hub:ENG:arch', summary: 'Payments' }], scope: { hosts: 'all', focus: 'team', teams: ['QSL', 'ENG'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' } })
   expect(text(buildCells(['focus'], more), 'focus')).toMatch(/ \+1$/)
-  expect(text(buildCells(['focus'], snapshot({ focusName: 'hub:QSL:code' })), 'focus')).toMatch(/50%/)
+  expect(text(buildCells(['focus'], snapshot({ scope: { hosts: 'all', focus: 'layer 4', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, identity: 'detected' } })), 'focus')).toMatch(/50%/)
 })
 
 test('modules with nothing to say drop out of the band', () => {
@@ -116,23 +116,6 @@ test('lead and lanes come from the board', () => {
 test('each press target is the pane that holds the full view', () => {
   const cells = buildCells(['health', 'focus', 'attention'], snapshot({ escalations: [{ id: 'a', status: 'waiting', ticket: '', lead: '', filed: '', machine: '', kind: '', context: '', options: [], recommendation: '', decision: '', hasDetail: false }] }))
   expect(cells.map(c => c.pane)).toEqual(['factory', 'focus', 'escalations'])
-})
-
-test('a role names its modules; a list replaces them; hosts belong to the coordinator', () => {
-  expect(PRESETS.coordinator).toContain('health')
-  expect(PRESETS['code-lead']).not.toContain('health')
-  expect(PRESETS['code-lead']).toContain('local')
-  expect(modulesFor('planner', '')).toEqual(PRESETS.planner)
-  expect(modulesFor('planner', 'local, nope, focus')).toEqual(['local', 'focus'])
-  expect(modulesFor(undefined, '')).toEqual(PRESETS['code-lead'])
-  expect(parseModules('Health,  RELAY')).toEqual(['health', 'relay'])
-})
-
-test('the role is read from a relay address when it names one', () => {
-  expect(roleFromAddress('draco:QSL:code')).toBe('code-lead')
-  expect(roleFromAddress('hub:ENG:plan')).toBe('planner')
-  expect(roleFromAddress('hub:ENG:arch')).toBe('coordinator')
-  expect(roleFromAddress('agent-msg: this session has no verified Herdr placement')).toBeUndefined()
 })
 
 test('local does not draw old numbers as current, and relay is quiet until it has been asked', () => {

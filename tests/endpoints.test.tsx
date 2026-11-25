@@ -9,9 +9,6 @@ const base = (over: Partial<Options> = {}): Options => ({
   grafanaUrl: '',
   teams: [],
   refreshSeconds: 15,
-  role: 'auto',
-  bandModules: '',
-  bandFocus: '',
   inlineView: 'band',
   ...over,
 })

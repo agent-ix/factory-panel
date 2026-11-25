@@ -16,6 +16,19 @@ export type Part = { text: string; tone?: Tone; dim?: boolean; bold?: boolean }
 /** One module's cell: its text parts, the pane whose full view a press opens, and a detail line when it is not well. */
 export type Cell = { id: ModuleId; pane: string; parts: Part[]; alert?: string }
 
+/** What the selection narrows the band to; see FR-013. `teams` empty means every team. */
+export type Scope = {
+  hosts: 'all' | 'local'
+  /** `own`, `team` or a focus name. */
+  focus: string
+  teams: readonly string[]
+  /** The session's own team; null when the relay did not say. */
+  ownTeam: string | null
+  /** True when the user or a declaration named the teams, so one that matches nothing is worth saying. */
+  teamsSelected: boolean
+  identity: 'pending' | 'detected' | 'unknown'
+}
+
 export type Snapshot = {
   machines: readonly Machine[]
   relay: RelayView
@@ -25,11 +38,11 @@ export type Snapshot = {
   hiddenEscalations: readonly string[]
   /** Short name of the machine this session runs on, lower-case; '' when unknown. */
   localMachine: string
-  teams: readonly string[]
+  scope: Scope
   /** The Team view's tiles per team. */
   teamViews: readonly TeamView[]
-  /** Which focus the bar follows: an address or part of a summary; '' for the first. */
-  focusName: string
+  /** True once the focus reports have been read, so a team that matches nothing can be said so. */
+  focusesLoaded: boolean
   prometheusError: string | null
   /** When the relay check last answered (null: never) and what it last said when it failed. */
   relayAt: number | null
@@ -51,10 +64,58 @@ const pct = (n: number | null): string => (n === null ? '—' : `${Math.round(n)
 
 const fit = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
 
-const pickFocus = (s: Snapshot): FocusView | undefined => {
-  const want = s.focusName.trim().toLowerCase()
-  if (want === '') return s.focuses[0]
-  return s.focuses.find(f => f.address.toLowerCase() === want || f.summary.toLowerCase().includes(want)) ?? s.focuses[0]
+const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
+
+export const teamOf = (address: string): string => address.split(':')[1] ?? ''
+
+/** The teams whose lead entries may be read for this scope; null reads every lead (a focus name searches all). */
+export const focusTeams = (scope: Scope): string[] | null => {
+  const want = scope.focus.trim().toLowerCase()
+  if (scope.identity === 'detected' && scope.ownTeam !== null) {
+    if (want === 'own') return [scope.ownTeam]
+    if (want === 'team') return [scope.ownTeam, ...scope.teams.filter(t => !same(t, scope.ownTeam!))]
+    return null
+  }
+  return scope.teams.length > 0 ? [...scope.teams] : null
+}
+
+/** The focus entries this scope shows, in order, and a note when a name matched none or several. */
+export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: FocusView[]; note: string | null } => {
+  const want = scope.focus.trim()
+  const lower = want.toLowerCase()
+  const teams = focusTeams(scope)
+  const inTeams = (f: FocusView) => teams === null || teams.some(t => same(t, teamOf(f.address)))
+  if (lower === 'own' || lower === 'team') {
+    // Grouped under each team, in the order the teams are listed.
+    const shown = all.filter(inTeams)
+    if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
+    return { shown, note: null }
+  }
+  // A focus name: a session that could not be identified is first held to the teams it was given.
+  const pool = scope.identity === 'detected' ? [...all] : all.filter(inTeams)
+  const exact = pool.filter(f => same(f.summary, want))
+  const shown = exact.length > 0 ? exact : pool.filter(f => f.summary.toLowerCase().includes(lower))
+  const note = shown.length === 0 ? `no focus matches "${want}"` : shown.length > 1 ? `${shown.length} focuses matched "${want}"` : null
+  return { shown, note }
+}
+
+const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope).shown
+const pickFocus = (s: Snapshot): FocusView | undefined => scoped(s)[0]
+
+/** Machines the hosts scope covers: every machine, or this one. */
+const hostsOf = (s: Snapshot): readonly Machine[] =>
+  s.scope.hosts === 'all' ? s.machines : s.machines.filter(m => m.name.toLowerCase() === s.localMachine)
+
+/** What the scope has to say: who the session is, a focus name that matched none or several, a team nothing answers for. */
+export const scopeNotes = (s: Snapshot): string[] => {
+  const notes: string[] = []
+  if (s.scope.identity === 'unknown') notes.push('could not tell who this session is')
+  const { note } = scopeFocuses(s.focuses, s.scope)
+  if (note !== null && s.focusesLoaded) notes.push(note)
+  const known = new Set([...s.focuses.map(f => teamOf(f.address).toLowerCase()), ...s.board.agents.map(a => a.team.toLowerCase())])
+  if (s.focusesLoaded || s.board.agents.length > 0)
+    for (const t of s.scope.teams) if (s.scope.teamsSelected && !known.has(t.toLowerCase())) notes.push(`team ${t} matched nothing`)
+  return notes
 }
 
 const progressOf = (f: FocusView): { done: number; total: number; inProgress: number } =>
@@ -64,10 +125,11 @@ const progressOf = (f: FocusView): { done: number; total: number; inProgress: nu
   )
 
 const health = (s: Snapshot): Cell | null => {
-  if (s.machines.length === 0) return { id: 'health', pane: 'factory', parts: [{ text: 'hosts —', tone: 'inactive' }], alert: s.prometheusError ?? undefined }
+  const machines = hostsOf(s)
+  if (machines.length === 0) return { id: 'health', pane: 'factory', parts: [{ text: 'hosts —', tone: 'inactive' }], alert: s.prometheusError ?? undefined }
   const parts: Part[] = []
   const down: string[] = []
-  for (const m of s.machines) {
+  for (const m of machines) {
     const tone = machineTone(m)
     if (tone === 'error') down.push(m.name)
     parts.push({ text: tone === 'inactive' ? '○' : tone === 'warning' ? '▲' : '●', tone }, { text: ` ${m.name}  ` })
@@ -103,7 +165,8 @@ const focus = (s: Snapshot): Cell | null => {
     { text: cellBar(share, 8), tone: 'claude' },
     { text: share === null ? ' —' : ` ${Math.round(share * 100)}%` },
   ]
-  if (s.focuses.length > 1) parts.push({ text: ` +${s.focuses.length - 1}`, dim: true })
+  const count = scoped(s).length
+  if (count > 1) parts.push({ text: ` +${count - 1}`, dim: true })
   return { id: 'focus', pane: 'focus', parts, alert: f.error ?? undefined }
 }
 
@@ -118,14 +181,15 @@ const lead = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
   if (f === undefined) return null
   const agent = s.board.agents.find(a => a.agent === f.address)
-  const status = agent?.status ?? ''
+  const status = agent?.status ?? f.status
   const tone: Tone = status === 'working' ? 'claude' : status === 'idle' ? 'warning' : 'inactive'
   const mark = status === 'working' ? '◐' : status === 'idle' ? '◌' : '○'
   return { id: 'lead', pane: 'focus', parts: [{ text: 'lead ', dim: true }, { text: `${f.address} ` }, { text: mark, tone }] }
 }
 
 const lanes = (s: Snapshot): Cell | null => {
-  const mine = s.teams.length === 0 ? s.board.agents : s.board.agents.filter(a => s.teams.includes(a.team))
+  const teams = s.scope.teams
+  const mine = teams.length === 0 ? s.board.agents : s.board.agents.filter(a => teams.some(t => same(t, a.team)))
   if (mine.length === 0) return null
   const count = (status: string) => mine.filter(a => a.status === status).length
   return {
@@ -165,13 +229,14 @@ const team = (s: Snapshot): Cell | null => {
 }
 
 const agents = (s: Snapshot): Cell | null => {
-  if (s.machines.length === 0) return null
-  const sum = (pick: (m: Machine) => number) => s.machines.reduce((a, m) => a + pick(m), 0)
+  const machines = hostsOf(s)
+  if (machines.length === 0) return null
+  const sum = (pick: (m: Machine) => number) => machines.reduce((a, m) => a + pick(m), 0)
   return { id: 'agents', pane: 'factory', parts: [{ text: `${sum(m => m.panesWorking)} working`, tone: 'claude' }, { text: ` · ${sum(m => m.panesIdle)} idle`, dim: true }] }
 }
 
 const spend = (s: Snapshot): Cell | null => {
-  const known = s.machines.filter(m => m.spend24hUsd !== null)
+  const known = hostsOf(s).filter(m => m.spend24hUsd !== null)
   if (known.length === 0) return null
   return { id: 'spend', pane: 'factory', parts: [{ text: `${usd(known.reduce((a, m) => a + (m.spend24hUsd ?? 0), 0))} / 24h`, dim: true }] }
 }
@@ -183,8 +248,10 @@ export const MAX_DIGITS = 9
 export const digitFor = (index: number): string | undefined => (index < MAX_DIGITS ? String(index + 1) : undefined)
 
 /** The cells for the listed modules, in order; a module with nothing to say is left out. */
-export const buildCells = (ids: readonly ModuleId[], s: Snapshot): Cell[] =>
-  ids.flatMap(id => {
-    const cell = BUILDERS[id](s)
-    return cell === null ? [] : [cell]
-  })
+export const buildCells = (ids: readonly string[], s: Snapshot): Cell[] =>
+  ids
+    .filter((id, i): id is ModuleId => (MODULE_IDS as readonly string[]).includes(id) && ids.indexOf(id) === i)
+    .flatMap(id => {
+      const cell = BUILDERS[id](s)
+      return cell === null ? [] : [cell]
+    })

@@ -2,7 +2,7 @@
 // Run: node --test tests/e2e/static.check.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -28,9 +28,31 @@ test('no hotkey in the band or in any view is an arrow key', () => {
   for (const h of hooks) assert.doesNotMatch(h.text, /arrow(up|down|left|right)|(up|down|left|right)arrow|['"]arrow['"]/i, h.file)
 })
 
-test('the README has the six sections in order', () => {
+test('the README has its sections in order', () => {
+  trace("FR-008-AC-3")
   const headings = [...readme.matchAll(/^## (.+)$/gm)].map(m => m[1])
-  assert.deepEqual(headings, ['What you see', 'How to use it', 'Roles', 'Advanced settings', 'Install', 'Developing'])
+  assert.deepEqual(headings, ['What you see', 'How to use it', 'Choosing what to show', 'Advanced settings', 'Install', 'Developing'])
+})
+
+test('no role presets or role files remain in hooks', () => {
+  trace("FR-002-AC-4", "FR-010-AC-4")
+  assert.deepEqual(hooks.filter(h => /PRESETS/.test(h.text)).map(h => h.file), [])
+  assert.ok(!existsSync(join(ROOT, 'hooks', 'role.ts')))
+  assert.ok(!existsSync(join(ROOT, 'hooks', 'band', 'roles.ts')))
+  // `/factory role` is not a command: the router does not name it.
+  const router = readFileSync(join(ROOT, 'hooks', 'router.ts'), 'utf8')
+  assert.doesNotMatch(router, /'role'|"role"/)
+})
+
+test('every path the mod keeps for its own state is under ~/.ix/factory-panel except the old cache read', () => {
+  trace("FR-015-AC-4")
+  const matches = hooks.flatMap(h => [...h.text.matchAll(/^.*(\.cache|\.config).*$/gm)].map(m => ({ file: h.file, line: m[0].trim() })))
+  assert.equal(matches.length, 1, JSON.stringify(matches))
+  assert.match(matches[0]!.line, /oldPath = .*\.cache\/factory-panel\//)
+  assert.match(matches[0]!.file, /linear\.ts$/)
+  // The relay config is the one file of another tool, and nothing else is read from a home path.
+  const homes = hooks.flatMap(h => [...h.text.matchAll(/\$\{home\}\/(\.[a-z]+)\/([a-z-]+)/g)].map(m => `${m[1]}/${m[2]}`))
+  assert.deepEqual([...new Set(homes)].sort(), ['.cache/factory-panel', '.ix/factory-panel', '.ix/relay'])
 })
 
 test('every command and setting the README names is registered by the plugin', () => {
@@ -41,7 +63,8 @@ test('every command and setting the README names is registered by the plugin', (
   assert.ok(commands.length > 0)
   for (const c of commands) {
     assert.ok(registered.has(c.name), `README names /${c.name}, which the plugin does not register`)
-    if (c.name === 'factory' && /^[a-z]+$/.test(c.rest) && c.rest !== 'help' && c.rest !== 'role') assert.ok(views.has(c.rest), `README names /factory ${c.rest}, which is not a view`)
+    const word = c.rest.split(/\s+/)[0] ?? ''
+    if (c.name === 'factory' && word !== '') assert.ok(views.has(word) || ['help', 'use', 'teams', 'hosts', 'show', 'reset'].includes(word), `README names /factory ${word}, which is neither a view nor a choice command`)
   }
   assert.ok(!commands.some(c => c.name === 'band'))
   const manifest = JSON.parse(readFileSync(join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8')) as { userConfig: Record<string, unknown> }

@@ -7,7 +7,7 @@ import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { resolveEndpoints } from './endpoints'
 import { renderBand, startBand, syncStatus } from './band'
-import { startRole } from './role'
+import { refreshSelection, resetSelection } from './selection'
 import { registerRouter } from './router'
 import { guarded, openPanes, paneIdsToReopen, readOptions, settlePanes } from './shared'
 
@@ -54,15 +54,20 @@ export const register: Register = (on, rawOptions) => {
   // failing one is logged, the others carry on). The panes are not opened here: see above.
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
+    resetSelection()
+    // The band paints from the fallback at once; who the session is, what a skill declared and
+    // what the user chose follow when `agent-msg whoami` and the files answer (never waited for).
+    const refresh = () => guarded($, 'Selection', async () => void (await refreshSelection($))).then(() => $.ui.invalidate('ui.render'))
+    void refresh()
+    $.clock.every(options.refreshSeconds * 1000, () => void refresh())
     await guarded($, 'Endpoint discovery', () => resolveEndpoints($, options))
     await guarded($, 'Factory start', () => startFactory($, options))
     await guarded($, 'Focus start', () => startFocus($, options))
     await guarded($, 'Escalations start', () => startEscalations($, options))
     await guarded($, 'Relay start', () => startRelay($, options))
     await guarded($, 'Team start', () => startTeam($, options))
-    await guarded($, 'Role start', () => startRole($, options, e.cwd))
     await guarded($, 'Band start', () => startBand($))
-    // The first draw happens before this hook finishes; draw again now the state and role are in.
+    // The first draw happens before this hook finishes; draw again now the state is in.
     $.ui.invalidate('ui.render')
     return next(e)
   })

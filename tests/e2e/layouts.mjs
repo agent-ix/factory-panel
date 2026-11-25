@@ -11,6 +11,10 @@
 //   FR-004-AC-5   classic: Esc closes the popup and the prompt has the keyboard again
 //   FR-004-AC-6   fullscreen: `/factory focus` focuses the docked Focus tab
 //   FR-009-AC-8   classic: a digit typed while the prompt holds text goes into the prompt
+//   FR-008-AC-5   a first-time user, with only /factory help, opens a view, switches and chooses what to display
+//
+// The session runs with a temporary HOME (the Claude config is linked in), so the choice the check
+// makes is written to a temporary ~/.ix/factory-panel and never to the real one.
 //
 // These are Demonstration and capture criteria. Quire reads trace tags only from TypeScript, Python and
 // Rust symbols, not from .mjs, so they are deliberately NOT matrix-bound; the matrix shows them as
@@ -20,13 +24,21 @@
 // Run: node tests/e2e/layouts.mjs
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const EVIDENCE = join(ROOT, 'tests', 'e2e', 'evidence')
 mkdirSync(EVIDENCE, { recursive: true })
+
+// A home of its own for the mod's files; the Claude config and keychain are the real ones, linked in.
+const FPHOME = mkdtempSync(join(tmpdir(), 'fp-e2e-home-'))
+symlinkSync(join(homedir(), '.claude'), join(FPHOME, '.claude'))
+symlinkSync(join(homedir(), 'Library'), join(FPHOME, 'Library'))
+if (existsSync(join(homedir(), '.claude.json'))) copyFileSync(join(homedir(), '.claude.json'), join(FPHOME, '.claude.json'))
+const CHOICES = join(FPHOME, '.ix', 'factory-panel', 'choices', 'default.json')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const tmux = (...args) => execFileSync('tmux', args, { encoding: 'utf8' })
@@ -42,7 +54,7 @@ class Session {
     this.layout = layout
     this.name = `fp-e2e-${layout}-${process.pid}`
     this.inputs = 0
-    tmux('new-session', '-d', '-s', this.name, '-x', '200', '-y', '50', '-c', ROOT, `env CLAUDE_CODE_NO_FLICKER=${flicker} claude --plugin-dir ${ROOT}`)
+    tmux('new-session', '-d', '-s', this.name, '-x', '200', '-y', '50', '-c', ROOT, `env HOME=${FPHOME} CLAUDE_CODE_NO_FLICKER=${flicker} claude --plugin-dir ${ROOT}`)
   }
   capture(label) {
     const text = tmux('capture-pane', '-p', '-t', this.name).replace(/[ \t]+$/gm, '')
@@ -103,14 +115,22 @@ async function classic() {
     // NFR-002-M-1: the prompt has the keyboard.
     check('classic: prompt has the keyboard after start', await promptHasKeyboard(s, '2-prompt-keyboard'))
 
-    // Setup, not counted: pick the code-lead role so the band has several cells.
-    s.type('/factory role')
+    // FR-008-AC-5: the help alone says how to choose; follow it. Setup for the steps below, not counted.
+    s.type('/factory help')
     s.key('Enter')
-    const asked = await s.waitFor(t => t.includes('What do you do in this session?'))
-    check('classic: /factory role asks the role question', asked !== null)
-    s.key('2')
-    const answered = await s.waitFor(t => /Your role here is code-lead/.test(t))
-    check('classic: the role is set to code-lead', answered !== null)
+    const help = await s.waitFor(t => /\/factory use/.test(t) && /\/factory hosts/.test(t))
+    s.capture('2b-help')
+    check('classic: /factory help lists the choice commands and the skill snippet', help !== null && /features\/default\.json/.test(help), s.capture().slice(-900))
+    s.type('/factory hosts local')
+    s.key('Enter')
+    const chosen = await s.waitFor(t => /Hosts: local/.test(t))
+    check('classic: /factory hosts local is accepted', chosen !== null)
+    check('classic: the choice is kept under the ix home of the session', existsSync(CHOICES) && /"hosts": "local"/.test(readFileSync(CHOICES, 'utf8')))
+    s.type('/factory show')
+    s.key('Enter')
+    const shown = await s.waitFor(t => /hosts\s+local\s+\[user\]/.test(t))
+    s.capture('2c-show')
+    check('classic: /factory show says the hosts value came from the user', shown !== null)
     await s.waitFor(t => /^\s*1: local/m.test(t), 10000)
 
     // NFR-003-M-1: open takes one typed command.

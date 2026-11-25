@@ -126,7 +126,7 @@ const EMPTY = JSON.stringify({ status: 'success', data: { resultType: 'vector', 
 function engine(
   on: Parameters<TestBody>[1],
   ran: string[][],
-  options: { teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
+  options: { files?: Map<string, string>; teamMetrics: boolean; rateLimited?: boolean; failResolve?: string; store?: Map<string, unknown>; escalations?: () => string; failLog?: boolean; failStoreSet?: boolean; open?: (id: string) => { isPlaced: true } | { isPlaced: false; reason: string }; status?: (text: string | undefined) => void; panes?: () => { id: string; title: string; isPlaced: boolean }[] },
 ): void {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   const opened = new Map<string, boolean>()
@@ -145,7 +145,7 @@ function engine(
   on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('clock.now', () => ({ value: Date.UTC(2026, 10, 21, 10, 0) }))
   on('clock.every', () => ({ value: undefined }))
-  const files = new Map<string, string>()
+  const files = options.files ?? new Map<string, string>()
   on('fs.read', (_, e) => {
     const text = files.get(e.path)
     if (text === undefined) throw Object.assign(new Error(`ENOENT: ${e.path}`), { code: 'ENOENT' })
@@ -895,10 +895,11 @@ const BAND = {
   view: {},
 } as never
 
-test('the classic-layout band draws the role’s modules as buttons, and a press opens that module’s pane', { options: { role: 'coordinator' } }, async ($, on) => {
+test('the classic-layout band draws the selected modules as buttons, and a press opens that module’s pane', async ($, on) => {
   const ran: string[][] = []
   const opens: string[] = []
-  engine(on, ran, { teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
+  const files = new Map([['/home/test/.ix/factory-panel/features/default.json', JSON.stringify({ modules: ['health'] })]])
+  engine(on, ran, { files, teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'AbovePrompt', props: BAND, viewport: MAIN_SCREEN })
   expect((await ui.find({ key: 'health' }))?.text).toBe('hosts —')
