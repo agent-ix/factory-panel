@@ -91,8 +91,11 @@ const doctor = JSON.stringify({
   ],
 })
 
-// What sits beneath the plugin in a session, answered here in the engine's place.
-const engine = (on: Parameters<TestBody>[1]) => {
+// What sits beneath the plugin in a session, answered here in the engine's place. `reads` false
+// leaves the wait before a drawn view's read unanswered, so nothing is read.
+const engine = (on: Parameters<TestBody>[1], reads = true) => {
+  on('ui.panes', () => ({ value: [{ id: 'factory', title: 'Factory', isShown: true, isFocused: false, isPlaced: true }] }))
+  if (reads) on('clock.after', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'factory' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.log', () => ({ value: undefined }))
@@ -226,7 +229,7 @@ const marks = async (ui: { findAll: (q: { type: string; text: RegExp }) => Promi
   (await ui.findAll({ type: 'Text', text: /^[●▲○◌]$/ })).map(n => n.text)
 
 test('the herdr and relay chips show ◌ before the first read', async ($, on) => {
-  engine(on)
+  engine(on, false)
   // No session.start: nothing has been read yet.
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
