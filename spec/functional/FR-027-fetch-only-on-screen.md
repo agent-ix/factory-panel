@@ -53,9 +53,10 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | Factory pane | selection, Prometheus machines, `herdr api snapshot`, `agent-msg doctor`, `ix-board agents` |
 | Factory widget | Prometheus machines, `herdr api snapshot`, `agent-msg doctor` |
 | Focus pane | selection, focus |
+| Work pane | selection, focus, `agent-msg work` reports and events |
 | Escalations pane | `agent-msg escalations` and `escalation show` |
 | Message pane | `agent-msg log` and `agent-msg who` |
-| Team pane | Prometheus team series |
+| Team pane | Prometheus team series, `ix-board retro delta` |
 | Band cells `health`, `local`, `agents`, `spend` | Prometheus machines |
 | Band cells `focus`, `queue` | focus |
 | Band cell `lead` | focus, `ix-board agents` |
@@ -72,8 +73,9 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 |--------|--------------------------|
 | selection (declaration and choice files), Prometheus machines | `refreshSeconds` |
 | `herdr api snapshot`, `agent-msg doctor` | 60 seconds, or `refreshSeconds` where that is longer |
-| `ix-board agents`, escalations, relay broadcasts, team series | 60 seconds |
+| `ix-board agents`, escalations, relay broadcasts, team series, work reports | 60 seconds |
 | focus | 2 minutes |
+| `ix-board retro delta` | 5 minutes |
 
 - The mod SHALL read a source at once when a view that draws it comes on screen and the data is older than the interval.
 - Opening a view by command or band digit SHALL force no read.
@@ -100,7 +102,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 |----|----------|--------------|
 | FR-027-AC-1 | With nothing drawn, no Prometheus, herdr, `ix-board` or `agent-msg` read other than the identity lookup runs, however long the session runs. | Test |
 | FR-027-AC-2 | A session that is not interactive runs no read and no identity lookup. | Test |
-| FR-027-AC-3 | With one pane on screen, the sources the table gives that view are read and no other, for each of the five panes and the Factory widget. | Test |
+| FR-027-AC-3 | With one pane on screen, the sources the table gives that view are read and no other, for each of the six panes and the Factory widget. | Test |
 | FR-027-AC-4 | With the band on screen, the sources of the selected modules are read and no other, including a module that draws no cell. | Test |
 | FR-027-AC-5 | A pane drawn and then, 150 ms later, behind another tab, unplaced or closed is not read. | Test |
 | FR-027-AC-6 | After a view leaves the screen its sources are not read again. | Test |

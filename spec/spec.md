@@ -27,12 +27,13 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 ### 2.1 In Scope
 
 - The ambient view: a one-row band above the prompt in the classic terminal layout and docked panes in the fullscreen layout.
-- The detail views (Factory, Focus, Escalations, Message, Team) and how a person opens, switches and closes them.
+- The detail views (Factory, Focus, Work, Escalations, Message, Team) and how a person opens, switches and closes them.
 - Features and scopes the ambient view can show, how an agent or the user selects them, and the automatic defaults taken from the relay.
 - The files under `~/.ix/factory-panel/` that hold an agent's declaration and a user's choices.
 - How the mod finds the factory's metrics endpoints.
 - The commands, help text and documentation a person uses to learn all of the above.
 - The Focus card of 0.7.0: progress per project, initiatives with their projects nested beneath, honest roll-up totals, and source errors folded into one footer warning icon.
+- The Work tab of 0.8.0 (leads, their tickets and merges) and the Team tab's review, flow and retro-health additions.
 - The reads of 0.7.1: one combined progress call for the projects of a focus, a shared memory of selectors ix-board cannot answer, Linear-backed reads at most once in 30 minutes, and no read of what is not on screen.
 
 ### 2.2 Out of Scope
@@ -124,6 +125,8 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-025 | Last good progress per project | [FR-025](functional/FR-025-per-project-last-good.md) |
 | FR-026 | Combined progress calls | [FR-026](functional/FR-026-per-project-calls.md) |
 | FR-027 | Fetch only what is on screen | [FR-027](functional/FR-027-fetch-only-on-screen.md) |
+| FR-028 | Work tab | [FR-028](functional/FR-028-work-tab.md) |
+| FR-029 | Team metrics and retro health | [FR-029](functional/FR-029-team-metrics.md) |
 
 ### 4.3 Non-Functional Requirements
 
