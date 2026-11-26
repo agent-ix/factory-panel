@@ -35,7 +35,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - The Focus card of 0.7.0: progress per project, initiatives with their projects nested beneath, honest roll-up totals, and source errors folded into one footer warning icon.
 - The Work tab of 0.8.0 (leads, their tickets and merges) and the Team tab's review, flow and retro-health additions, its teams by Linear key, its daily rows of completed issues and merged PRs and the coverage of its tiles.
 - The role evaluations on the Team tab: each role's score, trend, failing rules and unscored rules from `ix-board retro eval`.
-- The fleet capacity on the Team tab: each host's busy ratio, ready-buffer deficit and output against its recorded sustainable level, read without writing anything.
+- The fleet’s hosts on the Team tab: each host’s lanes by state, CPU, finished work per hour and shortfall of ready work, read without writing anything.
 - The review, spec and gate events in the Work tab's Recent list, the work cell of the band, and the shared reads of the leads' work reports that show which leads could not be read.
 - The reads of 0.7.1: one combined progress call for the projects of a focus, a shared memory of selectors ix-board cannot answer, Linear-backed reads at most once in 30 minutes, and no read of what is not on screen.
 
@@ -132,7 +132,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-029 | Team metrics and retro health | [FR-029](functional/FR-029-team-metrics.md) |
 | FR-030 | Lead report reads | [FR-030](functional/FR-030-lead-report-reads.md) |
 | FR-031 | Role evaluations | [FR-031](functional/FR-031-role-evaluations.md) |
-| FR-032 | Fleet capacity | [FR-032](functional/FR-032-fleet-capacity.md) |
+| FR-032 | Fleet hosts | [FR-032](functional/FR-032-fleet-capacity.md) |
 
 ### 4.3 Non-Functional Requirements
 

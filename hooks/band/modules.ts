@@ -306,14 +306,12 @@ export const headlineViews = (views: readonly TeamView[], selected: readonly str
   return shown.length > 0 ? shown : unmatched
 }
 
-/** The first tile of the first team that has a reading: the one the Team view shows first. */
+/** The tickets closed today of the first team that has a count of them. */
 const team = (s: Snapshot): Cell | null => {
   for (const t of headlineViews(s.teamViews, selectedTeams(s.scope))) {
-    const tile = t.metrics.find(m => m.value !== null)
-    if (tile !== undefined && tile.value !== null) {
-      const value = tile.unit === 'seconds' ? `${Math.round(tile.value)}s` : Number.isInteger(tile.value) ? String(tile.value) : tile.value.toFixed(1)
-      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: tile.atLeast ? `≥${value}` : value }] }
-    }
+    const { counts, atLeast } = t.days.closures
+    const today = counts[counts.length - 1]
+    if (today !== null && today !== undefined) return { id: 'team', pane: 'team', parts: [{ text: `${t.team} closed `, dim: true }, { text: `${atLeast ? '≥' : ''}${today}` }] }
   }
   return null
 }

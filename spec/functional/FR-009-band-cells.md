@@ -44,8 +44,8 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
   | relay | Message |
   | team | Team |
 
-- The team module SHALL show the label and value of the first tile that has a reading, of the first team that has one among the selected teams that have series (the exporter ids with no key where none has), with `≥` before a value that is a lower bound ([FR-029](./FR-029-team-metrics.md)).
-- The mod SHALL leave out the team module when no team metrics exist.
+- The team module SHALL show `<team> closed N`, the tickets closed today of the first team that has a count among the selected teams that have series (the exporter ids with no key where none has), with `≥` before a count that is a lower bound ([FR-029](./FR-029-team-metrics.md)).
+- The mod SHALL leave out the team module when no team has a count for today.
 
 ### The work module
 
@@ -81,7 +81,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 | FR-009-AC-4 | With the selection `focus,nope,focus,local`, the band shows focus then local, with digits 1 and 2. | Test |
 | FR-009-AC-5 | Pressing a digit that no cell carries opens nothing and changes nothing. | Test |
 | FR-009-AC-6 | Pressing the digit of a cell opens the view named in the module-to-view table, for every module in the table. | Test |
-| FR-009-AC-7 | The team cell shows the first tile with a reading of the first selected team that has one, and is left out when no team metrics exist. | Test |
+| FR-009-AC-7 | The team cell shows the tickets closed today of the first selected team that has a count, and is left out when none has. | Test |
 | FR-009-AC-8 | In a real classic session a digit typed while the prompt holds text is typed into the prompt and opens nothing. | Demonstration |
 | FR-009-AC-9 | The work cell reads the distinct tickets the leads have in hand, their distinct open and draft PRs and the merges of 24 hours. | Test |
 | FR-009-AC-10 | The work cell reads `—` for PRs and merges that ix-board has not said, and `≥M` where only some tickets' PRs are known. | Test |

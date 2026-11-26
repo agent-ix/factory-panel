@@ -54,6 +54,8 @@ const texts = async (ui: { findAll: (q: { type: string }) => Promise<{ text?: st
 async function draw($: $t, w: World, wait = SEC, placement: 'dock' | 'widget' = 'dock') {
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement }, surface: 'terminal' } as never)
   await w.clock!.advance(wait)
+  // With nothing evaluated the section is one line: pressed, it says why.
+  if ((await ui.findAll({ type: 'Button' })).some(b => b.key === 'roles-why-QSL')) await ui.press({ key: 'roles-why-QSL' })
   const lines = () => texts(ui)
   const marked = async (text: string) => {
     const all = (await ui.findAll({ type: 'Text' })).map(t => ({ text: t.text ?? '', color: (t.props as { color?: string }).color }))
@@ -328,7 +330,7 @@ test('an evaluation is given 5 minutes, the rest of the view drawn meanwhile', a
   const d = await draw($, w)
   expect(limits).toEqual([5 * MIN])
   expect(await d.lines()).toContain('reading the role evaluation, which can take minutes')
-  expect((await d.lines()).join('\n')).toMatch(/No team metrics yet/)
+  expect(await d.buttons()).toContain('○ QSL')
   await d.ui.unmount()
 })
 
@@ -372,7 +374,7 @@ test('the section says it is reading while the rest of the view is drawn, and a 
   const w = await setup($, on, (_, __, w) => w.clock!.sleep(2 * MIN).then(() => answer([CODER])))
   const d = await draw($, w)
   expect(await d.lines()).toContain('reading the role evaluation, which can take minutes')
-  expect((await d.lines()).join('\n')).toMatch(/No team metrics yet/)
+  expect(await d.buttons()).toContain('○ QSL')
   await w.clock!.advance(2 * MIN)
   expect(await d.buttons()).toContain('▸ coder')
   // Looked at again meanwhile, so nothing would be due for most of another minute.
@@ -380,7 +382,7 @@ test('the section says it is reading while the rest of the view is drawn, and a 
   w.files.set(`${FP}/features/draco_QSL_code.json`, JSON.stringify({ focus: 'team', teams: ['ENG'] }))
   await w.clock!.advance(20 * SEC)
   expect(evals(w).at(-1)).toBe(evalOf('ENG'))
-  expect(await d.lines()).toContain('Roles · ENG')
+  expect(await d.buttons()).toContain('Roles ▸')
   await d.ui.unmount()
 })
 

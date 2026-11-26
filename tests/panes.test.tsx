@@ -171,7 +171,7 @@ function engine(
   })
   on('http.fetch', (_, e) => {
     const body = typeof e.init?.body === 'string' ? decodeURIComponent(e.init.body) : ''
-    const isTeam = e.url.endsWith('/query_range') && body.includes('ix_team_verified_path_closed_24h')
+    const isTeam = e.url.endsWith('/query_range') && body.includes('ix_team_wip_active')
     return { value: { status: 200, ok: true, headers: {}, text: options.teamMetrics && isTeam ? TEAM_RANGE : EMPTY } }
   })
   on('process.run', (_, e) => {
@@ -614,16 +614,15 @@ test('the Relay pane shows broadcasts and sends an announcement after a confirm'
   await ui.unmount()
 })
 
-test('the Team pane draws a tile per metric with its latest value, or says the metrics are absent', async ($, on) => {
+test('the Team pane draws a team’s figures with their latest values', async ($, on) => {
   const ran: string[][] = []
   engine(on, ran, { teamMetrics: true })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('team', 'Team'), surface: 'desktop' })
 
   expect((await ui.find({ type: 'Text', text: 'ENG' }))?.text).toBe('ENG')
-  expect((await ui.find({ type: 'Text', text: 'Verified closures · 24h' }))?.text).toBe('Verified closures · 24h')
+  expect((await ui.find({ type: 'Text', text: 'in progress' }))?.text).toBe('in progress')
   expect((await ui.find({ type: 'Text', text: /^8$/ }))?.text).toBe('8')
-  expect(await ui.find({ type: 'Svg' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -633,7 +632,9 @@ test('the Team pane says so when Prometheus has no team metrics', async ($, on) 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...pane('team', 'Team'), surface: 'desktop' })
 
-  expect((await ui.find({ type: 'Text', text: 'No team metrics yet.' }))?.text).toBe('No team metrics yet.')
+  const labels = (await ui.findAll({ type: 'Button' })).map(b => String((b.props as { label?: string }).label ?? ''))
+  expect(labels.filter(l => l.startsWith('○ '))).toHaveLength(1)
+  expect(await ui.find({ type: 'Text', text: /Prometheus has no/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -806,13 +807,12 @@ test('a closed pane is not reopened on attach, and the status names only panes s
   await ui.unmount()
 })
 
-test('the Team pane draws each tile’s six-hour series as braille dots on the terminal, and Svg on desktop', async ($, on) => {
+test('the Team pane draws each figure’s six-hour series as blocks', async ($, on) => {
   const ran: string[][] = []
   engine(on, ran, { teamMetrics: true })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const term = await $.ui.mount({ ...pane('team', 'Team'), surface: 'terminal' })
-  expect((await term.find({ type: 'Text', text: /^[⠀-⣿]+$/ }))?.text).toMatch(/^[⠀-⣿]+$/)
-  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  expect((await term.find({ type: 'Text', text: /^[▁▂▃▄▅▆▇█]+$/ }))?.text).toBe('▁▄█')
   await term.unmount()
 })
 

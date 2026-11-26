@@ -256,11 +256,32 @@ export async function drawRoles($: EngineInterface, { Box, Text, Button }: Pick<
     )
   }
 
-  return views.map(v => (
+  return views.map(v => {
+    // With nothing evaluated: one line, which says why when pressed.
+    if (v.report === null) {
+      const id = `why/${v.team}`
+      const isOpen = open.includes(id)
+      const title = views.length > 1 ? `Roles · ${v.team}` : 'Roles'
+      return (
+        <Box key={`roles-${v.team}`} flexDirection="column">
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text color={v.isError ? 'warning' : 'inactive'}>{v.isError ? '▲' : '○'}</Text>
+            <Button key={`roles-why-${v.team}`} plain label={`${title} ${isOpen ? '▾' : '▸'}`} onPress={() => void update($, rolesOpen, l => (l.includes(id) ? l.filter(x => x !== id) : [...l, id]))} />
+          </Box>
+          {isOpen && (
+            <Box flexDirection="column" paddingLeft={2}>
+              <Text dimColor size="caption">{v.note ?? READING}</Text>
+              <Text dimColor size="caption">scores each role with ix-board retro eval over the last 24h</Text>
+            </Box>
+          )}
+        </Box>
+      )
+    }
+    return (
     <Box key={`roles-${v.team}`} flexDirection="column" padding={1} backgroundColor={CARD_BG}>
       <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
         <Text weight="semibold">Roles · {v.team}</Text>
-        {v.report !== null && <Text dimColor size="caption">{`${Math.round((v.report.endMs - v.report.startMs) / 3_600_000)}h window · ended ${ago(v.report.endMs, now)}`}</Text>}
+        <Text dimColor size="caption">{`${Math.round((v.report.endMs - v.report.startMs) / 3_600_000)}h window · ended ${ago(v.report.endMs, now)}`}</Text>
       </Box>
       {v.note !== null && (
         <Box flexDirection="row" gap={1}>
@@ -270,7 +291,8 @@ export async function drawRoles($: EngineInterface, { Box, Text, Button }: Pick<
           </Text>
         </Box>
       )}
-      {v.report?.roles.map(r => roleRows(v.team, r))}
+      {v.report.roles.map(r => roleRows(v.team, r))}
     </Box>
-  ))
+    )
+  })
 }

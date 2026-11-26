@@ -2,7 +2,7 @@
 // FR-027-AC-16 and AC-28: drives real `claude` sessions against stand-ins for every command and the
 // metrics service, and logs each read the mod makes while its views are on and off screen, checking
 // that what was read is drawn (the Work tab with its role events and silent leads, the Team tab with
-// its retro health, roles and capacity, and the band's work cell):
+// its retro health, roles and hosts, and the band's work cell):
 //   fullscreen  panel open, Work, Team, another tab, covered by the transcript view, closed
 //   classic     band only, popup open, popup closed, band collapsed
 //   tmux        a session nobody is attached to, attached, detached again
@@ -80,7 +80,7 @@ const EVENT = { id: '1-0', at_ms: NOW_MS - 60000, binding: { address: LEAD }, ch
 const SINGLE = { identifier: 'QSL-3', title: 'Stand-in single ticket', state: 'unstarted', state_name: 'Specced', attachments_complete: true, pull_requests: [] }
 const DELTA = { latest: new Date(NOW_MS).toISOString(), metrics: [{ id: 'standin_metric', class: 'flow', status: 'ok', regressing: false }] }
 const EVAL = { schema_version: 1, window: { start_ms: NOW_MS - 86400000, end_ms: NOW_MS }, roles: [{ role: 'standin-coder', score: { passed: 1, evaluated: 2, pass_rate: 0.5 }, trend: 0, trend_matched_rules: 2, rules: [{ id: 'STAND-R1', status: 'fail', query: 'standin.query', value: 3, comparator: '<=', target: 1 }], objective_metrics: [] }] }
-const LEDGER = { view: 'host_output_share_of_recorded_level', since_ms: null, rows: [{ host: 'standin-host', share_percent: 80, output_per_hour: 4, recorded_output_per_hour: 5, output_basis: 'commits', at_ms: NOW_MS, unavailable_reason: null, source_basis: {} }] }
+const LEDGER = { view: 'host_output_share_of_recorded_level', since_ms: null, rows: [{ host: 'standin-host', share_percent: 80, output_per_hour: 4, step_no: 1, recorded_output_per_hour: 5, output_basis: 'commits', at_ms: NOW_MS, unavailable_reason: null, source_basis: {} }] }
 const ANSWERS = {
   herdr: [['api snapshot', JSON.stringify({ result: { snapshot: { version: '0', agents: [], workspaces: [] } } })]],
   'agent-msg': [
@@ -131,12 +131,13 @@ ${body}`,
   chmodSync(file, 0o755)
 }
 
-/** What the stand-in metrics service says to a query: one machine, one team's ready issues and one host's busy ratio. */
+/** What the stand-in metrics service says to a query: one machine, one team's ready issues and one host's lane and busy ratio. */
 function answerTo(url, query) {
   const now = Math.floor(Date.now() / 1000)
   const one = (metric, value) => [{ metric, value: [now, value] }]
   if (url.endsWith('query_range')) return query.includes('(ix_team_ready_issues)') ? [{ metric: { team_id: 'standin', team_key: 'QSL', scope_id: 's' }, values: [[now, '7']] }] : []
   if (query.includes('timestamp(ix_relay_registrations)')) return one({ machine: 'standin-host' }, '5')
+  if (query === 'timestamp(ix_fleet_lane_state_ratio)') return one({ host: 'standin-host', lane: 'hub:standin:one', state: 'working' }, String(now))
   if (query.includes('last_over_time(ix_fleet_host_busy_ratio')) return one({ host: 'standin-host' }, '0.4')
   if (query.includes('timestamp(ix_fleet_host_busy_ratio)')) return one({ host: 'standin-host' }, '5')
   return []
@@ -364,8 +365,8 @@ async function fullscreen(s) {
   check('fullscreen: and no source of another tab', only(team, ['ix config', 'agent-msg whoami', ...TEAM_SOURCES]), Object.keys(team).join(', '))
   const drawn = s.screen()
   s.save('team')
-  check('fullscreen: the retro health, the role and the capacity are on screen', /Health · QSL/.test(drawn) && /Roles · QSL/.test(drawn) && /standin-coder/.test(drawn) && /Capacity/.test(drawn) && /standin-host/.test(drawn) && /80% of/.test(drawn), drawn)
-  check('fullscreen: a deficit with no series says so', /Prometheus has no ix_fleet_ready_buffer_deficit/.test(drawn), drawn)
+  check('fullscreen: the retro health, the role and the hosts are on screen', /Health  retro/.test(drawn) && /Roles · QSL/.test(drawn) && /standin-coder/.test(drawn) && /Hosts/.test(drawn) && /standin-host/.test(drawn) && /◔ 40%/.test(drawn) && /4 \(best 5\)/.test(drawn), drawn)
+  check('fullscreen: nothing missing is spelled out', !/no series published|unavailable/.test(drawn), drawn)
 
   const switched = s.mark('switched to the Message tab')
   check('fullscreen: the Message tab can be clicked', s.click(/(Factory\s+Focus\s+Work\s+Escalations\s+)\S+\s+Team/))

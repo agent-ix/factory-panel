@@ -61,9 +61,10 @@ Everything below is in `hooks/ui`. `glyphs.ts` holds plain functions; `widgets.t
 - `segmentBar(key, done, inProgress, ready, total, cells)`: those runs as one row of Texts, each with `color` set from the four colours.
 - `progressRow(key, name, done, inProgress, ready, total, nameCells, barCells, dim?)`: one project per row: the name truncated to a fixed column, a segment bar, and `done/total` right-aligned. No percentage and no "N of M done" text. The Focus rows pass ready 0: ix-board's `focus status` gives one global `ready_queue`, not a per-project count, so ready shows only on the overall bar.
 - `legend()`: the coloured marks `■ done  ■ in progress  ■ ready  ■ rest`, the last in the track colour; draw it once, under the overall bar of a card, not on rows.
-- `dots(values, rows = 1)`: a braille dot histogram, two samples per character and four levels per row, filled from the bottom; returns one string per row, top first. The Team pane draws each tile's six-hour series with it on the terminal. Braille needs a terminal font that has it; the plugin does not detect this.
 - `ACCENT`, `DOING`, `READY` and `TRACK`: the colour tokens, below.
-- `spark(values)`: a one-row sparkline scaled between the series' own minimum and maximum. Use it for a short history.
+- `spark(values)`: a one-row sparkline scaled between the series’ own minimum and maximum. Use it for a short history.
+- `daySpark(counts)`: a sparkline of counts a day from 0, `·` for a day with no count.
+- `gauge(share)`: a share as one circle filled by quarters.
 - `loadColor(pct)` and `tempColor(c)`: the thresholds above, returning a semantic colour.
 - `usd(n)`: money in the format above.
 

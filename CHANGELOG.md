@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The Team tab is four rows a team, each figure with a sparkline: Shipping (tickets closed and PRs merged), Flowing (in progress, blocked, oldest in a stage), Fed (ready) and Review (first-review and PR-cycle medians), with leaf work remaining, ready unmerged PRs, findings and changes requested behind `more`. Verified closures, effort per closure, merges per hour, PRs with findings and executing agents are gone; the widget and the band’s team cell read tickets closed today.
+- A missing figure is left out, with one `○` that says why when pressed. Retro health is one line for each team, which opens to what it checks, what regresses, when it last ran and the command. Roles with nothing evaluated are one line.
+- Capacity is replaced by Hosts: working, stuck and idle lanes, CPU, done/h with the best recorded, `needs work` for a shortfall of ready work, and `churning`. A lane the watcher marks `wait_loop` reads as waiting, not stuck.
 - A focus is `all` or a Linear initiative or project the leads report, listed by Linear name, stored by Linear ID. Matching by named focus definition, lead address and lead summary is gone; a stored name reads as `all` and says so.
 - Teams and focus are two settings. Teams say which leads are listed (your own by default, one or more, or `all`); the focus, one initiative or project, or `all` (the default), narrows their tickets and never widens the teams. Both are at the top of the Work tab, clickable, and `/factory teams` and `/factory focus` set the same values.
 - Under a focus the Work tab lists the tickets of the focus, folds the leads with nothing in it, keeps tickets of unknown project behind a line of their own and keeps unread leads listed; Recent, the widget and the band's work cell follow.

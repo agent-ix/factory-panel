@@ -207,16 +207,12 @@ export type RelayMeta = { at: number | null; error: string | null; human: string
 
 export type TeamMetric = {
   key: string
-  /** the row it is drawn in */
-  group: 'velocity' | 'review' | 'flow'
   label: string
   /** the latest value, null when the series is absent */
   value: number | null
   /** whether `value` is a lower bound: the largest count of one of several scopes */
   atLeast: boolean
   unit: 'count' | 'rate' | 'seconds' | 'share'
-  /** higher is better (velocity) or worse (queues), for the trend's colour */
-  better: 'up' | 'down'
   history: number[]
   /** the share of its population the exporter measured, 0 to 1; null where it does not say */
   coverage: number | null
@@ -265,13 +261,14 @@ export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
 /** A team's Roles section: its latest evaluation, and what to say about it or its absence. */
 export type RolesView = { team: string; report: RoleReport | null; note: string | null; isError: boolean }
 
-export type CapacityMetric = 'busy' | 'deficit' | 'output'
+/** A lane of a host that is stuck, or waiting on something that is no fault, and why. */
+export type LaneNote = { lane: string; kind: 'stuck' | 'waiting'; reason: string }
 
-/** One host's figure: its words, or why it is unavailable; `sampleAt` (ms since the epoch) where its sample says when. */
-export type CapacityCell = { metric: CapacityMetric; state: 'ok' | 'stale' | 'unavailable'; text: string; sampleAt: number | null }
+/** One host of the fleet; a figure is null where it is not known. `needs` is the shortfall of ready work above 0. */
+export type HostRow = { host: string; working: number | null; stuck: number | null; idle: number | null; waiting: number; lanes: LaneNote[]; cpu: number | null; done: number | null; best: number | null; needs: number | null; isChurning: boolean }
 
-/** The fleet's capacity as read at `at`: each host's figures, and the metrics a whole source gives nothing of. */
-export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; missing: { metric: CapacityMetric; reason: string }[]; at: number }
+/** The fleet as read at `at`, with what is missing and why. */
+export type CapacityView = { hosts: HostRow[]; why: string[]; at: number }
 
 // ---------------------------------------------------------------- Work pane
 
@@ -376,6 +373,7 @@ declare module 'claude-code' {
       roles: Shaped<RolesView[]>
       rolesOpen: string[]
       capacity: Shaped<CapacityView | null>
+      hostsOpen: string[]
       workLeads: Shaped<WorkLead[]>
       workLast: Shaped<Record<string, number>>
       workMeta: Shaped<WorkMeta>

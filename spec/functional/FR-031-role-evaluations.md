@@ -37,7 +37,7 @@ The Team view SHALL show, for each selected team, what `ix-board retro eval` say
 
 ### Roles
 
-- Each selected team SHALL have a section `Roles` saying the length of the evaluated window and how long ago it ended.
+- Each selected team with an evaluation SHALL have a section `Roles` saying the length of the evaluated window and how long ago it ended.
 - Each role of the answer SHALL have one row with its pass rate, `P/E passed` of the rules the answer scored, its trend, and the number of its rules that failed, are unavailable, are not applicable, require judgement and have an unknown status, each omitted where 0.
 - The pass rate SHALL be the answer's `score.pass_rate` as a whole percentage rounded down. Where it is null the row SHALL read `no score`, never 0%.
 - The trend SHALL read `↑ +N pts` or `↓ −N pts` for the answer's `trend`, `= no change` where it is 0, and `trend — · none in the answer` where it is null. A change smaller than one point SHALL read `<1`.
@@ -51,6 +51,8 @@ The Team view SHALL show, for each selected team, what `ix-board retro eval` say
 - Where the answer has `objective_metrics` for a role, the expanded role SHALL list each with its id, its value and unit, and its query; one with a null value SHALL read `unavailable` with its reason, or `no reason given`, and SHALL NOT read 0.
 
 ### No evaluation
+
+- A team with no evaluation SHALL be one line, `○ Roles ▸` (`▲` where the read failed), and pressing it SHALL say why, in the words below, and what the section does. With several teams the line SHALL name its team.
 
 - Before a team's first answer the section SHALL say the evaluation is being read, and where another session is running it, say so.
 - Where `ix-board` has no `retro eval` command (exit code 2, `unrecognized subcommand`), the section SHALL say so, mark no source failed and draw no role.
@@ -74,7 +76,7 @@ The Team view SHALL show, for each selected team, what `ix-board retro eval` say
 | FR-031-AC-7 | An `ix-board` with no `retro eval` says so, with no role and no failed source, and is asked again after 5 minutes. | Test |
 | FR-031-AC-8 | A failing run, a run that times out, cut output and an answer that is no report each say so in the section and mark the source failed; a quick failure is asked again after 5 minutes and a slow one after 30. | Test |
 | FR-031-AC-9 | A failed refresh keeps the earlier answer drawn with its age under the error. | Test |
-| FR-031-AC-10 | Before the first answer the section says it is reading while the rest of the Team view is drawn, and a changed teams choice reads the new team without waiting out the 30 minutes. | Test |
+| FR-031-AC-10 | Before the first answer the section is one line that says it is reading when pressed, while the rest of the Team view is drawn, and a changed teams choice reads the new team without waiting out the 30 minutes. | Test |
 | FR-031-AC-11 | In a real session the Team view shows the state of `ix-board retro eval`. | Demonstration |
 | FR-031-AC-12 | Under a Linear rate limit no evaluation runs and the section says reads are paused, and an answer with no role says it names none. | Test |
 | FR-031-AC-14 | A team with no retro configuration reads `no retro baseline`, fails no source and is asked again after 30 minutes; a configuration that cannot be read for another reason is a failure. | Test |

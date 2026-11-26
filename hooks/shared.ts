@@ -204,32 +204,6 @@ export const progressBar = (done: number, total: number, width: number, color = 
     `</svg>`
   )
 }
-/** A sparkline: a 2px line over a faint area, with a dot on the latest point. */
-export const sparkline = (values: number[], color: string, width = 104, height = 26): string => {
-  const points = values.filter(v => Number.isFinite(v))
-  const open = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-  if (points.length < 2) {
-    const y = height - 3
-    return `${open}<line x1="2" y1="${y}" x2="${width - 2}" y2="${y}" stroke="${INK.track}" stroke-width="2" stroke-linecap="round"/></svg>`
-  }
-  const min = Math.min(...points)
-  const max = Math.max(...points)
-  const span = max - min || 1
-  const step = (width - 6) / (points.length - 1)
-  const xy = points.map((v, i): [number, number] => [3 + i * step, 3 + (height - 6) * (1 - (v - min) / span)])
-  const line = xy.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
-  const first = xy[0] ?? [3, height - 3]
-  const last = xy[xy.length - 1] ?? first
-  const area = `${line} L${last[0].toFixed(1)} ${height} L${first[0].toFixed(1)} ${height} Z`
-  return (
-    open +
-    `<path d="${area}" fill="${color}" fill-opacity="0.12"/>` +
-    `<path d="${line}" fill="none" stroke="${color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>` +
-    `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2.5" fill="${color}"/>` +
-    `</svg>`
-  )
-}
-
 // ---------------------------------------------------------------- panes
 
 export type PaneSpec = { id: string; title: string }

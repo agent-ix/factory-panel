@@ -1,42 +1,54 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface } from 'claude-code'
 
-import type { CapacityCell, CapacityMetric, CapacityView } from '../types'
-import { CARD_BG, ago, errorText, failureText, promQuery } from './shared'
+import type { CapacityView, HostRow, LaneNote } from '../types'
+import { CARD_BG, errorText, failureText, promQuery } from './shared'
 import type { Options, Sample } from './shared'
 import { track } from './schedule'
 import { sourceClear, sourceFailed, sourceOk } from './sources'
+import { gauge } from './ui/glyphs'
 
-// The Team view's Capacity section: each host's busy ratio and ready-buffer deficit from the ix_fleet_* series, and
-// its output against its recorded sustainable level from this machine's fleet ledger, or for a host with no row there
-// from the series the exporter publishes of it. Every read is read-only: `fleet saturation` and the `fleet capacity`
-// commands are never run from here.
+// The Team view's Hosts table: each host's lanes by state, CPU, finished work per hour and shortfall of ready work.
+// Lanes and CPU are the ix-relay watcher's series, finished work is the ix-board fleet ledger of this machine. Every
+// read is read-only: `fleet saturation` and the `fleet capacity` commands are never run from here.
 
-const capacity = atom({ plugin: 'factory-panel', key: 'capacity' } as const, null as CapacityView | null, { shape: 'capacity-2' })
+const capacity = atom({ plugin: 'factory-panel', key: 'capacity' } as const, null as CapacityView | null, { shape: 'capacity-3' })
+/** The hosts whose stuck and waiting lanes are listed, and `?` where what is missing is. */
+const hostsOpen = atom({ plugin: 'factory-panel', key: 'hostsOpen' } as const, [] as string[])
 
 /** Twice the watcher's push interval, as ix-board judges the busy ratio. */
 const BUSY_STALE_S = 60
+/** The watcher pushes lane states with its busy ratio; Prometheus keeps a state a lane has left for five minutes. */
+const LANE_STALE_S = 120
 /** Twice the fleet tick that writes the host output samples. */
 const OUTPUT_STALE_MS = 10 * 60 * 1000
 /** The age past which the exporter publishes no deficit: twice the collection interval. */
 const DEFICIT_STALE_MS = 10 * 60 * 1000
 const LEDGER_TIMEOUT_MS = 10_000
 const VIEW = 'host_output_share_of_recorded_level'
+/**
+ * The watcher's blocked reason for a pane that repeats a sleep or poll line three times, which an agent that is only
+ * waiting on a build also does. Such a lane is waiting, not stuck.
+ */
+const WAIT_LOOP = 'wait_loop'
 
+const STATE = 'ix_fleet_lane_state_ratio'
+const BLOCKED = 'ix_fleet_lane_blocked_ratio'
 const BUSY = 'ix_fleet_host_busy_ratio'
 const DEFICIT = 'ix_fleet_ready_buffer_deficit'
 const SHARE = 'ix_fleet_host_output_share_of_recorded_level'
 const QUERIES = {
-  // The last value of the past hour, so a host whose samples stopped is still named, with its age.
+  // Each series' sample time: a lane that changed state still has its old series for a while, and the newest holds.
+  states: `timestamp(${STATE})`,
+  reasons: `timestamp(${BLOCKED})`,
+  // The last value of the past hour, so a host whose samples stopped is still named.
   busy: `last_over_time(${BUSY}[1h])`,
   busyAge: `(time() - timestamp(${BUSY})) or (time() - max_over_time(timestamp(${BUSY})[1h:30s]))`,
   deficit: DEFICIT,
   deficitAt: `${DEFICIT}_timestamp_seconds`,
-  deficitWhy: `${DEFICIT}_unavailable == 1`,
-  level: 'ix_fleet_capacity_recorded_level',
-  discovery: 'ix_fleet_capacity_discovery_state == 1',
-  share: SHARE,
-  shareAt: `${SHARE}_timestamp_seconds`,
+  // Whether anything was finished in the last two hours, and whether there were samples two hours ago to say so.
+  most: `max_over_time(${SHARE}[2h])`,
+  earlier: `${SHARE} offset 2h`,
 }
 
 /** What a source gave: its data, or why it gives nothing; `failed` where that is an error and not an absence. */
@@ -81,194 +93,184 @@ const of = (samples: readonly Sample[], host: string): Sample[] => samples.filte
 /** The labels that tell one series from another, whichever query named it. */
 const seriesOf = (s: Sample): string => JSON.stringify(Object.entries(s.metric).filter(([k]) => k !== '__name__').sort(([a], [b]) => a.localeCompare(b)))
 
-const unavailable = (metric: CapacityMetric, why: string): CapacityCell => ({ metric, state: 'unavailable', text: why, sampleAt: null })
-
-function busyCell(values: readonly Sample[], ages: ReadonlyMap<string, number>, host: string, now: number): CapacityCell {
-  const series = of(values, host).map(s => ({ text: s.value[1], age: ages.get(seriesOf(s)) ?? null }))
-  const fresh = series.filter(s => s.age !== null && s.age <= BUSY_STALE_S)
-  if (fresh.length > 1) return unavailable('busy', `${fresh.length} fresh samples for one host`)
-  // The youngest, which is the fresh one where there is one.
-  const picked = [...series].sort((a, b) => (a.age ?? Infinity) - (b.age ?? Infinity))[0]
-  if (picked === undefined) return unavailable('busy', 'no sample in the last hour')
-  const ratio = Number(picked.text)
-  if (!(ratio >= 0 && ratio <= 1)) return unavailable('busy', `sample ${picked.text} is not between 0 and 1`)
-  return { metric: 'busy', state: fresh.length === 1 ? 'ok' : 'stale', text: `${Math.floor(ratio * 100 + 1e-9)}%`, sampleAt: picked.age === null ? null : now - picked.age * 1000 }
-}
-
-/** When a host's sample was taken, ms since the epoch, from a series whose value is that time in seconds; the newest. */
-function timeOf(samples: readonly Sample[], host: string): number | null {
-  const times = of(samples, host).map(s => Number(s.value[1]) * 1000).filter(t => Number.isFinite(t) && t > 0)
-  return times.length === 0 ? null : Math.max(...times)
-}
-
-const isCurrent = (at: number | null, limit: number, now: number): boolean => at !== null && now - at <= limit
-
-function deficitCell(samples: readonly Sample[], times: readonly Sample[], reasons: readonly Sample[], host: string, now: number): CapacityCell {
-  const at = timeOf(times, host)
-  const [first, ...more] = of(samples, host)
-  if (first === undefined) {
-    // The exporter says why it publishes no deficit, in a bounded set of words.
-    const why = [...new Set(of(reasons, host).flatMap(s => s.metric.reason ?? []))].join(', ')
-    return { ...unavailable('deficit', why === '' ? 'no sample exported for this host' : why), sampleAt: at }
+/** The newest series of each lane of a `timestamp(...)` answer, where it is current, by host and lane. */
+function newestByLane(samples: readonly Sample[], now: number): Map<string, { host: string; lane: string; labels: Record<string, string>; at: number }> {
+  const lanes = new Map<string, { host: string; lane: string; labels: Record<string, string>; at: number }>()
+  for (const s of samples) {
+    const host = hostOf(s)
+    const lane = text(s.metric.lane)
+    const at = Number(s.value[1])
+    if (host === null || lane === null || !(now / 1000 - at <= LANE_STALE_S)) continue
+    const key = `${host}\u0000${lane}`
+    if (at > (lanes.get(key)?.at ?? -Infinity)) lanes.set(key, { host, lane, labels: s.metric, at })
   }
-  if (more.length > 0) return unavailable('deficit', `${more.length + 1} samples for one host`)
+  return lanes
+}
+
+/** The CPU of a host, 0 to 1: its one current sample; null where there is none, or more than one. */
+function cpuOf(values: readonly Sample[], ages: ReadonlyMap<string, number>, host: string): number | null {
+  const fresh = of(values, host).filter(s => (ages.get(seriesOf(s)) ?? Infinity) <= BUSY_STALE_S)
+  const ratio = fresh.length === 1 ? Number(fresh[0]!.value[1]) : NaN
+  return ratio >= 0 && ratio <= 1 ? ratio : null
+}
+
+/** The shortfall of ready work of a host, where its one sample is current and above 0. */
+function needsOf(samples: readonly Sample[], times: readonly Sample[], host: string, now: number): number | null {
+  const [first, ...more] = of(samples, host)
+  const at = Math.max(0, ...of(times, host).map(s => Number(s.value[1]) * 1000).filter(Number.isFinite))
+  if (first === undefined || more.length > 0 || !(now - at <= DEFICIT_STALE_MS)) return null
   const count = Number(first.value[1])
-  if (!Number.isInteger(count) || count < 0) return unavailable('deficit', `sample ${first.value[1]} is not a count`)
-  return { metric: 'deficit', state: isCurrent(at, DEFICIT_STALE_MS, now) ? 'ok' : 'stale', text: String(count), sampleAt: at }
+  return Number.isInteger(count) && count > 0 ? count : null
 }
 
-/** Why a row has no share: its own reason, else the reason of the fields its basis is counted from. */
-function rowReason(row: LedgerRow): string {
-  let basis = row.source_basis
-  if (typeof basis === 'string') {
-    try {
-      basis = JSON.parse(basis)
-    } catch {
-      basis = null
-    }
-  }
-  const counted = row.output_basis === 'commits' ? ['commits_pushed'] : ['tickets_closed', 'prs_merged']
-  const reasons = ['host_output_per_hour', ...counted].map(field => text(record(record(basis)?.[field])?.reason))
-  return text(row.unavailable_reason) ?? reasons.find(r => r !== null) ?? 'no reason published'
-}
-
-const BASIS: Record<string, string> = { tickets_prs: 'tickets+PRs', commits: 'commits' }
-const amount = (v: number): string => String(Math.round(v * 10) / 10)
-
-const levelWords = (level: string | undefined): string => (level === undefined ? 'the recorded level' : `level ${level}`)
-
-/** The share the exporter publishes of the ledger it reads, a fraction, for a host this machine's ledger has no row of. */
-function exportedCell(samples: readonly Sample[], times: readonly Sample[], host: string, level: string | undefined, now: number): CapacityCell | null {
-  const at = timeOf(times, host)
-  const [first, ...more] = of(samples, host)
-  if (first === undefined) return null
-  if (more.length > 0) return unavailable('output', `${more.length + 1} shares exported for one host`)
-  const share = Number(first.value[1])
-  if (!Number.isFinite(share) || share < 0) return unavailable('output', `exported share ${first.value[1]} is not a share`)
-  const words = `${Math.floor(share * 100 + 1e-9)}% of ${levelWords(level)} · from Prometheus`
-  return { metric: 'output', state: isCurrent(at, OUTPUT_STALE_MS, now) ? 'ok' : 'stale', text: words, sampleAt: at }
-}
-
-/** `rows` is null where this machine's ledger gives nothing. */
-function outputCell(rows: readonly LedgerRow[] | null, exported: CapacityCell | null, host: string, level: string | undefined, discovery: string | undefined, now: number): CapacityCell {
-  const own = (rows ?? []).filter(r => r.host.toLowerCase() === host)
+/** The finished work per hour and the best recorded, from the one current row of the ledger view, else why none. */
+function doneOf(rows: readonly LedgerRow[], host: string, now: number): { done: number | null; best: number | null; why: string | null } {
+  const none = (why: string) => ({ done: null, best: null, why })
+  const own = rows.filter(r => r.host.toLowerCase() === host)
   const [row] = own
-  if (row === undefined) {
-    if (exported !== null) return exported
-    const where = rows === null ? 'no share exported for this host' : 'no row in this machine’s ledger'
-    if (level !== undefined) return unavailable('output', `level ${level} recorded, ${where}`)
-    return unavailable('output', discovery === undefined ? where : `no recorded level, discovery ${discovery}`)
-  }
-  const facts = (r: LedgerRow) => JSON.stringify([r.share_percent, r.output_per_hour, r.recorded_output_per_hour, r.output_basis, r.at_ms])
-  // The view has one row for each host; where it answers several that differ, nothing says which is the level's.
-  if (own.some(r => facts(r) !== facts(row))) return unavailable('output', `the view answers ${own.length} differing rows`)
-  if (!('share_percent' in row)) return unavailable('output', 'the row has no share_percent')
-  const share = number(row.share_percent)
-  if (share === null) return unavailable('output', rowReason(row))
-  const [out, recorded] = [number(row.output_per_hour), number(row.recorded_output_per_hour)]
-  const basis = text(row.output_basis)
-  const rate = out === null || recorded === null ? null : `${amount(out)}/h of ${amount(recorded)}/h${basis === null ? '' : ` ${BASIS[basis] ?? basis}`}`
+  if (row === undefined) return none('no best recorded in this machine’s ledger')
+  if (own.some(r => r.output_per_hour !== row.output_per_hour || r.recorded_output_per_hour !== row.recorded_output_per_hour)) return none(`${own.length} differing ledger rows`)
+  const done = number(row.output_per_hour)
+  if (done === null) return none(text(row.unavailable_reason) ?? 'no output in its ledger row')
   const at = number(row.at_ms)
-  const words = [`${Math.floor(share + 1e-9)}% of ${levelWords(level)}`, rate].filter(w => w !== null).join(' · ')
-  return { metric: 'output', state: isCurrent(at, OUTPUT_STALE_MS, now) ? 'ok' : 'stale', text: words, sampleAt: at }
+  if (at === null || now - at > OUTPUT_STALE_MS) return none('its ledger sample is old')
+  return { done, best: number(row.recorded_output_per_hour), why: null }
 }
 
-/** Reads every host's capacity; false when a source failed. */
+/** Reads every host's lanes, CPU, finished work and shortfall; false when a source failed. */
 export function pollCapacity($: EngineInterface, options: Options): Promise<boolean> {
   return track($, 'capacity', async () => {
     const ask = (promql: string) => query($, options.prometheusUrl, promql)
-    const [values, ages, deficits, deficitTimes, deficitReasons, levels, states, shares, shareTimes, ledger] = await Promise.all([
-      ask(QUERIES.busy), ask(QUERIES.busyAge), ask(QUERIES.deficit), ask(QUERIES.deficitAt), ask(QUERIES.deficitWhy),
-      ask(QUERIES.level), ask(QUERIES.discovery), ask(QUERIES.share), ask(QUERIES.shareAt), readLedger($),
+    const [states, reasons, values, ages, deficits, deficitTimes, most, earlier, ledger] = await Promise.all([
+      ask(QUERIES.states), ask(QUERIES.reasons), ask(QUERIES.busy), ask(QUERIES.busyAge), ask(QUERIES.deficit), ask(QUERIES.deficitAt),
+      ask(QUERIES.most), ask(QUERIES.earlier), readLedger($),
     ])
     const samples = (got: Got<Sample[]>): Sample[] => ('data' in got ? got.data : [])
     const now = await $.clock.now()
-    const missing: CapacityView['missing'] = []
-    const lacks = (metric: CapacityMetric, reason: string) => void missing.push({ metric, reason })
+    const lanes = [...newestByLane(samples(states), now).values()]
+    const blocked = newestByLane(samples(reasons), now)
+    const ageOf = new Map(samples(ages).map(s => [seriesOf(s), Number(s.value[1])] as const))
+    const rows = 'data' in ledger ? ledger.data : []
+    const names = new Set([...samples(states), ...samples(values), ...samples(deficits)].flatMap(s => hostOf(s) ?? []).concat(rows.map(r => r.host.toLowerCase())))
 
-    const busyFailure = 'missing' in values ? values.missing : 'missing' in ages ? ages.missing : null
-    const busy = 'data' in values && 'data' in ages && values.data.length > 0 ? values.data : null
-    if (busy === null) lacks('busy', busyFailure ?? `Prometheus has no ${BUSY} sample in the last hour`)
-    const ageOf = new Map('data' in ages ? ages.data.map(s => [seriesOf(s), Number(s.value[1])] as const) : [])
-    // The exporter publishes a deficit or, for a host it has none of, why.
-    const hasDeficit = 'data' in deficits && (deficits.data.length > 0 || samples(deficitReasons).length > 0)
-    if (!hasDeficit) lacks('deficit', 'missing' in deficits ? deficits.missing : `Prometheus has no ${DEFICIT} sample`)
-    const rows = 'data' in ledger ? ledger.data : null
-    const exported = samples(shares)
-    // Nothing of the output is said only where neither this machine's ledger nor Prometheus gives anything.
-    if ('missing' in ledger && exported.length === 0) lacks('output', ledger.missing)
+    const why: string[] = []
+    const lacks = (got: Got<Sample[]>, series: string) => {
+      if ('missing' in got) why.push(`${series}: ${got.missing}`)
+      else if (got.data.length === 0) why.push(`Prometheus has no ${series} sample`)
+    }
+    lacks(states, STATE)
+    lacks(values, BUSY)
+    if ('missing' in deficits) why.push(`${DEFICIT}: ${deficits.missing}`)
+    if ('missing' in ledger) why.push(`done/h: ${ledger.missing}`)
 
-    // The level and discovery series only explain an output, so their absence needs no note of its own.
-    const level = new Map<string, string>()
-    for (const s of samples(levels)) if (hostOf(s) !== null) level.set(hostOf(s)!, s.value[1])
-    const discovery = new Map<string, string>()
-    for (const s of samples(states)) if (hostOf(s) !== null && s.metric.state) discovery.set(hostOf(s)!, s.metric.state)
-
-    const named = [...(busy ?? []), ...[deficits, deficitTimes, deficitReasons, shares, shareTimes].flatMap(samples)]
-    const names = new Set([...named.flatMap(s => hostOf(s) ?? []), ...level.keys(), ...discovery.keys(), ...(rows ?? []).map(r => r.host.toLowerCase())])
-    const hasOutput = rows !== null || exported.length > 0
-    const hosts = [...names].sort().map(host => ({
-      host,
-      cells: [
-        ...(busy === null ? [] : [busyCell(busy, ageOf, host, now)]),
-        ...(hasDeficit ? [deficitCell(samples(deficits), samples(deficitTimes), samples(deficitReasons), host, now)] : []),
-        ...(hasOutput ? [outputCell(rows, exportedCell(exported, samples(shareTimes), host, level.get(host), now), host, level.get(host), discovery.get(host), now)] : []),
-      ],
-    }))
-    if (rows !== null && hosts.length === 0) lacks('output', 'the ledger view has no row')
-    await update($, capacity, () => ({ hosts, missing, at: now }))
+    const hosts: HostRow[] = [...names].sort().map(host => {
+      const own = lanes.filter(l => l.host === host && l.labels.state !== 'ended')
+      const notes: LaneNote[] = own.flatMap((l): LaneNote[] => {
+        const state = l.labels.state
+        if (state !== 'blocked' && state !== 'stuck') return []
+        const reason = blocked.get(`${host}\u0000${l.lane}`)?.labels.reason
+        if (state === 'blocked' && reason === WAIT_LOOP) return [{ lane: l.lane, kind: 'waiting', reason: 'repeats a sleep or poll line' }]
+        return [{ lane: l.lane, kind: 'stuck', reason: reason ?? (state === 'stuck' ? 'a tool call ran past its limit' : 'reason not published') }]
+      })
+      const known = lanes.some(l => l.host === host)
+      const working = known ? own.filter(l => l.labels.state === 'working').length : null
+      const output = 'data' in ledger ? doneOf(rows, host, now) : { done: null, best: null, why: null }
+      const cpu = cpuOf(samples(values), ageOf, host)
+      if (!known && samples(states).length > 0) why.push(`${host}: no current lane state`)
+      if (cpu === null && samples(values).length > 0) why.push(`${host}: no current CPU sample`)
+      if (output.why !== null) why.push(`${host} done/h: ${output.why}`)
+      // Churning: lanes work now, and the share of the best output was 0 at every sample of two hours that were sampled.
+      const peak = of(samples(most), host)
+      const isChurning = (working ?? 0) > 0 && output.done === 0 && of(samples(earlier), host).length > 0 && peak.length > 0 && peak.every(s => Number(s.value[1]) === 0)
+      return {
+        host,
+        working,
+        stuck: known ? notes.filter(n => n.kind === 'stuck').length : null,
+        idle: known ? own.filter(l => l.labels.state === 'idle').length : null,
+        waiting: notes.filter(n => n.kind === 'waiting').length,
+        lanes: notes.sort((a, b) => a.lane.localeCompare(b.lane)),
+        cpu,
+        done: output.done,
+        best: output.best,
+        needs: needsOf(samples(deficits), samples(deficitTimes), host, now),
+        isChurning,
+      }
+    })
+    await update($, capacity, () => ({ hosts, why, at: now }))
 
     if (!('missing' in ledger)) sourceOk('ix-board fleet ledger', now)
     else if (ledger.failed) sourceFailed('ix-board fleet ledger', ledger.missing)
     else sourceClear('ix-board fleet ledger')
-    return [values, ages, deficits, deficitTimes, deficitReasons, levels, states, shares, shareTimes, ledger].every(got => !('missing' in got) || !got.failed)
+    return [states, reasons, values, ages, deficits, deficitTimes, most, earlier, ledger].every(got => !('missing' in got) || !got.failed)
   })
 }
 
 // ---------------------------------------------------------------- drawing
 
-const LABEL: Record<CapacityMetric, string> = { busy: 'Busy', deficit: 'Ready deficit', output: 'Output / level' }
+const amount = (v: number): string => String(Math.round(v * 10) / 10)
+const doneText = (at: HostRow): string => (at.done === null ? '—' : `${amount(at.done)}${at.best === null ? '' : ` (best ${amount(at.best)})`}`)
+/** What follows a host's figures, only where there is something to say. */
+const extras = (at: HostRow): string =>
+  [at.needs === null ? null : `needs work ${at.needs}`, at.waiting === 0 ? null : `${at.waiting} waiting`, at.isChurning ? 'churning' : null].filter(x => x !== null).join(' · ')
 
-/** The section: once each source that gives nothing, then each host's lines. */
-export async function drawCapacity($: EngineInterface, { Box, Text }: Pick<Elements['terminal'], 'Box' | 'Text'>) {
-  const view = await read($, capacity)
-  const now = await $.clock.now()
-
-  const old = (at: number) => `${ago(at, now).replace(' ago', '')} old`
-  const wordsOf = (c: CapacityCell): string => {
-    if (c.state === 'unavailable') return `unavailable · ${c.text}${c.sampleAt === null ? '' : ` · sample ${old(c.sampleAt)}`}`
-    if (c.state === 'stale') return `${c.text} · stale, ${c.sampleAt === null ? 'age unknown' : old(c.sampleAt)}`
-    return c.metric === 'busy' ? c.text : `${c.text} · ${ago(c.sampleAt, now)}`
-  }
-  // A host's lines are indented under its name; a line that holds for every host is not.
-  const line = (key: string, c: CapacityCell, indent = 2) => (
-    <Box key={key} flexDirection="row" gap={1} paddingLeft={indent}>
-      <Box width={15} flexShrink={0}>
-        <Text dimColor>{LABEL[c.metric]}</Text>
-      </Box>
-      {c.state === 'unavailable' && <Text color="inactive">○</Text>}
-      {c.state === 'stale' && <Text color="warning">▲</Text>}
-      <Box flexShrink={1}>
-        <Text dimColor={c.state !== 'ok'} tabular>
-          {wordsOf(c)}
-        </Text>
-      </Box>
+/** The table: a row for each host; a host with stuck or waiting lanes opens to them, and `○` says what is missing. */
+export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>) {
+  const [view, open] = await Promise.all([read($, capacity), read($, hostsOpen)])
+  const press = (key: string) => () => void update($, hostsOpen, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
+  const why = view === null ? [] : view.why
+  const hosts = view?.hosts ?? []
+  const hasLanes = hosts.some(at => at.working !== null)
+  const hasCpu = hosts.some(at => at.cpu !== null)
+  const nameCells = Math.max(6, ...hosts.map(at => at.host.length + 3))
+  const cell = (key: string, width: number, words: string, color?: string) => (
+    <Box key={key} width={width} flexShrink={0}>
+      <Text tabular color={color}>{words}</Text>
     </Box>
   )
+  const head = (key: string, width: number, words: string) => (
+    <Box key={key} width={width} flexShrink={0}>
+      <Text dimColor size="caption">{words}</Text>
+    </Box>
+  )
+  const count = (n: number | null): string => (n === null ? '—' : String(n))
 
   return (
     <Box key="capacity" flexDirection="column" padding={1} backgroundColor={CARD_BG}>
       <Box flexDirection="row" gap={1} alignItems="center">
-        <Text weight="semibold">Capacity</Text>
-        <Text dimColor size="caption">{view === null ? 'reading capacity…' : `read ${ago(view.at, now)}`}</Text>
+        <Text weight="semibold">Hosts</Text>
+        {view === null && <Text dimColor size="caption">reading…</Text>}
+        {(why.length > 0 || (view !== null && hosts.length === 0)) && <Button key="hosts-why" plain label="○" onPress={press('?')} />}
       </Box>
-      {view?.missing.map(m => line(`capacity-missing-${m.metric}`, unavailable(m.metric, m.reason), 0))}
-      {view?.hosts.map(({ host, cells }) => (
-        <Box key={`capacity-${host}`} flexDirection="column">
-          <Text weight="semibold">{host}</Text>
-          {cells.map(c => line(`capacity-${host}-${c.metric}`, c))}
+      {open.includes('?') && why.map(w => <Text key={w} dimColor size="caption">{w}</Text>)}
+      {hosts.length > 0 && (
+        <Box flexDirection="row">
+          {head('h-host', nameCells, '  host')}
+          {hasLanes && head('h-working', 9, 'working')}
+          {hasLanes && head('h-stuck', 7, 'stuck')}
+          {hasLanes && head('h-idle', 6, 'idle')}
+          {hasCpu && head('h-cpu', 8, 'CPU')}
+          {head('h-done', 14, 'done/h')}
         </Box>
-      ))}
+      )}
+      {hosts.map(at => {
+        const isOpen = open.includes(at.host)
+        return (
+          <Box key={`capacity-${at.host}`} flexDirection="column">
+            <Box flexDirection="row">
+              <Box width={nameCells} flexShrink={0}>
+                {at.lanes.length > 0 ? <Button key={`host-${at.host}`} plain label={`${isOpen ? '▾' : '▸'} ${at.host}`} onPress={press(at.host)} /> : <Text>{`  ${at.host}`}</Text>}
+              </Box>
+              {hasLanes && cell('working', 9, count(at.working))}
+              {hasLanes && cell('stuck', 7, count(at.stuck), (at.stuck ?? 0) > 0 ? 'warning' : undefined)}
+              {hasLanes && cell('idle', 6, count(at.idle))}
+              {hasCpu && cell('cpu', 8, at.cpu === null ? '—' : `${gauge(at.cpu)} ${Math.floor(at.cpu * 100 + 1e-9)}%`)}
+              {cell('done', 14, doneText(at))}
+              {extras(at) !== '' && <Text color="warning" size="caption">{extras(at)}</Text>}
+            </Box>
+            {isOpen && at.lanes.map(l => <Text key={l.lane} dimColor size="caption">{`     ${l.lane}  ${l.kind}: ${l.reason}`}</Text>)}
+          </Box>
+        )
+      })}
     </Box>
   )
 }

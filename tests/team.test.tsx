@@ -23,13 +23,15 @@ const series = (name: string, values: number[], more: Partial<Series> = {}): Ser
 const daily = (name: string, days: Record<number, number>, more: Partial<Series> = {}): Series[] => Object.entries(days).map(([day, n]) => series(name, [n], { day: Number(day), ...more }))
 const coverage = (metric: string, value: number, more: Partial<Series> = {}): Series => series('metric_coverage', [value], { metric, ...more })
 
-/** What the exporter publishes for team fsl: some series, and none for the first-review latency, the oldest stage age or executing agents. */
+/** What the exporter publishes for team fsl: some series, and none for the first-review latency, the oldest stage age or merged PRs. */
 const SERIES: Series[] = [
-  series('effort_per_verified_path_closure_seconds_24h', [7200, 5400]),
-  series('verified_path_closed_24h', [3, 4]),
-  series('review_prs_with_findings_share_24h', [0.5, 0.25]),
+  ...daily('closures_day', { 6: 1, 5: 0, 3: 5, 1: 2, 0: 7 }),
+  series('wip_active', [3, 4]),
+  series('blocked_issues', [0, 2]),
+  series('pr_cycle_median_seconds_24h', [7200, 5400]),
   series('review_findings_confirmed_high_24h', [0, 2]),
   series('review_findings_confirmed_medium_24h', [0, 0]),
+  series('pr_changes_requested_share', [0.5, 0.25]),
   series('ready_issues', [6, 7]),
 ]
 
@@ -75,145 +77,177 @@ async function setup($: $t, on: Parameters<TestBody>[1], { delta = () => out(DEL
   return w
 }
 
-/** Draws the pane after `wait`; the rows of the keyless ids are opened unless `opened` is false. */
-async function draw($: $t, w: World, wait = 1000, opened = true) {
+type Ui = Awaited<ReturnType<$t['ui']['mount']>>
+const textsOf = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+const buttonsOf = async (ui: Ui) => (await ui.findAll({ type: 'Button' })).map(b => ({ key: b.key ?? '', label: String((b.props as { label?: string }).label ?? '') }))
+
+/** Presses the closed keyless rows. */
+async function openKeyless(ui: Ui) {
+  for (const b of await buttonsOf(ui)) if (b.key.startsWith('unkeyed-') && b.label === '▸') await ui.press({ key: b.key })
+}
+
+/** Presses, once each, every `more` and every `○`. */
+async function openAll(ui: Ui) {
+  for (const b of await buttonsOf(ui)) if (b.key.startsWith('more-') || b.key.startsWith('why-')) await ui.press({ key: b.key })
+}
+
+/** Draws the pane after `wait`, with the keyless rows opened, and every `more` and `○` unless `opened` is false. */
+async function draw($: $t, w: World, wait = 1000, opened = true, keyless = true) {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   await w.clock!.advance(wait)
-  if (opened) for (const b of await ui.findAll({ type: 'Button' })) if (b.key?.startsWith('unkeyed-') && (b.props as { label?: string }).label === '▸') await ui.press({ key: b.key })
+  if (keyless) await openKeyless(ui)
+  if (opened) await openAll(ui)
   const els = async () => (await ui.findAll({ type: 'Text' })).map(t => ({ text: t.text ?? '', color: (t.props as { color?: string }).color }))
   const lines = (await els()).map(e => e.text)
-  const buttons = (await ui.findAll({ type: 'Button' })).map(b => String((b.props as { label?: string }).label ?? ''))
+  const buttons = (await buttonsOf(ui)).map(b => b.label)
   return { ui, lines, els, buttons }
 }
 const after = (lines: string[], label: string) => lines[lines.indexOf(label) + 1]
 const retroCalls = (w: World) => w.ran.filter(l => l.startsWith('ix-board --json retro delta'))
 
-test('a team draws its tiles in three rows: velocity and effort, review quality, flow and capacity', async ($, on) => {
+test('a team draws four rows, Shipping, Flowing, Fed and Review, with the rest behind more', async ($, on) => {
   trace("FR-029-AC-1")
   const w = await setup($, on)
-  const d = await draw($, w)
-  const at = (t: string) => d.lines.indexOf(t)
-  expect(at('Velocity and effort')).toBeGreaterThan(at('fsl'))
-  expect(at('Review quality')).toBeGreaterThan(at('Velocity and effort'))
-  expect(at('Flow and capacity')).toBeGreaterThan(at('Review quality'))
-  expect(at('Verified closures · 24h')).toBeLessThan(at('Review quality'))
-  expect(at('Confirmed findings · high')).toBeGreaterThan(at('Review quality'))
-  expect(at('Ready issues')).toBeGreaterThan(at('Flow and capacity'))
-  expect(after(d.lines, 'Ready issues')).toBe('7')
-  expect(after(d.lines, 'Confirmed findings · high')).toBe('2')
+  const closed = await draw($, w, 1000, false)
+  const at = (t: string) => closed.lines.indexOf(t)
+  expect(['Shipping', 'Flowing', 'Fed', 'Review'].map(at)).toEqual([...['Shipping', 'Flowing', 'Fed', 'Review'].map(at)].sort((a, b) => a - b))
+  expect(at('Shipping')).toBeGreaterThan(at('fsl'))
+  expect(after(closed.lines, 'closed')).toBe('7')
+  expect(after(closed.lines, 'in progress')).toBe('4')
+  expect(after(closed.lines, 'blocked')).toBe('2')
+  expect(after(closed.lines, 'ready')).toBe('7')
+  expect(after(closed.lines, 'PR cycle')).toBe('1.5h')
+  expect(closed.buttons).toContain('▸ more')
+  for (const label of ['findings high', 'changes requested']) expect(closed.lines).not.toContain(label)
+  await closed.ui.press({ key: 'more-fsl' })
+  const open = await textsOf(closed.ui)
+  expect(after(open, 'findings high')).toBe('2')
+  expect(after(open, 'findings medium')).toBe('0')
+  expect(after(open, 'changes requested')).toBe('25%')
+  expect((await buttonsOf(closed.ui)).map(b => b.label)).toContain('▾ more')
+  expect(open.join('\n')).not.toMatch(/closures|Effort|merges \/ hour|with findings|Executing/i)
+  expect(w.queries.filter(q => /verified_path_closed|effort_per|merges_per_hour|with_findings|executing_agents/.test(q))).toEqual([])
+  await closed.ui.unmount()
+})
+
+test('a figure with no value is left out, never 0 or a dash, and its row’s ○ says why', async ($, on) => {
+  trace("FR-029-AC-2", "FR-029-AC-37")
+  const w = await setup($, on)
+  const d = await draw($, w, 1000, false)
+  for (const label of ['first review', 'oldest in stage', 'merged', '—']) expect(d.lines).not.toContain(label)
+  expect(d.lines.join('\n')).not.toContain('no series published')
+  expect((await buttonsOf(d.ui)).filter(b => b.key.startsWith('why-fsl-')).map(b => b.key)).toEqual(['why-fsl-shipping', 'why-fsl-flowing', 'why-fsl-review'])
+  await d.ui.press({ key: 'why-fsl-review' })
+  expect(await textsOf(d.ui)).toContain('  first review: no series published')
+  await d.ui.press({ key: 'why-fsl-shipping' })
+  expect(await textsOf(d.ui)).toContain('  merged: no series published')
+  await d.ui.press({ key: 'why-fsl-review' })
+  expect(await textsOf(d.ui)).not.toContain('  first review: no series published')
   await d.ui.unmount()
 })
 
-test('a metric the exporter publishes no series for reads a dash, never 0', async ($, on) => {
-  trace("FR-029-AC-2")
-  const w = await setup($, on)
+test('each figure draws its history: the last six hours, and for what shipped the last seven days', async ($, on) => {
+  trace("FR-029-AC-3", "FR-029-AC-22")
+  const w = await setup($, on, { published: [...SERIES, ...daily('merged_prs_day', { 2: 12, 1: 2, 0: 124 }), series('merged_prs_day', [40], { day: 4, ago: 600 })] })
   const d = await draw($, w)
-  for (const label of ['First review · median', 'Oldest in a stage', 'Executing agents', 'Changes requested']) expect(after(d.lines, label)).toBe('—')
-  // The ones with series show their value; a zero reading is a 0 and the absent ones are not.
-  expect(after(d.lines, 'Confirmed findings · medium')).toBe('0')
+  expect(after(d.lines, 'PR cycle')).toBe('1.5h')
+  expect(d.lines[d.lines.indexOf('PR cycle') + 2]).toMatch(/^[▁▂▃▄▅▆▇█]+$/)
+  // Seven days, oldest first and today last; `·` for a day with no current sample.
+  expect(d.lines[d.lines.indexOf('closed') + 2]).toBe('▂▁·▆·▃█')
+  expect(after(d.lines, 'merged')).toBe('124')
+  expect(d.lines[d.lines.indexOf('merged') + 2]).toBe('····▂▁█')
   await d.ui.unmount()
 })
 
-test('a share is drawn as a percentage and effort per closure is a duration', async ($, on) => {
-  trace("FR-029-AC-3")
-  const w = await setup($, on)
-  const d = await draw($, w)
-  expect(after(d.lines, 'PRs with findings')).toBe('25%')
-  expect(after(d.lines, 'Effort per closure')).toBe('1.5h')
-  await d.ui.unmount()
-})
+const healthLabel = async (ui: Ui) => (await buttonsOf(ui)).find(b => b.key === 'retro-QSL')!.label
+/** The mark before the health line, with its colour. */
+const healthMarkOf = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => ({ text: t.text ?? '', color: (t.props as { color?: string }).color })).filter(e => /^[◔○]$/.test(e.text))[0]
+/** What the opened health line says. */
+async function healthLines(ui: Ui) {
+  const before = await textsOf(ui)
+  await ui.press({ key: 'retro-QSL' })
+  return (await textsOf(ui)).filter(l => !before.includes(l) && l.startsWith('  '))
+}
+const RUN = '  run: ix-board retro snapshot --config ~/.local/state/team-retro/QSL/config.json'
 
-test('the retro strip draws a mark per class: red for a regressing class, amber for missing values, green for a sound one', async ($, on) => {
-  trace("FR-029-AC-4")
+test('retro health is one line, which says what it checks, what regresses, when it last ran and the command', async ($, on) => {
+  trace("FR-029-AC-4", "FR-029-AC-5")
   const w = await setup($, on)
-  const d = await draw($, w)
-  const els = await d.els()
-  const markOf = (cls: string) => els[els.findIndex(e => e.text === cls) - 1]
-  expect(markOf('flow')).toEqual({ text: '●', color: 'error' })
-  expect(markOf('progress')).toEqual({ text: '●', color: 'success' })
-  expect(markOf('scope')).toEqual({ text: '●', color: 'warning' })
-  // Every metric of the class lacks a value: a hollow mark.
-  expect(markOf('resource')).toEqual({ text: '○', color: 'inactive' })
-  expect(d.lines).toContain('Health · QSL')
+  const d = await draw($, w, 1000, false)
+  expect(await healthLabel(d.ui)).toMatch(/^Health  retro \d+[smhd] old ▸$/)
+  expect(await healthMarkOf(d.ui)).toEqual({ text: '◔', color: 'error' })
+  expect(d.lines.join('\n')).not.toMatch(/prs idle|snapshots/)
+  expect(await healthLines(d.ui)).toEqual([
+    '  checks 8 metrics of progress, flow, scope, resource against stored retro snapshots',
+    '  regressing flow: prs idle',
+    '  no value: scope 1, resource 2',
+    '  last run 2026-11-24T16:23:18Z',
+    RUN,
+  ])
+  expect(await healthLabel(d.ui)).toMatch(/▾$/)
   await d.ui.unmount()
   expect(classesOf([{ id: 'path_remaining', class: 'progress', status: 'ok', regressing: false }]).map(c => c.rating)).toEqual(['green'])
 })
 
-/** The class names of a drawn health strip, in the order drawn: each follows its mark. */
-const drawnClasses = (lines: string[]) => lines.slice(0, lines.indexOf('Capacity')).filter((_, i) => /^[●○]$/.test(lines[i - 1] ?? ''))
-
-test('a metric is drawn in the class its class field names, in the order the answer names the classes', async ($, on) => {
+test('a metric is named in the class its class field names, in the order the answer names the classes', async ($, on) => {
   trace("FR-029-AC-10")
   // Ids ix-board files elsewhere today, and a class and a metric the mod has never heard of.
   const w = await setup($, on, { delta: deltaOf([metric('path_remaining', 'stability', 'ok', true), metric('brand_new_metric', 'quality'), metric('prs_open', 'progress')]) })
-  const d = await draw($, w)
-  expect(drawnClasses(d.lines)).toEqual(['stability', 'quality', 'progress'])
-  await d.ui.press({ key: 'retro-QSL' })
-  expect((await d.ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('stability: path remaining')
+  const d = await draw($, w, 1000, false)
+  const said = await healthLines(d.ui)
+  expect(said[0]).toBe('  checks 3 metrics of stability, quality, progress against stored retro snapshots')
+  expect(said).toContain('  regressing stability: path remaining')
   await d.ui.unmount()
 })
 
-test('a delta from an ix-board that names no class says which version is needed and draws no mark', async ($, on) => {
-  trace("FR-029-AC-11")
-  const w = await setup($, on, { delta: deltaOf([metric('path_remaining', null), metric('prs_idle', null, 'ok', true)]) })
-  const d = await draw($, w)
-  expect(d.lines).toContain('needs ix-board ≥0.11.0')
-  expect(drawnClasses(d.lines)).toEqual([])
-  for (const word of ['progress', 'flow', 'other', 'unclassified', 'retro unavailable', 'no retro baseline']) expect(d.lines).not.toContain(word)
-  expect(d.buttons.filter(b => /regressing|^\d+$/.test(b))).toEqual([])
-  await d.ui.unmount()
-})
-
-test('a metric with no class beside classed ones is drawn as unclassified, last, and in no other class', async ($, on) => {
+test('a metric with no class beside classed ones is counted as unclassified, last', async ($, on) => {
   trace("FR-029-AC-12")
   const w = await setup($, on, { delta: deltaOf([metric('prs_idle', null, 'ok', true), metric('path_remaining', 'progress')]) })
-  const d = await draw($, w)
-  expect(drawnClasses(d.lines)).toEqual(['progress', 'unclassified'])
-  await d.ui.press({ key: 'retro-QSL' })
-  expect((await d.ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('unclassified: prs idle')
+  const d = await draw($, w, 1000, false)
+  const said = await healthLines(d.ui)
+  expect(said[0]).toBe('  checks 2 metrics of progress, unclassified against stored retro snapshots')
+  expect(said).toContain('  regressing unclassified: prs idle')
   await d.ui.unmount()
 })
 
-test('a delta with no metric reads no retro delta yet, with no mark and no warning', async ($, on) => {
-  trace("FR-029-AC-13")
-  const w = await setup($, on, { delta: () => out(JSON.stringify({ team: 'QSL', message: 'no delta: 1 snapshot record(s) in the store, two are needed', metrics: [] })) })
-  const d = await draw($, w)
-  expect(d.lines).toContain('no retro delta yet')
-  expect(d.lines).not.toContain('needs ix-board ≥0.11.0')
-  expect(drawnClasses(d.lines)).toEqual([])
-  expect(d.buttons.filter(b => /regressing|^\d+$/.test(b))).toEqual([])
-  await d.ui.unmount()
-})
-
-test('the strip expands to the regressing metrics, named by class', async ($, on) => {
-  trace("FR-029-AC-5")
-  const w = await setup($, on)
-  const d = await draw($, w)
-  expect(d.buttons).toContain('▸ 1 regressing')
-  expect(d.lines).not.toContain('flow: prs idle')
-  await d.ui.press({ key: 'retro-QSL' })
-  expect(((await d.ui.findAll({ type: 'Text' })).map(t => t.text ?? ''))).toContain('flow: prs idle')
-  await d.ui.unmount()
-})
-
-test('a team whose retro delta fails reads no retro baseline and draws no mark', async ($, on) => {
-  trace("FR-029-AC-6")
-  const w = await setup($, on, { delta: () => out('', 3, 'retro config /x: cannot read') })
-  const d = await draw($, w)
-  expect(d.lines).toContain('no retro baseline')
-  expect(d.lines).not.toContain('flow')
-  await d.ui.unmount()
+/** A delta that gives no data is the line no retro, which says `reason` when pressed, with no warning. */
+async function noRetro($: $t, on: Parameters<TestBody>[1], delta: () => ReturnType<typeof out>, reason: string) {
+  const w = await setup($, on, { delta })
+  const d = await draw($, w, 1000, false)
+  expect(await healthLabel(d.ui)).toBe('Health  no retro ▸')
+  expect(await healthMarkOf(d.ui)).toEqual({ text: '○', color: 'inactive' })
+  expect(d.lines.join('\n')).not.toContain(reason)
+  expect(await healthLines(d.ui)).toEqual(['  checks each department’s metrics against stored retro snapshots', `  ${reason}`, RUN])
+  expect(d.buttons.filter(b => /^\d+$/.test(b))).toEqual([])
   expect(retroCalls(w).length).toBeGreaterThan(0)
+  await d.ui.unmount()
+}
+
+test('a retro delta that names no class is no retro, and says which ix-board is needed', async ($, on) => {
+  trace("FR-029-AC-11")
+  await noRetro($, on, deltaOf([metric('path_remaining', null), metric('prs_idle', null, 'ok', true)]), 'needs ix-board ≥0.11.0')
+})
+
+test('a retro delta with no metric is no retro, and says there is no delta yet', async ($, on) => {
+  trace("FR-029-AC-13")
+  await noRetro($, on, () => out(JSON.stringify({ team: 'QSL', message: 'no delta: 1 snapshot record(s) in the store, two are needed', metrics: [] })), 'no retro delta yet')
+})
+
+test('a retro delta with no configuration to read is no retro, and says there is no baseline', async ($, on) => {
+  trace("FR-029-AC-6")
+  await noRetro($, on, () => out('', 3, 'retro config /x: cannot read'), 'no retro baseline')
 })
 
 for (const [why, failing] of [['exits 1', () => out('', 1, 'ix-board: boom')], ['prints text that is not JSON', () => out('not json')]] as const) {
   test(`a retro delta that ${why} is retro unavailable with a warning, not no baseline`, async ($, on) => {
     trace("FR-029-AC-9")
     const w = await setup($, on, { delta: failing })
-    const d = await draw($, w)
-    expect(d.lines).toContain('retro unavailable')
-    expect(d.lines).not.toContain('no retro baseline')
+    const d = await draw($, w, 1000, false)
+    expect(await healthLabel(d.ui)).toBe('Health  no retro ▸')
     expect(d.buttons).toContain('1')
+    const said = await healthLines(d.ui)
+    expect(said).toContain('  retro unavailable')
+    expect(said).not.toContain('  no retro baseline')
     await d.ui.unmount()
   })
 }
@@ -225,12 +259,12 @@ test('the retro health waits for the session to know its team, and claims nothin
     w.stub.value = (argv, init) => (argv.join(' ') === 'agent-msg whoami' ? w.clock!.sleep(3000).then(() => out('draco:QSL:code  (location)  model unknown')) : prior?.(argv, init))
   } })
   const d = await draw($, w, 1000)
-  expect(d.lines).toContain('Health: reading retro snapshots…')
-  expect(d.lines.join('\n')).not.toMatch(/no retro baseline|no team selected/)
+  expect(d.lines).toContain('○ Health  reading')
+  expect(d.lines.join('\n')).not.toMatch(/no retro|○ Health  no team/)
   expect(retroCalls(w)).toEqual([])
   await w.clock!.advance(4000)
   expect(retroCalls(w)).toEqual([`ix-board --json retro delta --config ${CONFIG}`])
-  expect((await d.ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('Health · QSL')
+  expect(await healthLabel(d.ui)).toMatch(/^Health  retro /)
   await d.ui.unmount()
 })
 
@@ -251,8 +285,7 @@ test('a session with no team to ask for says so and asks for no delta', async ($
     w.whoami.value = undefined
   } })
   const d = await draw($, w, 6000)
-  expect(d.lines).toContain('Health: no team selected')
-  expect(d.lines).not.toContain('Health: no retro baseline')
+  expect(d.lines).toContain('○ Health  no team')
   expect(retroCalls(w)).toEqual([])
   await d.ui.unmount()
 })
@@ -280,14 +313,14 @@ const count = (lines: string[], text: string) => lines.filter(l => l === text).l
 /** The team names of the headings drawn, in order. */
 const headings = (lines: string[], names: string[]) => lines.filter(l => names.includes(l))
 
-test('only the selected team keys have tiles', async ($, on) => {
+test('only the selected team keys have rows', async ($, on) => {
   trace("FR-029-AC-31")
   const w = await setup($, on, { published: THREE })
   const d = await draw($, w)
   expect(headings(d.lines, ['QSL', 'SWM', 'AAA'])).toEqual(['QSL'])
-  expect(count(d.lines, 'Ready issues')).toBe(1)
-  expect(after(d.lines, 'Ready issues')).toBe('4')
-  expect(d.lines.join('\n')).not.toContain('No team series carries the key')
+  expect(count(d.lines, 'ready')).toBe(1)
+  expect(after(d.lines, 'ready')).toBe('4')
+  expect(d.lines.join('\n')).not.toContain('no team series carries')
   await d.ui.unmount()
 })
 
@@ -306,29 +339,33 @@ test('with no team selected every team is drawn, those with a key first', async 
   } })
   const d = await draw($, w, 6000)
   expect(headings(d.lines, ['QSL', 'aaa-id'])).toEqual(['QSL', 'aaa-id'])
-  expect(count(d.lines, 'Ready issues')).toBe(2)
+  expect(count(d.lines, 'ready')).toBe(2)
   await d.ui.unmount()
 })
 
-test('an exporter id with no key is one closed row that opens to its tiles and closes again', async ($, on) => {
+test('an exporter id with no key is one closed row that opens to its rows and closes again', async ($, on) => {
   trace("FR-029-AC-32")
-  const w = await setup($, on, { published: [series('ready_issues', [4], { id: 'keyed', key: 'QSL' }), series('ready_issues', [7]), series('wip_active', [1]), series('blocked_issues', [2], { ago: 1200 })] })
-  const d = await draw($, w, 1000, false)
-  expect(d.lines.slice(d.lines.indexOf('fsl'), d.lines.indexOf('fsl') + 3)).toEqual(['fsl', 'exporter id, no team key', '2 of 17 metrics have a value'])
-  expect(count(d.lines, 'Ready issues')).toBe(1)
-  const texts = async () => (await d.ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  const w = await setup($, on, { published: [series('ready_issues', [4], { id: 'keyed', key: 'QSL' }), series('ready_issues', [7])] })
+  const d = await draw($, w, 1000, false, false)
+  expect(d.lines.slice(d.lines.indexOf('fsl'), d.lines.indexOf('fsl') + 2)).toEqual(['fsl', 'no team key'])
+  expect(count(d.lines, 'ready')).toBe(1)
   await d.ui.press({ key: 'unkeyed-fsl' })
-  expect(count(await texts(), 'Ready issues')).toBe(2)
+  expect(count(await textsOf(d.ui), 'ready')).toBe(2)
   await d.ui.press({ key: 'unkeyed-fsl' })
-  expect(count(await texts(), 'Ready issues')).toBe(1)
+  expect(count(await textsOf(d.ui), 'ready')).toBe(1)
   await d.ui.unmount()
 })
 
-test('a selected team with no series is named, with why the keyless ids cannot be told apart', async ($, on) => {
+test('a selected team with no series is one ○ with its name, which says why', async ($, on) => {
   trace("FR-029-AC-33")
   const w = await setup($, on, { published: [series('ready_issues', [7])] })
-  const d = await draw($, w, 1000, false)
-  expect(d.lines).toContain('No team series carries the key QSL. The exporter ids below have no team_key (ix-board publishes it from 0.12.0), so which team each is cannot be told.')
+  const d = await draw($, w, 1000, false, false)
+  expect(d.buttons).toContain('○ QSL')
+  expect(d.lines.join('\n')).not.toContain('team_key')
+  await d.ui.press({ key: 'why-QSL' })
+  const said = await textsOf(d.ui)
+  expect(said).toContain('  no team series carries the key QSL')
+  expect(said).toContain('  ids with no team_key (published from ix-board 0.12.0) cannot be told apart')
   await d.ui.unmount()
 })
 
@@ -336,7 +373,8 @@ test('a selected team with no series beside keyed ones of others is only named',
   trace("FR-029-AC-33")
   const w = await setup($, on, { published: [series('ready_issues', [9], { id: 'swm', key: 'SWM' })] })
   const d = await draw($, w)
-  expect(d.lines).toContain('No team series carries the key QSL.')
+  expect(d.lines).toContain('  no team series carries the key QSL')
+  expect(d.lines.join('\n')).not.toContain('team_key')
   expect(d.lines).not.toContain('SWM')
   await d.ui.unmount()
 })
@@ -351,7 +389,7 @@ for (const [title, picked] of [
     const w = await setup($, on, { published: THREE, arrange: declaring(picked) })
     const d = await draw($, w)
     expect(headings(d.lines, ['QSL', 'SWM', 'AAA'])).toEqual(['SWM'])
-    expect(after(d.lines, 'Ready issues')).toBe('9')
+    expect(after(d.lines, 'ready')).toBe('9')
     await d.ui.unmount()
   })
 
@@ -364,12 +402,12 @@ for (const focus of ['own', 'team', 'Alpha'])
     await d.ui.unmount()
   })
 
-const closures = (n: number, id: string, key?: string) => series('verified_path_closed_24h', [n], { id, key })
+const closures = (n: number, id: string, key?: string) => series('closures_day', [n], { day: 0, id, key })
 const WIDGET: [string, Series[], string[], string][] = [
-  ['the selected team only', [closures(4, 'fsl', 'QSL'), closures(9, 'swm', 'SWM'), closures(7, 'blank')], ['QSL'], '4 closures / 24h'],
-  ['a lower bound where a selected team has no series', [closures(4, 'fsl', 'QSL')], ['QSL', 'ENG'], '≥4 closures / 24h'],
-  ['no number where no series carries a selected key', [closures(7, 'fsl'), closures(2, 'swarm-tools'), closures(9, 'swm', 'SWM')], ['QSL'], 'closures / 24h unknown · no series carries the key QSL'],
-  ['no number where no series carries any of the selected keys', [closures(9, 'swm', 'SWM')], ['QSL', 'ENG'], 'closures / 24h unknown · no series carries the key QSL, ENG'],
+  ['the selected team only', [closures(4, 'fsl', 'QSL'), closures(9, 'swm', 'SWM'), closures(7, 'blank')], ['QSL'], '4 closed today'],
+  ['a lower bound where a selected team has no series', [closures(4, 'fsl', 'QSL')], ['QSL', 'ENG'], '≥4 closed today'],
+  ['no number where no series carries a selected key', [closures(7, 'fsl'), closures(2, 'swarm-tools'), closures(9, 'swm', 'SWM')], ['QSL'], '— closed today'],
+  ['no number where no series carries any of the selected keys', [closures(9, 'swm', 'SWM')], ['QSL', 'ENG'], '— closed today'],
 ]
 for (const [name, published, teams, text] of WIDGET)
   test(`the widget reads ${name} of the selection`, async ($, on) => {
@@ -377,17 +415,17 @@ for (const [name, published, teams, text] of WIDGET)
     const w = await setup($, on, { published, arrange: declaring({ focus: 'team', teams }) })
     const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'terminal' } as never)
     await w.clock!.advance(1000)
-    expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain(text)
+    expect(await textsOf(ui)).toContain(text)
     await ui.unmount()
   })
 
 test('the band team cell reads the selected team, not the first published', async ($, on) => {
   trace("FR-029-AC-34")
-  const w = await setup($, on, { published: THREE, arrange: declaring({ modules: ['team'] }) })
+  const w = await setup($, on, { published: [closures(9, 'aaa', 'AAA'), closures(4, 'fsl', 'QSL')], arrange: declaring({ modules: ['team'] }) })
   const band = await drawBand($)
   await w.clock!.advance(2000)
   const text = (await band.findAll({ type: 'Text' })).map(t => t.text ?? '').join('')
-  expect(text).toContain('QSL Ready issues 4')
+  expect(text).toContain('QSL closed 4')
   expect(text).not.toContain('AAA')
   await band.unmount()
 })
@@ -401,9 +439,6 @@ function under(lines: string[], team: string, next?: string): string[] {
   const to = next === undefined ? lines.length : lines.indexOf(next)
   return lines.slice(from + 1, to)
 }
-/** One daily row: its seven values, and the trend after them. */
-const row = (lines: string[], label: string) => ({ days: (after(lines, label) ?? '').trim().split(/ +/), trend: lines.slice(lines.indexOf(label) + 2, lines.indexOf(label) + 4).join(' ') })
-
 test('a team is headed by its team key, and the samples of its exporter id from before the label belong to it', async ($, on) => {
   trace("FR-029-AC-17")
   const w = await setup($, on, { published: [
@@ -418,9 +453,9 @@ test('a team is headed by its team key, and the samples of its exporter id from 
   expect(d.lines).not.toContain('fsl')
   expect(d.lines).not.toContain('exporter id, no team key')
   const mine = under(d.lines, 'QSL')
-  expect(after(mine, 'Ready issues')).toBe('9')
-  expect(after(mine, 'Work in progress')).toBe('5')
-  expect(after(mine, 'Blocked')).toBe('2')
+  expect(after(mine, 'ready')).toBe('9')
+  expect(after(mine, 'in progress')).toBe('5')
+  expect(after(mine, 'blocked')).toBe('2')
   await d.ui.unmount()
 })
 
@@ -428,9 +463,9 @@ test('a team no series gives a key is headed by the exporter id and says it has 
   trace("FR-029-AC-18")
   const w = await setup($, on, { published: [series('ready_issues', [2], { key: 'QSL' }), series('ready_issues', [7], { id: 'swarm-tools' }), series('wip_active', [1], { id: 'blank', key: '' })] })
   const d = await draw($, w)
-  expect(after(d.lines, 'swarm-tools')).toBe('exporter id, no team key')
-  expect(after(d.lines, 'blank')).toBe('exporter id, no team key')
-  expect(after(d.lines, 'QSL')).not.toBe('exporter id, no team key')
+  expect(after(d.lines, 'swarm-tools')).toBe('no team key')
+  expect(after(d.lines, 'blank')).toBe('no team key')
+  expect(after(d.lines, 'QSL')).not.toBe('no team key')
   await d.ui.unmount()
 })
 
@@ -444,17 +479,17 @@ test('exporter ids with one team key make one team: counts as lower bounds, dura
   ] })
   const d = await draw($, w)
   expect(d.lines.filter(l => l === 'QSL')).toHaveLength(1)
-  expect(after(d.lines, 'Ready issues')).toBe('≥3')
-  expect(after(d.lines, 'Oldest in a stage')).toBe('2.0h')
+  expect(after(d.lines, 'ready')).toBe('≥3')
+  expect(after(d.lines, 'oldest in stage')).toBe('2.0h')
   await d.ui.unmount()
 })
 
 for (const [title, ages, stages, expected] of [
-  ['a stage not measured and no age above zero reads a dash', [0], [1, 0], ['—', '0% covered']],
-  ['a stage not measured and no age at all reads a dash', [], [1, 0], ['—', '0% covered']],
-  ['a stage not measured beside an older one is a lower bound', [3600], [1, 0], ['≥1.0h', '0% covered']],
-  ['stages all measured read exactly', [0], [1, 1], ['0m']],
-] as [string, number[], number[], string[]][]) {
+  ['a stage not measured and no age above zero is not drawn', [0], [1, 0], null],
+  ['a stage not measured and no age at all is not drawn', [], [1, 0], null],
+  ['a stage not measured beside an older one is a lower bound', [3600], [1, 0], '≥1.0h'],
+  ['stages all measured read exactly', [0], [1, 1], '0m'],
+] as [string, number[], number[], string | null][]) {
   test(`the oldest age: ${title}`, async ($, on) => {
     trace("FR-029-AC-35")
     const w = await setup($, on, { published: [
@@ -463,131 +498,90 @@ for (const [title, ages, stages, expected] of [
       ...stages.map((value, i) => coverage(`stage_oldest_age_seconds_s${i}`, value)),
     ] })
     const d = await draw($, w)
-    const at = d.lines.indexOf('Oldest in a stage')
-    expect(d.lines.slice(at + 1, at + 1 + expected.length)).toEqual(expected)
-    if (expected.length === 1) expect(d.lines[at + 2]).not.toMatch(/covered/)
+    if (expected === null) {
+      expect(d.lines).not.toContain('oldest in stage')
+      expect(d.lines.some(l => /^  oldest in stage: (age not measured|no series published)$/.test(l))).toBe(true)
+    } else expect(after(d.lines, 'oldest in stage')).toBe(expected)
     await d.ui.unmount()
   })
 }
 
-test('effort and changes requested are the exporter’s own series, derived from nothing else', async ($, on) => {
+test('changes requested is the exporter’s own series, derived from nothing else', async ($, on) => {
   trace("FR-029-AC-20")
-  const w = await setup($, on, { published: [
-    series('verified_path_closed_24h', [4]),
-    series('execution_seconds_total', [100, 90000]),
-    series('prs_changes_requested', [2]),
-    series('prs_open', [8]),
-  ] })
+  const w = await setup($, on, { published: [series('prs_changes_requested', [2]), series('prs_open', [8]), series('ready_issues', [1])] })
   const d = await draw($, w)
-  expect(after(d.lines, 'Effort per closure')).toBe('—')
-  expect(after(d.lines, 'Changes requested')).toBe('—')
-  expect(w.queries.filter(q => /execution_seconds_total|prs_changes_requested\b|prs_open/.test(q))).toEqual([])
+  expect(d.lines).toContain('  changes requested: no series published')
+  expect(w.queries.filter(q => /prs_changes_requested\b|prs_open/.test(q))).toEqual([])
   expect(w.queries.some(q => q.includes('ix_team_pr_changes_requested_share)'))).toBe(true)
   await d.ui.unmount()
 })
 
-test('a series that stopped more than a step ago reads a dash and keeps its history', async ($, on) => {
-  trace("FR-029-AC-21")
+test('a series that stopped more than a step ago has no value now, and its why says so', async ($, on) => {
+  trace("FR-029-AC-21", "FR-029-AC-37")
   const w = await setup($, on, { published: [series('ready_issues', [6, 8], { ago: 600 }), series('wip_active', [2, 3], { ago: 300 })] })
   const d = await draw($, w)
-  expect(after(d.lines, 'Ready issues')).toBe('—')
-  expect(d.lines[d.lines.indexOf('Ready issues') + 2]).toMatch(/^[\u2800-\u28ff]+$/)
-  expect(after(d.lines, 'Work in progress')).toBe('3')
+  expect(d.lines).not.toContain('ready')
+  expect(d.lines).toContain('  ready: no current sample')
+  expect(after(d.lines, 'in progress')).toBe('3')
   await d.ui.unmount()
 })
 
-test('the daily rows show the seven days oldest first with today last, and a dash for a day with no current sample', async ($, on) => {
-  trace("FR-029-AC-22")
-  const w = await setup($, on, { published: [
-    ...daily('closures_day', { 6: 1, 5: 0, 3: 5, 1: 2, 0: 7 }),
-    ...daily('merged_prs_day', { 2: 12, 1: 2, 0: 124 }),
-    // A sample that stopped is not a count of its day any more.
-    series('merged_prs_day', [40], { day: 4, ago: 600 }),
-    series('verified_path_closed_24h', [9]),
-  ] })
+test('a day with no sample at all says why, and a day count with none today draws its days', async ($, on) => {
+  trace("FR-029-AC-22", "FR-029-AC-37")
+  const w = await setup($, on, { published: daily('closures_day', { 1: 4 }) })
   const d = await draw($, w)
-  expect(d.lines).toContain('Per UTC day · today so far at right · trend is yesterday’s · — no current sample')
-  expect(row(d.lines, 'Completed').days).toEqual(['1', '0', '—', '5', '—', '2', '7'])
-  expect(row(d.lines, 'Merged PRs').days).toEqual(['—', '—', '—', '—', '12', '2', '124'])
-  expect(after(d.lines, 'Verified closures · 24h')).toBe('9')
-  expect(w.queries.filter(q => q.includes('last_over_time') || q.includes('pr_merges_per_hour_24h)') && q.includes('days_ago'))).toEqual([])
+  expect(d.lines[d.lines.indexOf('closed') + 1]).toBe('·····█·')
+  expect(d.lines).toContain('  closed today: no current sample')
+  expect(d.lines).toContain('  merged: no series published')
   await d.ui.unmount()
 })
 
-for (const [name, days, trend] of [
-  ['above the average of the earlier days', { 3: 2, 2: 4, 1: 5, 0: 0 }, '↑ prior avg 3.0'],
-  ['below it, however large today is', { 3: 2, 2: 4, 1: 1, 0: 99 }, '↓ prior avg 3.0'],
-  ['level with it', { 6: 2, 2: 4, 1: 3 }, '= prior avg 3.0'],
-  ['with no earlier day', { 1: 3, 0: 8 }, 'no earlier day'],
-  ['with no yesterday', { 3: 2, 2: 4, 0: 9 }, ''],
-] as [string, Record<number, number>, string][]) {
-  test(`the daily row says its trend ${name}`, async ($, on) => {
-    trace("FR-029-AC-23")
-    const w = await setup($, on, { published: daily('closures_day', days) })
-    const d = await draw($, w)
-    const at = d.lines.indexOf('Completed')
-    const drawn = d.lines.slice(at + 2, d.lines.indexOf('Merged PRs')).join(' ')
-    expect(drawn).toBe(trend)
-    await d.ui.unmount()
-  })
-}
-
-test('a team with two scopes shows each day as at least the larger count, with no trend', async ($, on) => {
+test('a team with two scopes shows today as at least the larger count', async ($, on) => {
   trace("FR-029-AC-27")
   const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM'] }), published: [
     ...daily('closures_day', { 2: 4, 1: 9 }, { key: 'QSL', scope: 'release' }),
     ...daily('closures_day', { 2: 6, 1: 2, 0: 1 }, { key: 'QSL', scope: 'completion' }),
-    ...daily('closures_day', { 2: 1, 1: 5 }, { id: 'swm', key: 'SWM' }),
+    ...daily('closures_day', { 2: 1, 0: 5 }, { id: 'swm', key: 'SWM' }),
   ] })
   const d = await draw($, w)
-  const mine = under(d.lines, 'QSL', 'SWM')
-  expect(row(mine, 'Completed').days).toEqual(['—', '—', '—', '—', '≥6', '≥9', '≥1'])
-  expect(mine.join(' ')).not.toMatch(/prior avg|no earlier day/)
-  const other = under(d.lines, 'SWM')
-  expect(row(other, 'Completed').days).toEqual(['—', '—', '—', '—', '1', '5', '—'])
-  expect(other.join(' ')).toContain('↑ prior avg 1.0')
+  expect(after(under(d.lines, 'QSL', 'SWM'), 'closed')).toBe('≥1')
+  expect(after(under(d.lines, 'SWM'), 'closed')).toBe('5')
   await d.ui.unmount()
 })
 
 /** A scope the exporter publishes: it says of every scope whether its sources answer. */
 const scoped = (scope: string, more: Partial<Series> = {}): Series => series('source_available', [1], { scope, ...more })
-const COUNT_TILES = ['Verified closures · 24h', 'PR merges / hour', 'Confirmed findings · high', 'Confirmed findings · medium', 'Confirmed findings · low']
+const COUNT_FIGURES = ['findings high', 'findings medium', 'findings low']
 
 test('a team with two scopes shows its 24 hour counts as at least the larger, and one scope shows them exactly', async ($, on) => {
   trace("FR-029-AC-28")
-  // One scope's latest closure sample is a step older than the other's: both are current.
-  const both = (name: string, release: number, completion: number) => [series(name, [release], { key: 'QSL', scope: 'release' }), series(name, [completion], { key: 'QSL', scope: 'completion', ago: name === 'verified_path_closed_24h' ? 300 : 0 })]
+  // One scope's latest sample is a step older than the other's: both are current.
+  const both = (name: string, release: number, completion: number) => [series(name, [release], { key: 'QSL', scope: 'release' }), series(name, [completion], { key: 'QSL', scope: 'completion', ago: name.endsWith('high_24h') ? 300 : 0 })]
   const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM'] }), published: [
-    ...both('verified_path_closed_24h', 4, 6),
-    ...both('pr_merges_per_hour_24h', 0.5, 0.25),
     ...both('review_findings_confirmed_high_24h', 1, 3),
     ...both('review_findings_confirmed_medium_24h', 2, 0),
     ...both('review_findings_confirmed_low_24h', 0, 0),
-    series('verified_path_closed_24h', [2], { id: 'swm', key: 'SWM' }),
-    series('pr_merges_per_hour_24h', [1.5], { id: 'swm', key: 'SWM' }),
+    series('review_findings_confirmed_high_24h', [2], { id: 'swm', key: 'SWM' }),
   ] })
   const d = await draw($, w)
   const mine = under(d.lines, 'QSL', 'SWM')
-  expect(COUNT_TILES.map(label => after(mine, label))).toEqual(['≥6', '≥0.5', '≥3', '≥2', '≥0'])
+  expect(COUNT_FIGURES.map(label => after(mine, label))).toEqual(['≥3', '≥2', '≥0'])
   const other = under(d.lines, 'SWM')
-  expect(COUNT_TILES.map(label => after(other, label))).toEqual(['2', '1.5', '—', '—', '—'])
+  expect(after(other, 'findings high')).toBe('2')
+  expect(other).toContain('  findings low: no series published')
   await d.ui.unmount()
-  const widget = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'terminal' } as never)
-  await w.clock!.advance(1000)
-  expect((await widget.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('≥8 closures / 24h')
-  await widget.unmount()
 })
 
 const CURRENT_COUNTS: [string, string][] = [
-  ['Leaf work remaining', 'scope_leaf_remaining'], ['Work in progress', 'wip_active'], ['Blocked', 'blocked_issues'],
-  ['Ready, unmerged PRs', 'prs_ready_unmerged'], ['Ready issues', 'ready_issues'], ['Executing agents', 'executing_agents'],
+  ['leaf remaining', 'scope_leaf_remaining'], ['in progress', 'wip_active'], ['blocked', 'blocked_issues'],
+  ['ready unmerged PRs', 'prs_ready_unmerged'], ['ready', 'ready_issues'],
 ]
 
 test('a team with two scopes shows its current counts as at least the larger, never their sum, and one scope shows them exactly', async ($, on) => {
   trace("FR-029-AC-30")
   const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM', 'TWO'] }), published: [
     ...CURRENT_COUNTS.flatMap(([, name], i) => [series(name, [i + 1], { key: 'QSL', scope: 'release' }), series(name, [10 + i], { key: 'QSL', scope: 'completion', ago: i % 2 === 0 ? 300 : 0 })]),
-    ...CURRENT_COUNTS.map(([, name], i) => series(name, [i], { id: 'swm', key: 'SWM' })),
+    ...CURRENT_COUNTS.map(([, name], i) => series(name, [i + 20], { id: 'swm', key: 'SWM' })),
     // Only one of this team's two scopes reports a count: the other still makes it a bound.
     series('wip_active', [4], { id: 'one', key: 'TWO' }),
     scoped('release', { id: 'one', key: 'TWO' }),
@@ -595,35 +589,33 @@ test('a team with two scopes shows its current counts as at least the larger, ne
   ] })
   const d = await draw($, w)
   const shown = (team: string, next?: string) => CURRENT_COUNTS.map(([label]) => after(under(d.lines, team, next), label))
-  expect(shown('QSL', 'SWM')).toEqual(['≥10', '≥11', '≥12', '≥13', '≥14', '≥15'])
-  expect(shown('SWM', 'TWO')).toEqual(['0', '1', '2', '3', '4', '5'])
-  expect(shown('TWO')).toEqual(['—', '≥4', '—', '—', '—', '—'])
+  expect(shown('QSL', 'SWM')).toEqual(['≥10', '≥11', '≥12', '≥13', '≥14'])
+  expect(shown('SWM', 'TWO')).toEqual(['20', '21', '22', '23', '24'])
+  expect(after(under(d.lines, 'TWO'), 'in progress')).toBe('≥4')
   expect(w.queries.filter(q => q.includes('sum by'))).toEqual([])
   await d.ui.unmount()
 })
 
 for (const [name, published, shown] of [
-  ['reports none of them', [series('verified_path_closed_24h', [6], { key: 'QSL' }), scoped('completion', { key: 'QSL' }), scoped('release', { key: 'QSL' })], '≥6'],
-  ['reports them without the team key', [series('verified_path_closed_24h', [2], { key: 'QSL' }), series('verified_path_closed_24h', [9], { scope: 'release' })], '≥9'],
-  ['is only the same scope before the key', [series('verified_path_closed_24h', [4]), series('verified_path_closed_24h', [5], { key: 'QSL' }), scoped('completion'), scoped('completion', { key: 'QSL' })], '5'],
+  ['reports none of them', [series('review_findings_confirmed_high_24h', [6], { key: 'QSL' }), scoped('completion', { key: 'QSL' }), scoped('release', { key: 'QSL' })], '≥6'],
+  ['reports them without the team key', [series('review_findings_confirmed_high_24h', [2], { key: 'QSL' }), series('review_findings_confirmed_high_24h', [9], { scope: 'release' })], '≥9'],
+  ['is only the same scope before the key', [series('review_findings_confirmed_high_24h', [4]), series('review_findings_confirmed_high_24h', [5], { key: 'QSL' }), scoped('completion'), scoped('completion', { key: 'QSL' })], '5'],
 ] as [string, Series[], string][]) {
   test(`the 24 hour counts of a team whose other scope ${name} read ${shown}`, async ($, on) => {
     trace("FR-029-AC-29")
-    const w = await setup($, on, { published: [...published, ...daily('closures_day', { 1: 3 }, { key: 'QSL' })] })
+    const w = await setup($, on, { published: [...published, ...daily('closures_day', { 0: 3 }, { key: 'QSL' })] })
     const d = await draw($, w)
-    expect(after(d.lines, 'Verified closures · 24h')).toBe(shown)
-    expect(row(d.lines, 'Completed').days.at(-2)).toBe(shown.startsWith('≥') ? '≥3' : '3')
+    expect(after(d.lines, 'findings high')).toBe(shown)
+    expect(after(d.lines, 'closed')).toBe(shown.startsWith('≥') ? '≥3' : '3')
     await d.ui.unmount()
   })
 }
 
-test('a tile says how much of its population was measured where that is not all of it', async ($, on) => {
+test('more says how much of a figure’s population was measured where that is not all of it', async ($, on) => {
   trace("FR-029-AC-26")
   const w = await setup($, on, { published: [
-    series('executing_agents', [3]),
-    coverage('executing_agents', 0.96875),
-    // No value: the coverage says why.
-    coverage('effort_per_verified_path_closure_seconds_24h', 0.4),
+    series('wip_active', [3]),
+    coverage('wip_active', 0.96875),
     series('stage_oldest_age_seconds', [3600]),
     coverage('stage_oldest_age_seconds_coding', 1),
     coverage('stage_oldest_age_seconds_review', 0.5),
@@ -637,19 +629,16 @@ test('a tile says how much of its population was measured where that is not all 
     coverage('ready_issues', 0.1, { ago: 600 }),
   ] })
   const d = await draw($, w)
-  const tile = (label: string) => d.lines.slice(d.lines.indexOf(label) + 1, d.lines.indexOf(label) + 3)
-  expect(tile('Executing agents')).toEqual(['≥3', '96% covered'])
-  expect(tile('Effort per closure')).toEqual(['—', '40% covered'])
-  expect(tile('Oldest in a stage')).toEqual(['≥1.0h', '50% covered'])
-  expect(tile('Changes requested')).toEqual(['—', '75% covered'])
-  expect(d.lines.filter(l => l.endsWith('% covered'))).toHaveLength(4)
+  expect(after(d.lines, 'in progress')).toBe('≥3')
+  expect(after(d.lines, 'oldest in stage')).toBe('≥1.0h')
+  expect(d.lines.filter(l => l.endsWith('% covered'))).toEqual(['  in progress: 96% covered', '  oldest in stage: 50% covered', '  changes requested: 75% covered'])
   await d.ui.unmount()
 })
 
 for (const [name, published, text] of [
-  ['the closures of all teams', [series('verified_path_closed_24h', [3]), series('verified_path_closed_24h', [4], { id: 'b' })], '7 closures / 24h'],
-  ['at least them where a team has none', [series('verified_path_closed_24h', [3]), series('ready_issues', [1], { id: 'b' })], '≥3 closures / 24h'],
-  ['a dash where no team has any', [series('ready_issues', [1])], '— closures / 24h · no series published'],
+  ['the tickets closed today of all teams', [...daily('closures_day', { 0: 3 }), ...daily('closures_day', { 0: 4 }, { id: 'b' })], '7 closed today'],
+  ['at least them where a team has none', [...daily('closures_day', { 0: 3 }), series('ready_issues', [1], { id: 'b' })], '≥3 closed today'],
+  ['a dash where no team has any', [series('ready_issues', [1])], '— closed today'],
 ] as [string, Series[], string][]) {
   test(`the widget reads ${name}`, async ($, on) => {
     trace("FR-029-AC-24")
@@ -657,27 +646,7 @@ for (const [name, published, text] of [
     const w = await setup($, on, { published, arrange: w => { w.whoami.value = undefined } })
     const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'terminal' } as never)
     await w.clock!.advance(1000)
-    expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain(text)
+    expect(await textsOf(ui)).toContain(text)
     await ui.unmount()
   })
 }
-
-test('a tile and a daily row with no value say why: no series, no current sample, or an age not measured', async ($, on) => {
-  trace("FR-029-AC-37")
-  const w = await setup($, on, { published: [
-    series('ready_issues', [3], { ago: 600 }),
-    series('stage_oldest_age_seconds', [0]),
-    coverage('stage_oldest_age_seconds_review', 0),
-    ...daily('closures_day', { 1: 4 }, {}),
-  ] })
-  const d = await draw($, w)
-  const tile = (label: string) => d.lines.slice(d.lines.indexOf(label) + 1, d.lines.indexOf(label) + 4)
-  expect(tile('Executing agents').slice(0, 2)).toEqual(['—', 'no series published'])
-  expect(tile('Ready issues')).toContain('no current sample')
-  expect(tile('Oldest in a stage').slice(0, 2)).toEqual(['—', '0% covered'])
-  expect(d.lines.slice(d.lines.indexOf('Oldest in a stage'), d.lines.indexOf('Oldest in a stage') + 5)).toContain('age not measured')
-  // The row with no day at all says why; the caption says what a dash among counts means.
-  expect(d.lines).toContain('Per UTC day · today so far at right · trend is yesterday’s · — no current sample')
-  expect(d.lines[d.lines.indexOf('Merged PRs') + 2]).toBe('no series published')
-  await d.ui.unmount()
-})

@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { DailyRow, RetroClass, RetroMeta, RetroView, TeamMeta, TeamMetric, TeamView } from '../types'
-import { CARD_BG, INK, ago, errorText, promRange, sparkline } from './shared'
-import { ACCENT, dots } from './ui/glyphs'
+import { CARD_BG, ago, agoShort, errorText, promRange } from './shared'
+import { ACCENT, daySpark, spark } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
 import { drawCapacity, pollCapacity } from './capacity'
@@ -12,11 +12,11 @@ import { drawRoles, retroTeams } from './roles'
 import { home, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
-// The Team pane: coder velocity, review quality and flow per team, from the same ix_team_* series as
-// Grafana's "Team flow and effort" dashboard, each tile with six hours of history and how much of its population was
-// measured, the completed issues and merged PRs of each of the last seven days, and above them the health of each
-// selected team's departments from its stored retro snapshots and its role evaluations (hooks/roles.tsx). Between
-// those and the teams stands the fleet's capacity by host (hooks/capacity.tsx).
+// The Team pane: for each team four short rows from the ix_team_* series behind Grafana's "Team flow and effort"
+// dashboard, each figure with its history: what shipped (tickets closed and PRs merged, today and the last seven days),
+// what flows, what is ready, and how long review takes, with the rest behind `more`. Under the teams, each team's retro
+// health in one line, its role evaluations (hooks/roles.tsx) and the fleet's hosts (hooks/capacity.tsx). What is
+// missing is one `○` that says why when pressed.
 
 const PANE = 'team'
 const TITLE = 'Team'
@@ -24,10 +24,10 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
-const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-5' })
-/** The exporter ids with no team key whose tiles are open. */
+const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-6' })
+/** What is opened under the teams: `why-<team>-<row>`, `more-<team>` and `unkeyed-<id>`. */
 const teamOpen = atom({ plugin: 'factory-panel', key: 'teamOpen' } as const, [] as string[])
-/** Teams whose health strip lists its regressing metrics. */
+/** Teams whose health line is opened. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
 const retro = atom({ plugin: 'factory-panel', key: 'retro' } as const, [] as RetroView[], { shape: 'retro-1' })
 const retroWarn = atom({ plugin: 'factory-panel', key: 'retroWarn' } as const, false)
@@ -46,46 +46,44 @@ const teamMeta = atom(
 type Combine = 'max' | 'largest'
 type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage' | 'atLeast' | 'reason'> & { series: string; combine: Combine }
 
-// Velocity and effort, then review quality, then flow and capacity. Each tile is one series of the exporter, derived
-// from nothing else: one it does not publish stays in its row as a tile reading "—", never 0.
+// Each figure is one series of the exporter, derived from nothing else.
 const SPECS: Spec[] = [
-  { key: 'closures', group: 'velocity', label: 'Verified closures · 24h', unit: 'count', better: 'up', series: 'ix_team_verified_path_closed_24h', combine: 'largest' },
-  { key: 'effort', group: 'velocity', label: 'Effort per closure', unit: 'seconds', better: 'down', series: 'ix_team_effort_per_verified_path_closure_seconds_24h', combine: 'max' },
-  { key: 'merges', group: 'velocity', label: 'PR merges / hour', unit: 'rate', better: 'up', series: 'ix_team_pr_merges_per_hour_24h', combine: 'largest' },
-  { key: 'cycle', group: 'velocity', label: 'PR cycle · median', unit: 'seconds', better: 'down', series: 'ix_team_pr_cycle_median_seconds_24h', combine: 'max' },
-  { key: 'firstReview', group: 'review', label: 'First review · median', unit: 'seconds', better: 'down', series: 'ix_team_new_pr_first_review_median_seconds_24h', combine: 'max' },
-  { key: 'findingsShare', group: 'review', label: 'PRs with findings', unit: 'share', better: 'down', series: 'ix_team_review_prs_with_findings_share_24h', combine: 'max' },
-  { key: 'high', group: 'review', label: 'Confirmed findings · high', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_high_24h', combine: 'largest' },
-  { key: 'medium', group: 'review', label: 'Confirmed findings · medium', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_medium_24h', combine: 'largest' },
-  { key: 'low', group: 'review', label: 'Confirmed findings · low', unit: 'count', better: 'down', series: 'ix_team_review_findings_confirmed_low_24h', combine: 'largest' },
-  { key: 'changes', group: 'review', label: 'Changes requested', unit: 'share', better: 'down', series: 'ix_team_pr_changes_requested_share', combine: 'max' },
-  { key: 'remaining', group: 'flow', label: 'Leaf work remaining', unit: 'count', better: 'down', series: 'ix_team_scope_leaf_remaining', combine: 'largest' },
-  { key: 'wip', group: 'flow', label: 'Work in progress', unit: 'count', better: 'down', series: 'ix_team_wip_active', combine: 'largest' },
-  { key: 'blocked', group: 'flow', label: 'Blocked', unit: 'count', better: 'down', series: 'ix_team_blocked_issues', combine: 'largest' },
-  { key: 'unmerged', group: 'flow', label: 'Ready, unmerged PRs', unit: 'count', better: 'down', series: 'ix_team_prs_ready_unmerged', combine: 'largest' },
-  { key: 'oldest', group: 'flow', label: 'Oldest in a stage', unit: 'seconds', better: 'down', series: 'ix_team_stage_oldest_age_seconds', combine: 'max' },
-  { key: 'ready', group: 'flow', label: 'Ready issues', unit: 'count', better: 'up', series: 'ix_team_ready_issues', combine: 'largest' },
-  { key: 'agents', group: 'flow', label: 'Executing agents', unit: 'count', better: 'up', series: 'ix_team_executing_agents', combine: 'largest' },
+  { key: 'wip', label: 'in progress', unit: 'count', series: 'ix_team_wip_active', combine: 'largest' },
+  { key: 'blocked', label: 'blocked', unit: 'count', series: 'ix_team_blocked_issues', combine: 'largest' },
+  { key: 'oldest', label: 'oldest in stage', unit: 'seconds', series: 'ix_team_stage_oldest_age_seconds', combine: 'max' },
+  { key: 'ready', label: 'ready', unit: 'count', series: 'ix_team_ready_issues', combine: 'largest' },
+  { key: 'firstReview', label: 'first review', unit: 'seconds', series: 'ix_team_new_pr_first_review_median_seconds_24h', combine: 'max' },
+  { key: 'cycle', label: 'PR cycle', unit: 'seconds', series: 'ix_team_pr_cycle_median_seconds_24h', combine: 'max' },
+  { key: 'remaining', label: 'leaf remaining', unit: 'count', series: 'ix_team_scope_leaf_remaining', combine: 'largest' },
+  { key: 'unmerged', label: 'ready unmerged PRs', unit: 'count', series: 'ix_team_prs_ready_unmerged', combine: 'largest' },
+  { key: 'high', label: 'findings high', unit: 'count', series: 'ix_team_review_findings_confirmed_high_24h', combine: 'largest' },
+  { key: 'medium', label: 'findings medium', unit: 'count', series: 'ix_team_review_findings_confirmed_medium_24h', combine: 'largest' },
+  { key: 'low', label: 'findings low', unit: 'count', series: 'ix_team_review_findings_confirmed_low_24h', combine: 'largest' },
+  { key: 'changes', label: 'changes requested', unit: 'share', series: 'ix_team_pr_changes_requested_share', combine: 'max' },
 ]
+
+/** The rows of a team, and what `more` holds. */
+const ROWS: { id: string; title: string; keys: string[] }[] = [
+  { id: 'flowing', title: 'Flowing', keys: ['wip', 'blocked', 'oldest'] },
+  { id: 'fed', title: 'Fed', keys: ['ready'] },
+  { id: 'review', title: 'Review', keys: ['firstReview', 'cycle'] },
+]
+const MORE = ['remaining', 'unmerged', 'high', 'medium', 'low', 'changes']
+/** Points of a sparkline of the last six hours. */
+const SPARK_CELLS = 12
 
 const DAYS = 7
 const NO_SERIES = 'no series published'
 const NO_SAMPLE = 'no current sample'
 /** The daily rows: the exporter's counts of each UTC day, numbered by `days_ago` with 0 for today. */
 const DAILY: { key: keyof TeamView['days']; label: string; series: string }[] = [
-  { key: 'closures', label: 'Completed', series: 'ix_team_closures_day' },
-  { key: 'merges', label: 'Merged PRs', series: 'ix_team_merged_prs_day' },
+  { key: 'closures', label: 'closed', series: 'ix_team_closures_day' },
+  { key: 'merges', label: 'merged', series: 'ix_team_merged_prs_day' },
 ]
 /** How much of its population the exporter measured, 0 to 1, for the series its `metric` label names. */
 const COVERAGE = 'ix_team_metric_coverage'
 /** Published for every scope of the exporter, so it names a team's scopes even where one counts nothing. */
 const SCOPES = 'ix_team_source_available'
-
-const GROUPS: { id: TeamMetric['group']; title: string }[] = [
-  { id: 'velocity', title: 'Velocity and effort' },
-  { id: 'review', title: 'Review quality' },
-  { id: 'flow', title: 'Flow and capacity' },
-]
 
 /** Reads the team series from Prometheus; false when it failed. */
 export function pollTeam($: EngineInterface, options: Options): Promise<boolean> {
@@ -211,7 +209,7 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
           const shown = isStage && coverage === 0 && !((value ?? 0) > 0) ? null : value
           // Why there is no value: the exporter publishes none for this team, measured none of it, or has stopped.
           const reason = shown !== null ? null : own(series).length === 0 ? NO_SERIES : value !== null ? 'age not measured' : NO_SAMPLE
-          return { key: spec.key, group: spec.group, label: spec.label, unit: spec.unit, better: spec.better, value: shown, atLeast: shown !== null && (isStage || (isCount && isShared)), history: samples.map(([, v]) => v), coverage, reason }
+          return { key: spec.key, label: spec.label, unit: spec.unit, value: shown, atLeast: shown !== null && (isStage || (isCount && isShared)), history: samples.map(([, v]) => v), coverage, reason }
         })
         const days = {} as TeamView['days']
         for (const { day, series } of daily) days[day.key] = dailyRow(own(series), isShared, seconds)
@@ -307,12 +305,7 @@ export function pollRetro($: EngineInterface): Promise<boolean> {
   })
 }
 
-const RATING_MARK: Record<RetroClass['rating'], { mark: string; color: string }> = {
-  red: { mark: '●', color: 'error' },
-  amber: { mark: '●', color: 'warning' },
-  green: { mark: '●', color: 'success' },
-  unknown: { mark: '○', color: 'inactive' },
-}
+const RATING_COLOR: Record<RetroClass['rating'], string> = { red: 'error', amber: 'warning', green: 'success', unknown: 'inactive' }
 
 const format = (m: TeamMetric): string => {
   if (m.value === null) return '—'
@@ -329,27 +322,40 @@ const plain = (m: TeamMetric, value: number): string => {
   return Math.round(value).toLocaleString('en-US')
 }
 
-/**
- * How yesterday, the newest whole day, compares with the average of the earlier days that have a value. Null where
- * yesterday has none, or where the counts are lower bounds, which say nothing of rise or fall.
- */
-function dayTrend({ counts, atLeast }: DailyRow): { mark: string; color: string; text: string } | null {
-  const newest = counts[DAYS - 2]
-  if (atLeast || newest === null || newest === undefined) return null
-  const earlier = counts.slice(0, DAYS - 2).filter((v): v is number => v !== null)
-  if (earlier.length === 0) return { mark: '', color: 'subtle', text: 'no earlier day' }
-  const average = earlier.reduce((a, b) => a + b, 0) / earlier.length
-  const [mark, color] = newest > average ? ['↑', 'success'] : newest < average ? ['↓', 'warning'] : ['=', 'subtle']
-  return { mark, color, text: `prior avg ${average.toFixed(1)}` }
+/** At most `SPARK_CELLS` of the samples, spread over all of them, the last one kept. */
+const thin = (values: readonly number[]): number[] =>
+  values.length <= SPARK_CELLS ? [...values] : Array.from({ length: SPARK_CELLS }, (_, i) => values[Math.round((i * (values.length - 1)) / (SPARK_CELLS - 1))]!)
+
+const configOf = (team: string): string => `~/.local/state/team-retro/${team}/config.json`
+
+/** The mark of a team's retro: its worst class's colour, hollow with no retro. */
+function healthMark(v: RetroView): { mark: string; color: string } {
+  if (v.classes === null) return { mark: '○', color: 'inactive' }
+  const worst = (['red', 'amber', 'green'] as const).find(r => v.classes!.some(c => c.rating === r)) ?? 'unknown'
+  return { mark: '◔', color: RATING_COLOR[worst] }
 }
 
-/** The trend's colour: calm when it moves the right way or holds, amber when it moves the wrong way. */
-const trendInk = (m: TeamMetric): string => {
-  const first = m.history[0]
-  const last = m.history[m.history.length - 1]
-  if (first === undefined || last === undefined || first === last) return INK.calm
-  const rising = last > first
-  return rising === (m.better === 'up') ? INK.calm : INK.warning
+/** The line's words: how old the retro is, or that there is none. */
+function healthWords(v: RetroView, now: number): string {
+  if (v.classes === null) return 'no retro'
+  const at = v.latest === null ? NaN : Date.parse(v.latest)
+  return Number.isFinite(at) ? `retro ${agoShort(at, now)} old` : 'retro'
+}
+
+/** What an opened health line says: what it checks, what regresses, when it last ran and the command that runs it. */
+function healthDetail(v: RetroView): string[] {
+  const command = `run: ix-board retro snapshot --config ${configOf(v.team)}`
+  if (v.classes === null) return [`checks each department’s metrics against stored retro snapshots`, v.reason ?? 'no retro baseline', command]
+  const total = v.classes.reduce((n, c) => n + c.total, 0)
+  const regressing = v.classes.flatMap(c => c.regressing.map(id => `${c.id}: ${id.replaceAll('_', ' ')}`))
+  const unread = v.classes.filter(c => c.unavailable > 0).map(c => `${c.id} ${c.unavailable}`)
+  return [
+    `checks ${total} metrics of ${v.classes.map(c => c.id).join(', ')} against stored retro snapshots`,
+    ...(regressing.length === 0 ? ['nothing regresses'] : regressing.map(r => `regressing ${r}`)),
+    ...(unread.length === 0 ? [] : [`no value: ${unread.join(', ')}`]),
+    `last run ${v.latest ?? 'not said'}`,
+    command,
+  ]
 }
 
 /** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
@@ -361,7 +367,6 @@ export function registerTeam(on: On, options: Options): void {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link } = els
-    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const [list, meta, health, open, rmeta, warnOpen, opened] = await Promise.all([read($, teams), read($, teamMeta), read($, retro), read($, retroOpen), read($, retroMeta), read($, retroWarn), read($, teamOpen)])
     const selected = retroTeams()
     const { shown, unmatched, missing } = viewsOf(list, selected)
@@ -370,125 +375,125 @@ export function registerTeam(on: On, options: Options): void {
 
     if (e.props.placement === 'widget') {
       const headline = headlineViews(list, selected)
-      const closures = headline.map(t => t.metrics.find(m => m.key === 'closures'))
-      const known = closures.flatMap(m => (m === undefined || m.value === null ? [] : [{ value: m.value, atLeast: m.atLeast }]))
-      // A team with no reading, or only a lower bound, makes the sum one, as does a selected team with no series beside
-      // one that has; with no reading at all it is unknown, not 0.
-      const isBound = known.length < closures.length || known.some(m => m.atLeast) || (shown.length > 0 && missing.length > 0)
-      const total = known.length === 0 ? '—' : `${isBound ? '≥' : ''}${Math.round(known.reduce((a, m) => a + m.value, 0))}`
-      const why = known.length > 0 ? '' : ` · ${closures.find(m => m !== undefined && m.reason !== null)?.reason ?? NO_SERIES}`
+      const today = headline.map(t => ({ n: t.days.closures.counts[DAYS - 1] ?? null, atLeast: t.days.closures.atLeast }))
+      const known = today.flatMap(d => (d.n === null ? [] : [{ n: d.n, atLeast: d.atLeast }]))
+      // A team with no count, or only a lower bound, makes the sum one, as does a selected team with no series beside
+      // one that has; with no count at all it is unknown, not 0.
+      const isBound = known.length < today.length || known.some(d => d.atLeast) || (shown.length > 0 && missing.length > 0)
       // Series that carry no selected key are not known to be the selected teams': no number is read from them.
       const isUnmatched = list.length > 0 && selected.length > 0 && shown.length === 0
-      const line = isUnmatched
-        ? `closures / 24h unknown · no series carries the key ${selected.join(', ')}`
-        : headline.length > 0 ? `${total} closures / 24h${why}` : 'no team metrics'
+      const total = isUnmatched || known.length === 0 ? '—' : `${isBound ? '≥' : ''}${known.reduce((a, d) => a + d.n, 0)}`
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{line}</Text>
+          <Text weight="semibold">{`${total} closed today`}</Text>
         </Box>
       )
     }
 
-    const tile = (team: string, m: TeamMetric) => (
-      <Box key={`${team}-${m.key}`} flexDirection="column" minWidth={20} flexGrow={1} padding={1} backgroundColor={CARD_BG}>
-        <Text dimColor size="caption">
-          {m.label}
-        </Text>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text weight="semibold" size="title" tabular>
-              {format(m)}
-            </Text>
-            {m.coverage !== null && m.coverage < 1 && <Text dimColor size="caption">{`${Math.floor(m.coverage * 100 + 1e-9)}% covered`}</Text>}
-          </Box>
-          {!Svg && m.history.length > 0 && <Text color={ACCENT}>{dots(m.history.slice(-24), 1)[0]}</Text>}
-          {Svg && (
-            <Svg
-              source={sparkline(m.history, trendInk(m))}
-              alt={`${m.label}, last six hours, now ${format(m)}`}
-              width={104}
-              height={26}
-            />
-          )}
-        </Box>
-        {m.reason !== null && <Text dimColor size="caption">{m.reason}</Text>}
+    const press = (key: string) => () => void update($, teamOpen, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
+    const lines = (key: string, words: readonly string[]) => (opened.includes(key) ? words.map(w => <Text key={`${key}-${w}`} dimColor size="caption">{`  ${w}`}</Text>) : null)
+    /** A section with nothing: its name and `○`, which says why. */
+    const nothing = (key: string, title: string, why: readonly string[]) => (
+      <Box key={key} flexDirection="column">
+        <Button key={key} plain label={`○ ${title}`} onPress={press(key)} />
+        {lines(key, why)}
       </Box>
     )
 
-    const dailyRows = (t: TeamView) => (
-      <Box key={`${t.team}-daily`} flexDirection="column">
-        <Text dimColor size="caption">
-          {`Per UTC day · today so far at right · trend is yesterday’s${DAILY.some(day => t.days[day.key].counts.includes(null)) ? ' · — no current sample' : ''}`}
-        </Text>
-        {DAILY.map(day => {
-          const { counts, atLeast } = t.days[day.key]
-          const trend = dayTrend(t.days[day.key])
-          const cells = counts.map(v => (v === null ? '—' : `${atLeast ? '≥' : ''}${v}`))
-          const cell = Math.max(4, ...cells.map(c => c.length + 1))
-          // A row with no day at all says why; what a dash among counts means is in the caption.
-          const note = counts.every(v => v === null) ? t.days[day.key].reason : null
-          return (
-            <Box key={`${t.team}-daily-${day.key}`} flexDirection="row" gap={1}>
-              <Box width={10}>
-                <Text dimColor>{day.label}</Text>
-              </Box>
-              <Text tabular>{cells.map(c => c.padStart(cell)).join('')}</Text>
-              {trend !== null && trend.mark !== '' && <Text color={trend.color}>{trend.mark}</Text>}
-              {trend !== null && <Text dimColor>{trend.text}</Text>}
-              {note !== null && <Text dimColor size="caption">{note}</Text>}
-            </Box>
-          )
-        })}
+    const figure = (key: string, label: string, value: string | null, trail: string) => (
+      <Box key={key} flexDirection="row" gap={1}>
+        <Text dimColor>{label}</Text>
+        {value !== null && <Text weight="semibold" tabular>{value}</Text>}
+        {trail !== '' && <Text color={ACCENT}>{trail}</Text>}
       </Box>
     )
+    const metricOf = (t: TeamView, key: string): TeamMetric => t.metrics.find(m => m.key === key)!
+    const metricFigure = (t: TeamView, m: TeamMetric) => figure(`${t.team}-${m.key}`, m.label, format(m), m.history.length > 1 ? spark(thin(m.history)) : '')
+    const absent = (m: TeamMetric) => `${m.label}: ${m.reason}`
 
-    const tiles = (t: TeamView) =>
-      GROUPS.map(g => (
-        <Box key={g.id} flexDirection="column">
-          <Text dimColor size="caption">{g.title}</Text>
-          <Box flexDirection="row" flexWrap="wrap" gap={1}>
-            {t.metrics.filter(m => m.group === g.id).map(m => tile(t.team, m))}
-          </Box>
-          {g.id === 'velocity' && dailyRows(t)}
-        </Box>
-      ))
-
-    // An id with no key may be any team: one closed row says what it has, and opens to its tiles.
-    const unmatchedTeam = (t: TeamView) => {
-      const isOpen = opened.includes(t.team)
-      const valued = t.metrics.filter(m => m.value !== null).length
+    /** One row: its figures, then `○` for those it lacks. */
+    const row = (team: string, id: string, title: string, figures: readonly unknown[], why: readonly string[]) => {
+      const key = `why-${team}-${id}`
       return (
-        <Box key={t.team} flexDirection="column" gap={1}>
-          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
-            <Button key={`unkeyed-${t.team}`} plain label={isOpen ? '▾' : '▸'} onPress={() => void update($, teamOpen, l => (l.includes(t.team) ? l.filter(x => x !== t.team) : [...l, t.team]))} />
-            <Text weight="semibold">{t.team}</Text>
-            <Text dimColor size="caption">exporter id, no team key</Text>
-            <Text dimColor size="caption">{`${valued} of ${t.metrics.length} metrics have a value`}</Text>
+        <Box key={`${team}-${id}`} flexDirection="column">
+          <Box flexDirection="row" gap={2} flexWrap="wrap">
+            <Box width={9} flexShrink={0}>
+              <Text dimColor>{title}</Text>
+            </Box>
+            {figures as never}
+            {why.length > 0 && <Button key={key} plain label="○" onPress={press(key)} />}
           </Box>
-          {isOpen && tiles(t)}
+          {lines(key, why)}
         </Box>
       )
     }
 
-    const healthStrip = (v: RetroView) => {
+    const shipping = (t: TeamView) => {
+      const parts = DAILY.map(day => {
+        const { counts, atLeast, reason } = t.days[day.key]
+        const today = counts[DAYS - 1] ?? null
+        const has = counts.some(v => v !== null)
+        return {
+          drawn: has ? figure(`${t.team}-${day.key}`, day.label, today === null ? null : `${atLeast ? '≥' : ''}${today}`, daySpark(counts)) : null,
+          why: !has ? `${day.label}: ${reason}` : today === null ? `${day.label} today: no current sample` : null,
+        }
+      })
+      return row(t.team, 'shipping', 'Shipping', parts.map(p => p.drawn), parts.flatMap(p => p.why ?? []))
+    }
+
+    const more = (t: TeamView) => {
+      const key = `more-${t.team}`
+      const held = MORE.map(k => metricOf(t, k))
+      const covered = t.metrics.flatMap(m => (m.coverage !== null && m.coverage < 1 ? [`${m.label}: ${Math.floor(m.coverage * 100 + 1e-9)}% covered`] : []))
+      return (
+        <Box key={`${t.team}-more`} flexDirection="column">
+          <Button key={key} plain label={`${opened.includes(key) ? '▾' : '▸'} more`} onPress={press(key)} />
+          {opened.includes(key) && held.filter(m => m.value !== null).map(m => <Box key={`${key}-${m.key}`} paddingLeft={2}>{metricFigure(t, m)}</Box>)}
+          {lines(key, [...held.filter(m => m.value === null).map(absent), ...covered])}
+        </Box>
+      )
+    }
+
+    const rows = (t: TeamView) => (
+      <Box key={`${t.team}-rows`} flexDirection="column">
+        {shipping(t)}
+        {ROWS.map(r => {
+          const held = r.keys.map(k => metricOf(t, k))
+          return row(t.team, r.id, r.title, held.filter(m => m.value !== null).map(m => metricFigure(t, m)), held.filter(m => m.value === null).map(absent))
+        })}
+        {more(t)}
+      </Box>
+    )
+
+    // An id with no key may be any team: one closed line, which opens to its rows.
+    const unmatchedTeam = (t: TeamView) => {
+      const key = `unkeyed-${t.team}`
+      return (
+        <Box key={t.team} flexDirection="column">
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Button key={key} plain label={opened.includes(key) ? '▾' : '▸'} onPress={press(key)} />
+            <Text weight="semibold">{t.team}</Text>
+            <Text dimColor size="caption">no team key</Text>
+          </Box>
+          {opened.includes(key) && rows(t)}
+        </Box>
+      )
+    }
+
+    const unkeyedWhy = unmatched.length > 0 ? ['ids with no team_key (published from ix-board 0.12.0) cannot be told apart'] : []
+    const noSeries = list.length === 0 ? [meta.error ?? 'Prometheus has no ix_team_* series'] : []
+
+    const healthLine = (v: RetroView) => {
       const isOpen = open.includes(v.team)
-      const regressing = v.classes?.flatMap(c => c.regressing.map(id => `${c.id}: ${id.replaceAll('_', ' ')}`)) ?? []
+      const { mark, color } = healthMark(v)
+      const title = health.length > 1 ? `Health · ${v.team}` : 'Health'
       return (
         <Box key={`health-${v.team}`} flexDirection="column">
-          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
-            <Text dimColor size="caption">Health · {v.team}</Text>
-            {v.classes === null && <Text dimColor>{v.reason ?? 'no retro baseline'}</Text>}
-            {v.classes?.map(c => (
-              <Box key={c.id} flexDirection="row" gap={1}>
-                <Text color={RATING_MARK[c.rating].color}>{RATING_MARK[c.rating].mark}</Text>
-                <Text size="caption">{c.id}</Text>
-              </Box>
-            ))}
-            {regressing.length > 0 && (
-              <Button key={`retro-${v.team}`} plain label={isOpen ? '▾ regressing' : `▸ ${regressing.length} regressing`} onPress={() => void update($, retroOpen, l => (l.includes(v.team) ? l.filter(x => x !== v.team) : [...l, v.team]))} />
-            )}
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text color={color}>{mark}</Text>
+            <Button key={`retro-${v.team}`} plain label={`${title}  ${healthWords(v, now)} ${isOpen ? '▾' : '▸'}`} onPress={() => void update($, retroOpen, l => (l.includes(v.team) ? l.filter(x => x !== v.team) : [...l, v.team]))} />
           </Box>
-          {isOpen && regressing.map(r => <Text key={r} color="warning" size="caption">{r}</Text>)}
+          {isOpen && healthDetail(v).map(line => <Text key={line} dimColor size="caption">{`  ${line}`}</Text>)}
         </Box>
       )
     }
@@ -496,48 +501,35 @@ export function registerTeam(on: On, options: Options): void {
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text weight="semibold" size="heading">
-              Team
-            </Text>
-            <Text dimColor size="caption">
-              last 6h
-            </Text>
-          </Box>
+          <Text weight="semibold" size="heading">
+            Team
+          </Text>
           <Box flexDirection="row" gap={1} alignItems="center">
             <Link href={dashboard} label="Grafana" />
             <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollTeam($, options), pollCapacity($, options)])} />
           </Box>
         </Box>
 
-        {health.map(healthStrip)}
-        {health.length === 0 && <Text dimColor size="caption">{rmeta.at === null && rmeta.error === null ? 'Health: reading retro snapshots…' : 'Health: no team selected'}</Text>}
-        {await drawRoles($, els)}
-        {await drawCapacity($, els)}
-
-        {list.length === 0 && (
-          <Box flexDirection="column" padding={1} backgroundColor={CARD_BG}>
-            <Text>No team metrics yet.</Text>
-            <Text dimColor size="footnote">
-              This pane reads the ix_team_* series behind Grafana’s Team flow and effort dashboard. Prometheus has none
-              of them yet; the tiles fill in once their exporter is pushing.
-            </Text>
-          </Box>
-        )}
-
-        {list.length > 0 && missing.length > 0 && (
-          <Text dimColor wrap="wrap">{`No team series carries the key ${missing.join(', ')}.${unmatched.length > 0 ? ' The exporter ids below have no team_key (ix-board publishes it from 0.12.0), so which team each is cannot be told.' : ''}`}</Text>
-        )}
+        {meta.at === null && meta.error === null && <Text dimColor size="caption">reading…</Text>}
+        {list.length === 0 && selected.length === 0 && (meta.at !== null || meta.error !== null) && nothing('why-teams', 'Teams', noSeries)}
         {shown.map(t => (
-          <Box key={t.team} flexDirection="column" gap={1}>
+          <Box key={t.team} flexDirection="column" padding={1} backgroundColor={CARD_BG}>
             <Box flexDirection="row" gap={1} alignItems="center">
               <Text weight="semibold">{t.team}</Text>
-              {!t.keyed && <Text dimColor size="caption">exporter id, no team key</Text>}
+              {!t.keyed && <Text dimColor size="caption">no team key</Text>}
             </Box>
-            {tiles(t)}
+            {rows(t)}
           </Box>
         ))}
+        {(meta.at !== null || meta.error !== null) && missing.map(name => nothing(`why-${name}`, name, [`no team series carries the key ${name}`, ...noSeries, ...unkeyedWhy]))}
         {unmatched.map(unmatchedTeam)}
+
+        <Box key="health" flexDirection="column">
+          {health.map(healthLine)}
+          {health.length === 0 && <Text dimColor>{rmeta.at === null && rmeta.error === null ? '○ Health  reading' : '○ Health  no team'}</Text>}
+        </Box>
+        {await drawRoles($, els)}
+        {await drawCapacity($, els)}
 
         {rmeta.error !== null && warnOpen && rmeta.error.split(' · ').map(x => <Text key={x} color="warning" size="caption">{`ix-board retro: ${x}`}</Text>)}
         <Box flexDirection="row" justifyContent="flex-end" gap={2} alignItems="center">

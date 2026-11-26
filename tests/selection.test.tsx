@@ -148,7 +148,7 @@ test('each module of the module-to-view table, selected in turn, draws its cell'
     ...snapshotOf(),
     escalations: [esc],
     relay: { ok: true, redis: 'ok', watchers: [], warnings: 0, deadLetters: 1, inboxWaiting: 2, checks: [] },
-    teamViews: [{ team: 'QSL', metrics: [{ key: 'k', label: 'Closures', unit: 'count', better: 'up', value: 3, history: [] }] }] as never,
+    teamViews: [{ team: 'QSL', metrics: [{ key: 'k', label: 'Closures', unit: 'count', value: 3, history: [] }], days: { closures: { counts: [3], atLeast: false, reason: '' } } }] as never,
   }
   for (const id of MODULE_IDS) expect(buildCells([id], s).map(c => c.id)).toEqual([id])
 })

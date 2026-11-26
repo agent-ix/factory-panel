@@ -155,22 +155,22 @@ test('local does not draw old numbers as current, and relay is quiet until it ha
   expect(buildCells(['lanes'], snapshot({ boardError: 'timed out' }))[0]?.alert).toBe('ix-board: timed out')
 })
 
-const teamView = (team: string, value: number | null, atLeast = false): TeamView =>
-  ({ team, metrics: [{ key: 'closures', label: 'Verified closures · 24h', unit: 'count', better: 'up', value, atLeast, history: [] }] }) as never
+const teamView = (team: string, today: number | null, atLeast = false): TeamView =>
+  ({ team, metrics: [], days: { closures: { counts: [1, 0, 2, 0, 3, 5, today], atLeast, reason: 'no current sample' } } }) as never
 
-test('the team cell shows the first tile of the first team and is left out when no team has a reading', () => {
+test('the team cell shows the tickets closed today of the first team that has a count, and is left out with none', () => {
   trace("FR-009-AC-7")
   const cells = buildCells(['team'], snapshot({ teamViews: [teamView('ENG', 7), teamView('QSL', 3)] }))
-  expect(text(cells, 'team')).toBe('ENG Verified closures · 24h 7')
-  // A team with no reading is skipped; the next team's first tile shows.
-  expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null), teamView('QSL', 3)] })), 'team')).toBe('QSL Verified closures · 24h 3')
+  expect(text(cells, 'team')).toBe('ENG closed 7')
+  // A team with no count today is skipped.
+  expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null), teamView('QSL', 3)] })), 'team')).toBe('QSL closed 3')
   expect(buildCells(['team'], snapshot({ teamViews: [] }))).toEqual([])
   expect(buildCells(['team'], snapshot({ teamViews: [teamView('ENG', null)] }))).toEqual([])
 })
 
 test('the team cell draws a lower bound as one', () => {
   trace("FR-029-AC-28")
-  expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('QSL', 6, true)] })), 'team')).toBe('QSL Verified closures · 24h ≥6')
+  expect(text(buildCells(['team'], snapshot({ teamViews: [teamView('QSL', 6, true)] })), 'team')).toBe('QSL closed ≥6')
 })
 
 test('every module opens the view the module-to-view map names', () => {
