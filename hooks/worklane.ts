@@ -13,8 +13,8 @@ import { sourceFailed, sourceOk } from './sources'
 
 export const workLanes = atom({ plugin: 'factory-panel', key: 'workLanes' } as const, null as WorkLanes | null, { shape: 'workLanes-1' })
 
-/** The blocked reasons that wait on a person. A repeated sleep or poll line (`wait_loop`) is no such wait. */
-const ASKS = new Set(['permission', 'dialog', 'question', 'queued_question', 'login'])
+/** The blocked reasons of a lane that cannot work: it waits on a person, or on its usage limit. `wait_loop` is none. */
+const ASKS = new Set(['permission', 'dialog', 'question', 'queued_question', 'login', 'usage_limit'])
 
 const QUERIES = {
   states: `timestamp(${STATE})`,

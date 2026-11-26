@@ -406,7 +406,7 @@ export const CHURN_MS = 2 * 60 * 60 * 1000
 /** Lane states older than this say nothing of now. */
 const LANES_OLD_MS = 5 * 60 * 1000
 
-const REASONS: Record<string, string> = { permission: 'blocked on a permission request', dialog: 'blocked on a dialog', question: 'blocked on a question', queued_question: 'blocked on a queued question', login: 'blocked on a login' }
+const REASONS: Record<string, string> = { permission: 'blocked on a permission request', dialog: 'blocked on a dialog', question: 'blocked on a question', queued_question: 'blocked on a queued question', login: 'blocked on a login', usage_limit: 'usage limit' }
 
 /**
  * What is wrong with a lead, where the data says. Stuck: its lane waits on a question, a login or a permission, or a tool

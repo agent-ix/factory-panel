@@ -210,9 +210,12 @@ export function pollCapacity($: EngineInterface, options: Options): Promise<bool
 
 const amount = (v: number): string => String(Math.round(v * 10) / 10)
 const doneText = (at: HostRow): string => (at.done === null ? '—' : `${amount(at.done)}${at.best === null ? '' : ` (best ${amount(at.best)})`}`)
-/** What follows a host's figures, only where there is something to say. */
-const extras = (at: HostRow): string =>
-  [at.needs === null ? null : `needs work ${at.needs}`, at.waiting === 0 ? null : `${at.waiting} waiting`, at.isChurning ? '⏱ 2h' : null].filter(x => x !== null).join(' · ')
+/** What follows a host's figures, only where there is something to say: each a mark and a number, with its words. */
+const notesOf = (at: HostRow): { text: string; words: string }[] => [
+  ...(at.isChurning ? [{ text: '⏱ 2h', words: '⏱ churning: lanes work and nothing was finished for 2 hours' }] : []),
+  ...(at.needs === null ? [] : [{ text: `↓ ${at.needs}`, words: `↓ needs work: ${at.needs} more ready ${at.needs === 1 ? 'ticket' : 'tickets'}` }]),
+  ...(at.waiting === 0 ? [] : [{ text: `◌ ${at.waiting}`, words: `◌ ${at.waiting} ${at.waiting === 1 ? 'lane' : 'lanes'} waiting: repeats a sleep or poll line` }]),
+]
 
 /**
  * The table: a row for each host, a column only where some host has a figure of it. A host with stuck or waiting lanes
@@ -260,6 +263,8 @@ export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pi
       )}
       {hosts.map(at => {
         const isOpen = open.includes(at.host)
+        const notes = notesOf(at)
+        const noted = `notes:${at.host}`
         return (
           <Box key={`capacity-${at.host}`} flexDirection="column">
             <Box flexDirection="row">
@@ -271,8 +276,9 @@ export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pi
               {hasLanes && cell('idle', 6, count(at.idle))}
               {hasCpu && cell('cpu', 8, at.cpu === null ? '—' : `${gauge(at.cpu)} ${Math.floor(at.cpu * 100 + 1e-9)}%`)}
               {hasDone && cell('done', 14, doneText(at))}
-              {extras(at) !== '' && <Text color="warning" size="caption">{extras(at)}</Text>}
+              {notes.length > 0 && <Button key={`notes-${at.host}`} plain label={notes.map(n => n.text).join('  ')} onPress={press(noted)} />}
             </Box>
+            {open.includes(noted) && notes.map(n => <Text key={`${noted}-${n.text}`} dimColor size="caption">{`     ${n.words}`}</Text>)}
             {isOpen && at.lanes.map(l => <Text key={l.lane} dimColor size="caption">{`     ${l.lane}  ${l.kind}: ${l.reason}`}</Text>)}
           </Box>
         )

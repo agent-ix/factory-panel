@@ -110,7 +110,9 @@ async function draw($: $t, w: World, wait = SEC, placement: 'dock' | 'widget' = 
     await ui.press({ key: 'hosts-why' })
     return (await lines()).filter(l => !before.includes(l) && l !== '⚠' && !l.startsWith('updated '))
   }
-  return { ui, lines, section, cells, labels, why }
+  /** What follows a host's figures; undefined where nothing does. */
+  const notes = async (host: string) => ((await ui.find({ key: `notes-${host}` }))?.props as { label?: string } | undefined)?.label
+  return { ui, lines, section, cells, labels, why, notes }
 }
 const reads = (w: World) => w.ran.filter(l => l.startsWith('ix-board --json fleet'))
 const failed = async ($: $t) => ((await $.command.run({ command: 'factory', args: 'show' } as never)).text as string).split('\n').filter(l => l.includes('ix-board fleet ledger:'))
@@ -121,7 +123,8 @@ test('each host is a row of working, stuck and idle lanes, CPU and finished work
   const d = await draw($, w)
   const header = (await d.section()).slice(0, 7)
   expect(header).toEqual(['Hosts', '  host', 'working', 'stuck', 'idle', 'CPU', 'done/h'])
-  expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%', '3 (best 6)', 'needs work 3'])
+  expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%', '3 (best 6)'])
+  expect(await d.notes('draco')).toBe('↓ 3')
   expect(await d.cells('luna')).toEqual(['0', '0', '1', '◕ 99%', '—'])
   expect((await d.section()).join('\n')).not.toMatch(/Busy|Ready deficit|unavailable|of level/)
   await d.ui.unmount()
@@ -191,7 +194,12 @@ test('blocked and stuck lanes are stuck, listed with their reason by a press, an
   }, rowsOf([]))
   const d = await draw($, w)
   expect(await d.labels()).toContain('▸ draco')
-  expect((await d.cells('draco')).filter(c => !/[▸▾]/.test(c))).toEqual(['1', '3', '0', '1 waiting'])
+  expect((await d.cells('draco')).filter(c => !/[▸▾]/.test(c))).toEqual(['1', '3', '0'])
+  expect(await d.notes('draco')).toBe('◌ 1')
+  await d.ui.press({ key: 'notes-draco' })
+  expect(await d.lines()).toContain('     ◌ 1 lane waiting: repeats a sleep or poll line')
+  await d.ui.press({ key: 'notes-draco' })
+  expect((await d.lines()).join('\n')).not.toContain('lane waiting')
   expect((await d.lines()).join('\n')).not.toContain('hub:A:')
   await d.ui.press({ key: 'host-draco' })
   expect((await d.lines()).filter(l => l.includes('hub:A:')).map(l => l.trim())).toEqual([
@@ -227,12 +235,16 @@ test('done/h is the output of the host’s ledger row with the best recorded, an
 for (const [name, deficit, age, shown] of [
   ['above 0', 3, 2, true], ['of 0', 0, 2, false], ['from a sample over 10 minutes old', 3, 11, false],
 ] as [string, number, number, boolean][]) {
-  test(`a shortfall of ready work ${name} ${shown ? 'reads needs work' : 'says nothing'}`, async ($, on) => {
+  test(`a shortfall of ready work ${name} ${shown ? 'reads ↓ with its words by a press' : 'says nothing'}`, async ($, on) => {
     trace("FR-032-AC-6")
     const w = await setup($, on, { lanes: [['draco', 'a', 'idle']], deficit: [['draco', deficit]], deficitAge: age })
     const d = await draw($, w)
-    expect((await d.cells('draco')).includes(`needs work ${deficit}`)).toBe(shown)
-    expect((await d.cells('draco')).join(' ').includes('needs work')).toBe(shown)
+    expect(await d.notes('draco')).toBe(shown ? `↓ ${deficit}` : undefined)
+    expect((await d.lines()).join('\n')).not.toContain('needs work')
+    if (shown) {
+      await d.ui.press({ key: 'notes-draco' })
+      expect(await d.lines()).toContain(`     ↓ needs work: ${deficit} more ready tickets`)
+    }
     await d.ui.unmount()
   })
 }
@@ -249,7 +261,7 @@ for (const [name, lanes, done, most, earlier, shown] of [
     trace("FR-032-AC-7")
     const w = await setup($, on, { lanes: [['draco', 'a', lanes]], most: [['draco', most]], earlier: earlier === null ? [] : [['draco', earlier]] }, rowsOf(done === null ? [] : [row('draco', { output_per_hour: done })]))
     const d = await draw($, w)
-    expect((await d.cells('draco')).includes('⏱ 2h')).toBe(shown)
+    expect((await d.notes('draco'))?.includes('⏱ 2h') === true).toBe(shown)
     await d.ui.unmount()
   })
 }
@@ -276,7 +288,7 @@ for (const [what, ledger, reason, isFailure] of [
     trace("FR-032-AC-8")
     const w = await setup($, on, FULL, ledger)
     const d = await draw($, w)
-    expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%', 'needs work 3'])
+    expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%'])
     expect(await d.section()).not.toContain('done/h')
     expect((await d.lines()).join('\n')).not.toContain(reason)
     expect(await d.ui.find({ key: 'hosts-why' })).toBeUndefined()
@@ -291,7 +303,7 @@ test('a failing Prometheus query leaves out its columns and is said behind the �
   const d = await draw($, w)
   const section = await d.section()
   for (const column of ['working', 'stuck', 'idle', 'CPU']) expect(section).not.toContain(column)
-  expect(await d.cells('draco')).toEqual(['3 (best 6)', 'needs work 3'])
+  expect(await d.cells('draco')).toEqual(['3 (best 6)'])
   expect(await d.why()).toEqual(['ix_fleet_lane_state_ratio: Prometheus 500', 'ix_fleet_host_busy_ratio: Prometheus 500', 'luna done/h: no best recorded in this machine’s ledger'])
   await d.ui.unmount()
 })

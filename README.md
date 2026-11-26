@@ -67,7 +67,7 @@ Each team shows its figures with sparklines in fixed columns, two to a line wher
 
 `Health` is one line a team, `◔ Health  retro 1d ▸` or `○ Health  no retro ▸`; pressed, it says what the retro checks, what regresses, when it last ran and the command that runs it.
 
-`Hosts` has a row a host: `working`, `stuck` and `idle` lanes, `CPU` and `done/h`, with `(best N)` once a best is recorded; a column no host has a figure of is not drawn, and until then a host reads `—` there. Pressing a host lists its stuck lanes with their reasons. A lane the watcher marks `wait_loop` repeats a sleep or poll line, which an agent waiting on a build also does, so it is counted as waiting and not as stuck. `needs work N` is a shortfall of ready tickets, and `⏱ 2h` marks a churning host, one whose lanes have worked with nothing finished for 2 hours.
+`Hosts` has a row a host: `working`, `stuck` and `idle` lanes, `CPU` and `done/h`, with `(best N)` once a best is recorded; a column no host has a figure of is not drawn, and until then a host reads `—` there. Pressing a host lists its stuck lanes with their reasons. A lane the watcher marks `wait_loop` repeats a sleep or poll line, which an agent waiting on a build also does, so it is counted as waiting and not as stuck. After a host’s figures, `↓ N` is a shortfall of N ready tickets, `◌ N` the lanes in a wait loop and `⏱ 2h` a churning host, one whose lanes have worked with nothing finished for 2 hours; pressing them says so in words.
 
 ### When a source fails
 

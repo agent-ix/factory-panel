@@ -57,6 +57,7 @@ test('a lead is stuck where its lane waits on a person or a tool, and churning w
   const flag = (l: WorkLanes | null, turn: number | undefined = NOW - 3 * HOUR, held: ReadonlyMap<string, WorkIssue> = singles, who = lead('QSL-1')) => flagOf(who, l, held, turn, NOW)
   expect(flag(lanes('blocked', 'permission', true, NOW - 2 * HOUR))).toEqual({ kind: 'stuck', since: NOW - 2 * HOUR, why: 'blocked on a permission request' })
   expect(flag(lanes('stuck', null, true, NOW - HOUR))?.why).toBe('a tool call ran past its limit')
+  expect(flag(lanes('blocked', 'usage_limit', true, NOW - HOUR))?.why).toBe('usage limit')
   // A repeated sleep or poll line is no wait on a person.
   expect(flag(lanes('blocked', 'wait_loop'))).toBeNull()
   expect(flag(lanes('working'))).toEqual({ kind: 'churning', since: NOW - 3 * HOUR, why: 'the lane is working, and no ticket, role or PR of it has changed' })
@@ -112,7 +113,7 @@ const STATES: Record<string, [string, string, string | null]> = {
   'QSL-5': ['started', 'Coding', P1],
 }
 
-async function fleet($: $t, on: Parameters<TestBody>[1]): Promise<World & { board: { calls: string[] } }> {
+async function fleet($: $t, on: Parameters<TestBody>[1], reason = 'permission'): Promise<World & { board: { calls: string[] } }> {
   const w = world(on, true)
   w.leads.set(A, working(A, ['QSL-1', 'QSL-2', 'QSL-3']))
   // QSL-3 is held by two leads of the host, and counts once there.
@@ -133,7 +134,7 @@ async function fleet($: $t, on: Parameters<TestBody>[1]): Promise<World & { boar
     if (!q.includes('ix_fleet_lane')) return undefined
     const now = w.clock!.now() / 1000
     const lane = (address: string, state: string) => ({ host: address.split(':')[0]!, lane: address, state })
-    const result = q.startsWith('timestamp(ix_fleet_lane_blocked') ? [series({ host: 'draco', lane: A, reason: 'permission' }, now)]
+    const result = q.startsWith('timestamp(ix_fleet_lane_blocked') ? [series({ host: 'draco', lane: A, reason }, now)]
       : q.startsWith('timestamp(ix_fleet_lane_state') ? [series(lane(A, 'blocked'), now), series(lane(B, 'idle'), now), series(lane(C, 'working'), now)]
       : q.startsWith('max_over_time') ? [series(lane(A, 'working'), now - 2 * 3600)]
       : [series(lane(A, 'working'), now - 20 * 3600)]
@@ -239,5 +240,18 @@ test('under a chosen focus the closed view reads that focus’s status and name,
   expect(w.board.calls.filter(c => c.includes(P2))).toEqual([])
   expect(statuses(w).every(c => c.includes(P1))).toBe(true)
   expect(statuses(w).length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
+test('a lane blocked on its usage limit is stuck and says so when opened, and one in a wait loop is not', async ($, on) => {
+  trace("FR-028-AC-41", "FR-028-AC-45")
+  const w = await fleet($, on, 'usage_limit')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  await openWork(ui, () => w.clock!.advance(MIN), /^host:/)
+  await ui.press({ key: `lead:${A}` })
+  await w.clock!.advance(MIN)
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(lines).toContain('    ⚠ stuck: usage limit, for 2h')
   await ui.unmount()
 })
