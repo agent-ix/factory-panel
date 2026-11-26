@@ -252,13 +252,17 @@ export function pollProjects($: EngineInterface): Promise<boolean> {
     // Until the tickets are read there is no project to name.
     if (ids.length === 0) {
       markStale('projects')
+      // Written only on a change: a write draws the pane again, which asks for this read again.
+      if ((await read($, workNameError)) !== null) await update($, workNameError, () => null)
       return true
     }
     const failed: string[] = []
     const names = await namesOf($, ids.map(id => `project:${id}`), why => failed.push(why))
     // A project no name could be read for is headed by its id; a name read earlier stays.
     await update($, workProjects, held => ({ ...held, ...Object.fromEntries(ids.map(id => [id, names.find(n => n.id === id)?.name ?? held[id] ?? null])) }))
-    await update($, workNameError, () => failed[0] ?? null)
+    // A lead closed while the names were read leaves no heading to warn about.
+    const isStillOpen = openLeads(await read($, workLeads), await read($, workOpen), await $.clock.now()).length > 0
+    await update($, workNameError, () => (isStillOpen ? (failed[0] ?? null) : null))
     if (failed.length > 0) sourceFailed('ix-board', failed[0]!)
     return failed.length === 0
   })
@@ -415,6 +419,8 @@ async function toggle($: EngineInterface, key: string): Promise<void> {
   // The events and Recent keep their own intervals: a source never read is due at once.
   markStale('projects')
   await update($, workOpen, list => (list.includes(key) ? list.filter(k => k !== key) : [...list, key]))
+  // With no lead open no project is read again, so a warning of the last read would stay after ix-board recovers.
+  if (openLeads(await read($, workLeads), await read($, workOpen), await $.clock.now()).length === 0) await update($, workNameError, () => null)
 }
 
 /** The `r` key: the leads, then what is open, whatever was last read. */

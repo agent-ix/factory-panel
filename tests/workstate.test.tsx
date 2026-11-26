@@ -394,3 +394,22 @@ for (const [what, stderr, isRate] of [['a rate limit', 'Linear rate limited; ret
     await ui.unmount()
   })
 }
+
+for (const [what, key] of [['the lead', `lead:${A}`], ['its host', 'host:draco']] as const) {
+  test(`a project name warning leaves the footer when ${what} is closed`, async ($, on) => {
+    trace("FR-028-AC-50")
+    const w = await fleet($, on)
+    const prior = w.stub.value!
+    w.stub.value = (argv, init) => (argv[2] === 'project-chunk' ? out('', 1, 'broke') : prior(argv, init))
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+    await w.clock!.advance(MIN)
+    await openWork(ui, () => w.clock!.advance(1000), /^host:draco/)
+    await ui.press({ key: `lead:${A}` })
+    await w.clock!.advance(MIN)
+    expect(await ui.find({ key: 'warnings-toggle' })).toBeDefined()
+    await ui.press({ key })
+    await w.clock!.advance(1000)
+    expect(await ui.find({ key: 'warnings-toggle' })).toBeUndefined()
+    await ui.unmount()
+  })
+}

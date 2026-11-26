@@ -21,3 +21,10 @@ Ticket: SWM-312. Manual integrity check at head a09a711b354da8a9f474c3445f1ed104
 | --- | --- | --- | --- |
 | FND-001 | low | README and NFR-004 still name agent-msg focuses as a source and a timed call, while FR-020 says the mod never runs it and the code no longer does. | README.md:88 |
 | FND-002 | low | The last focus decision recorded on SWM-312 is a relay named definition by ID. The PR specifies and builds a Linear initiative or project the leads report, and no ticket comment records that change. The build was accepted on the ticket, so only the record needs adding. | spec/functional/FR-020-named-focus-resolution.md:20 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | README and NFR-004 no longer name agent-msg focuses (head 945ad1d) |
+| FND-002 | fixed | a decision record comment on SWM-312 states the final focus model and supersedes the earlier one |

@@ -47,7 +47,7 @@ The mod SHALL draw a Work view that shows where each code lead's tickets stand a
 - A lead is stuck where its lane ([FR-032](./FR-032-fleet-capacity.md) series) is `stuck`, or `blocked` with the reason `permission`, `dialog`, `question`, `queued_question`, `login` or `usage_limit`; `wait_loop` is not stuck. The duration SHALL run from the last sample of the past 24 hours at which the lane was neither blocked nor stuck, else from its first sample of those hours.
 - A lead is churning where its lane is `working` and for 2 hours no agent of it has changed role, status or ticket in `agent-msg work events`, Linear has updated none of its tickets and no PR of them was opened or merged. A repeated report is no change. Linear's update time stands for the ticket's last state change, so a ticket updated in any way within 2 hours is no churn.
 - A lead SHALL be said to be churning only where its report's last read succeeded, the tickets answer is at most 10 minutes old and its read succeeded, and the events were last read at most 5 minutes ago, without error and to the end of the stream.
-- A project name read that fails SHALL NOT be kept as an answer: a Linear rate limit SHALL hold every gated read, any other failure SHALL be held 5 minutes, and the failure SHALL be among the footer's warnings.
+- A project name read that fails SHALL NOT be kept as an answer: a Linear rate limit SHALL hold every gated read, any other failure SHALL be held 5 minutes, and the failure SHALL be among the footer's warnings while a lead is open.
 - Where a lane's state is not known or older than 5 minutes, no change of the lead's agents is known, a ticket of it is unread, its PRs are not known, or every ticket of it is finished, the lead SHALL NOT be said to be churning; with no current lane state it SHALL NOT be said to be stuck.
 - An opened lead SHALL say each of its alerts in words: why its report was not read, what it is blocked on and for how long, that its report is old and since when, or that there is no movement and for how long.
 - An opened lead SHALL list its tickets under a heading for each Linear project, `no project` or `project unknown`, those being worked on first and the finished last. Where tickets are unread it SHALL say how many and why.
@@ -171,7 +171,7 @@ The mod SHALL draw a Work view that shows where each code lead's tickets stand a
 | FR-028-AC-47 | Under a chosen focus with Recent and the list closed, only the chosen focus's status and name are read. | Test |
 | FR-028-AC-48 | A lead is not said to be churning once its tickets or the events are old, failed to be read or are still being caught up. | Test |
 | FR-028-AC-49 | A count with nothing known reads `—` and one that may be short `≥N`, in the pane and the widget, and never 0. | Test |
-| FR-028-AC-50 | A failed project name read is not cached as no name: a rate limit holds every gated read, another failure is held 5 minutes, and either is a warning. | Test |
+| FR-028-AC-50 | A failed project name read is not cached as no name: a rate limit holds every gated read, another failure is held 5 minutes, and either is a warning while a lead is open. | Test |
 
 ## Dependencies
 

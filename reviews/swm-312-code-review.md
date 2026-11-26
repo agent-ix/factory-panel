@@ -26,3 +26,22 @@ Ticket: SWM-312 (also SWM-313). Reviewed PR #18 at head a09a711b354da8a9f474c344
 | FND-005 | medium | projectName answers null for every ix-board failure instead of throwing on a Linear rate limit or auth error. No shared backoff is set, so other reads keep calling during the limit, and the null is held 30 minutes for all sessions with no error shown, against the FR-025 five minute hold. Reproduced: rate-limit stderr leaves backoffUntil null. Fix: throw on failure as roadmapNames does for auth and rate errors, and hold other failures 5 minutes. | hooks/board.ts:299-312 |
 | FND-006 | low | The host stuck count is taken from each lead's first alert only, so a stuck lead whose latest report read failed shows only the not-read mark and is not counted as stuck. A stuck lead folded away under a focus is not counted either. FR-028 says the count is of stuck leads. | hooks/workview.tsx:566-569 |
 | FND-007 | low | A sparkline pads only when a history has fewer than 12 points. A series with 12 to 71 samples, for example 3 hours of data, fills the whole column as if it were 6 hours, with no dot for cells with no sample as FR-029 requires. | hooks/team.tsx:334-336 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | low | A project name warning stays on the Work footer after ix-board recovers if the lead was closed. workNameError is cleared only by a projects read, which runs only with a lead open, so the old failure is shown as current until a lead is opened again. Reproduced at head 945ad1d. Fix: clear it when no lead with projects is open, or drop it once the held failure has passed. | hooks/workview.tsx:248-264 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | churn needs a current tickets answer, a current complete events read and a readable report (head 945ad1d) |
+| FND-002 | fixed | unknown counts read a dash and short ones a lower-bound mark, in the pane and widget (head 945ad1d) |
+| FND-003 | fixed | workLanes waits for the metrics address, on the refresh key too (head 945ad1d) |
+| FND-004 | fixed | small states take one cell first and the rest is shared by largest remainder, ties to the larger count (head 945ad1d) |
+| FND-005 | fixed | a failed project name call throws into the gate, which holds a rate limit or the failure and the Work footer says it (head 945ad1d) |
+| FND-006 | fixed | the host stuck count takes every stuck lead of the host (head 945ad1d) |
+| FND-007 | fixed | each sparkline cell is its own half hour and an empty one is a dot (head 945ad1d) |
+| FND-008 | still-open | found in this pass |
