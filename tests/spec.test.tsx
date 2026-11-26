@@ -61,6 +61,14 @@ test('the help says which keys to use, in the words of the layout', async ($, on
   expect(helpText(true)).not.toMatch(/number at an empty prompt/)
 })
 
+test('with the band off the classic help says to type /factory and does not point at a line or a number', () => {
+  trace("FR-008-AC-2")
+  const text = helpText(false, undefined, 'off')
+  expect(text).toMatch(/See it:\s+type \/factory/)
+  expect(text).not.toMatch(/number at an empty prompt/)
+  expect(text).toMatch(/Choose:/)
+})
+
 test('the help answers see, open more, switch and choose what to display, each with the key or command to use', () => {
   trace("FR-008-AC-1")
   for (const full of [false, true]) {
