@@ -326,13 +326,6 @@ export function reportsProject(w: World, id: string, name: string, lead = 'draco
   w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${id}` ? out(JSON.stringify({ name })) : prior?.(argv, init))
 }
 
-/** A lead of the session's team that reports one project, which ix-board's `project-chunk` names. */
-export function reportsProject(w: World, id: string, name: string, lead = 'draco:QSL:code'): void {
-  w.leads.set(lead, report(lead, `working on ${name}`, ['running'], { projects: [id] }))
-  const prior = w.stub.value
-  w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${id}` ? out(JSON.stringify({ name })) : prior?.(argv, init))
-}
-
 export const NEVER = (): Promise<never> => new Promise<never>(() => undefined)
 /** A call that stays out until its own timeout passes on the moving clock, then fails as the host does. */
 export const hangs = (w: World, init: Init): Promise<never> => w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => { throw new Error(`timed out after ${init?.timeoutMs}ms`) })
