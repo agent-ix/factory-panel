@@ -27,16 +27,14 @@ The mod SHALL narrow the hosts, focuses, tickets and lanes it shows to the scope
 - The default `teams` list SHALL be the session's own team.
 - A `teams` selection SHALL replace the default `teams` list.
 - A `teams` list that names `all` SHALL select every team.
-- The focus setting SHALL be one focus name, or `all`.
+- The focus setting SHALL be one named focus definition by its ID, or `all` ([FR-020](./FR-020-named-focus-resolution.md)).
 - The default focus SHALL be `all`.
 - A focus value of `own` or `team`, typed, stored or declared, SHALL mean `all`.
 - A focus SHALL narrow what is shown within the selected teams.
 - A focus SHALL NOT change or widen the selected teams.
 - With focus `all` the mod SHALL show the lead entries of the selected teams, together under each team in the order the teams are listed, under the team's name where more than one team is shown.
-- The mod SHALL resolve a focus name in the order of [FR-020](./FR-020-named-focus-resolution.md), whose last step is to show, of the selected teams, the focus whose summary equals the name ignoring case, and when none equals it, the focuses whose summary contains the name ignoring case.
-- Where more than one focus matches a name, the mod SHALL show all matches.
-- Where more than one focus matches a name, the mod SHALL say how many matched.
-- Where no focus matches a name, the mod SHALL show no focus and say that it matched nothing.
+- With a chosen definition the Focus view and band SHALL show that definition in place of the lead entries.
+- Where the chosen focus cannot be applied, the mod SHALL show what focus `all` shows and say why.
 - The Work view SHALL narrow its tickets by the focus as [FR-028](./FR-028-work-tab.md) says.
 - Lanes SHALL show only the teams of the `teams` list.
 - Where `agent-msg whoami` fails and no `teams` selection exists, the mod SHALL show every machine, every focus and every team's lanes.
@@ -50,9 +48,9 @@ The mod SHALL narrow the hosts, focuses, tickets and lanes it shows to the scope
 | FR-013-AC-1 | Given focus entries for `host1:QSL:code`, `host2:ENG:code` and `host3:SWM:code`, the session `host1:QSL:plan` and nothing selected, only the QSL entry is shown. | Test |
 | FR-013-AC-2 | Given `teams` of QSL and ENG, the view groups the leads under QSL and ENG, and given every team it shows every entry. | Test |
 | FR-013-AC-3 | Given hosts `local` the band shows only this machine, and given `all` it shows every machine. | Test |
-| FR-013-AC-4 | Given a focus name equal to one summary of the selected teams ignoring case, the band shows exactly that focus, and one of a team that is not selected is not shown. | Test |
-| FR-013-AC-5 | Given a focus name contained in two summaries and equal to neither, the band shows both and says two matched. | Test |
-| FR-013-AC-6 | Given a focus name that matches no summary, the band shows no focus and says nothing matched. | Test |
+| FR-013-AC-4 | Given a chosen definition, the Focus view and band show it in place of the lead entries, and with focus `all` the lead entries of the selected teams. | Test |
+| FR-013-AC-5 | Given a chosen focus nothing is held for, the lead entries of the selected teams stay shown, and what is wrong with the focus is said. | Test |
+| FR-013-AC-6 | Given a stored focus that is not a definition ID, the focus is `all` and a note says so. | Test |
 | FR-013-AC-7 | Given a stored or declared focus of `own` or `team`, in any case, the focus is `all`. | Test |
 | FR-013-AC-8 | Given whoami fails and no `teams` selection, the band shows every machine, every focus and all lanes, and says it could not tell who the session is. | Test |
 | FR-013-AC-9 | Given whoami fails and `teams` of ENG, focuses and lanes show only ENG. | Test |

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { FocusMeta, FocusView, WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLead, WorkPr, WorkRoleEvent } from '../types'
-import { NOTE_EXCLUSIONS } from './namedfocus'
+import { NOTE_EMPTY, NOTE_EXCLUSIONS, isFocusId } from './namedfocus'
 import { isUuid } from './progress'
 
 // The model of the Work tab: what each lead has in hand, from the relay's work reports, joined with what
@@ -230,11 +230,8 @@ const placeOf = (filter: FocusFilter, id: string): Place => (filter.kind === 'na
 
 const lower = (s: string): string => s.toLowerCase()
 
-/** The place one focus gives a ticket no answer of the focus lists, by the project and milestone the ticket is in. */
+/** The place the definition gives a ticket no answer over its members lists, by the ticket's project and milestone. */
 function placeIn(f: FocusView, issue: WorkIssue | undefined): Place {
-  if (f.isUnreadable) return 'unknown'
-  // A lead whose report names no tracker work and no ticket says nothing a ticket can be judged by.
-  if (f.via !== 'definition' && f.selectors.length === 0 && f.tickets.length === 0) return 'unknown'
   if (f.selectors.every(s => s.kind === 'ticket')) return 'out'
   if (issue === undefined || issue.project === undefined) return 'unknown'
   // A ticket in no project is in no project, initiative or milestone.
@@ -256,33 +253,22 @@ function placeIn(f: FocusView, issue: WorkIssue | undefined): Place {
 
 /**
  * The filter of a focus choice, from the focuses held. `key` is what a read for this choice and these teams is asked
- * for. A ticket is of the focus where a focus names it, an answer of ix-board over its members lists it, or its project
- * or milestone is one of them; exclusions of a definition are not applied.
+ * for. A ticket is of the definition where it names it, an answer of ix-board over its members lists it, or its project
+ * or milestone is one of them; exclusions are not applied. Where relay has no definition to apply, the filter is none.
  */
 export function focusFilter(choice: string, key: string, meta: Partial<FocusMeta>, focuses: readonly FocusView[], boards: readonly WorkBoard[]): FocusFilter {
-  const name = choice.trim()
-  if (name === '' || lower(name) === 'all') return ALL_TICKETS
-  const unread: FocusFilter = { kind: 'unread', why: `focus ${name} is not read yet: every ticket is shown` }
-  if (meta.heldFor !== key) return unread
-  const found = focuses.filter(f => f.via !== null && f.via !== undefined)
-  if (found.length === 0) {
-    // That nothing matches is known only after a read that ended with every source answering.
-    const isFailed = (meta.errors ?? []).some(e => e.source === 'agent-msg focuses' || e.source === 'agent-msg work')
-    if (meta.scope !== key || meta.at === null || meta.busy === true || isFailed) return unread
-    return { kind: 'named', place: () => 'out', notes: [`no focus matches "${name}"`] }
-  }
+  if (!isFocusId(choice)) return ALL_TICKETS
+  const unread: FocusFilter = { kind: 'unread', why: 'the focus is not read yet: every ticket is shown' }
+  if (meta.heldFor !== key || meta.chosen === undefined) return unread
+  // Unknown, unavailable or never read: said by the focus's notice, and everything is shown.
+  if (meta.chosen.state === 'unknown' || meta.chosen.state === 'unavailable' || meta.chosen.state === 'unread') return ALL_TICKETS
+  const f = focuses.find(v => v.via === 'definition' && v.address === choice)
+  if (f === undefined) return unread
   const listed = new Set(boards.filter(b => b.ticketsOnly !== true).flatMap(b => b.issues.map(i => lower(i.identifier))))
-  const named = new Set(found.flatMap(f => [...f.tickets, ...f.selectors.filter(s => s.kind === 'ticket').map(s => s.ref)]).map(lower))
+  const named = new Set(f.selectors.filter(s => s.kind === 'ticket').map(s => lower(s.ref)))
   const singles = new Map(boards.filter(b => b.ticketsOnly === true).flatMap(b => b.issues.map(i => [i.identifier, i] as const)))
-  const place = (id: string): Place => {
-    if (named.has(lower(id)) || listed.has(lower(id))) return 'in'
-    const places = found.map(f => placeIn(f, singles.get(id)))
-    return places.includes('in') ? 'in' : places.includes('unknown') ? 'unknown' : 'out'
-  }
-  const notes = [
-    ...found.filter(f => f.isUnreadable).map(f => `the members of ${f.title ?? name} cannot be read`),
-    ...(found.some(f => f.notes.includes(NOTE_EXCLUSIONS)) ? ['the focus’s exclusions are not applied'] : []),
-  ]
+  const place = (id: string): Place => (named.has(lower(id)) || listed.has(lower(id)) ? 'in' : placeIn(f, singles.get(id)))
+  const notes = [...(f.notes.includes(NOTE_EMPTY) ? [NOTE_EMPTY] : []), ...(f.notes.includes(NOTE_EXCLUSIONS) ? ['the focus’s exclusions are not applied'] : [])]
   return { kind: 'named', place, notes }
 }
 

@@ -78,7 +78,11 @@ test('the only agent-msg focuses subcommands the mod runs are list and show', ()
   const subcommands = hooks.flatMap(h => [...h.text.matchAll(/'agent-msg',\s*'focuses',\s*'([a-z-]+)'/g)].map(m => m[1]!))
   assert.ok(subcommands.length >= 2, 'found no agent-msg focuses calls to check')
   assert.deepEqual([...new Set(subcommands)].sort(), ['list', 'show'])
-  // No other spelling of the command (a joined string, a template) is run either.
-  const loose = hooks.flatMap(h => [...h.text.matchAll(/agent-msg focuses ([a-z-]+)/g)].map(m => m[1]!))
+  // No other spelling of the command (a joined string, a template) is run either. The one other mention is the text
+  // that tells a person how a definition is made, which is shown and never run.
+  const hint = "export const CREATE_HINT = 'agent-msg focuses create --file <file.json>'"
+  assert.equal(hooks.filter(h => h.text.includes(hint)).length, 1)
+  assert.ok(!hooks.some(h => /process\.run\([^)]*CREATE_HINT/.test(h.text)))
+  const loose = hooks.flatMap(h => [...h.text.replace(hint, '').matchAll(/agent-msg focuses ([a-z-]+)/g)].map(m => m[1]!))
   for (const word of loose) assert.ok(['list', 'show'].includes(word), `a call or text names agent-msg focuses ${word}`)
 })

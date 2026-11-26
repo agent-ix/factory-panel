@@ -11,7 +11,8 @@
 //   FR-004-AC-5   classic: Esc closes the popup and the prompt has the keyboard again
 //   FR-004-AC-6   fullscreen: `/factory focus` focuses the docked Focus tab
 //   FR-009-AC-8   classic: a digit typed while the prompt holds text goes into the prompt
-//   FR-019-AC-1   /factory show says why these focuses are shown (here a typed name); the card itself holds no prose
+//   FR-019-AC-2   /factory show says why these focuses are shown; the card itself holds no prose
+//   FR-020-AC-4   /factory focus with an unknown name is refused and leaves the choice unchanged
 //   FR-008-AC-5   a first-time user, with only /factory help, opens a view, switches and chooses what to display
 //
 // The session runs with a temporary HOME (see home.mjs), so what it writes, the choice the check makes
@@ -142,15 +143,12 @@ async function classic() {
     s.capture('2c-show')
     check('classic: /factory show says the hosts value came from the user', shown !== null)
     check('classic: /factory show prints the line that says why these focuses are shown', BANNER.test(shown ?? ''), (shown ?? '').slice(-600))
-    s.type('/factory focus Release Train')
+    // No relay holds a definition of this name: it is refused, whole, and the choice stays.
+    s.type('/factory focus No Such Focus')
     s.key('Enter')
-    const named = await s.waitFor(t => /Focus: Release Train/.test(t))
-    check('classic: /factory focus <name> is accepted with spaces', named !== null)
-    s.type('/factory show')
-    s.key('Enter')
-    const reason = await s.waitFor(t => /^\s*your choice: Release Train/m.test(t))
-    s.capture('2d-show-name')
-    check('classic: /factory show says your choice: Release Train', reason !== null, s.capture().slice(-600))
+    const refused = await s.waitFor(t => /The focus is unchanged/.test(t) && /No Such Focus/.test(t))
+    s.capture('2d-focus-refused')
+    check('classic: /factory focus with a name relay does not have is refused and says so', refused !== null, s.capture().slice(-600))
     s.type('/factory focus all')
     s.key('Enter')
     await s.waitFor(t => /Focus: all/.test(t))

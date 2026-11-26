@@ -59,12 +59,13 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - Pressing `Focus` SHALL list the choices of [FR-020](./FR-020-named-focus-resolution.md), the chosen one marked, and pressing one SHALL choose it and close the list.
 - A choice SHALL be saved in the user's choice file as `/factory teams` and `/factory focus` save it, and a choice that cannot be saved SHALL be said.
 - The leads listed SHALL be those of the selected teams, whatever the focus.
-- Under a named focus a lead's tickets SHALL be only those of the focus. A ticket is of the focus where the focus names it, where a focus status answer over the focus's members lists it, or where `ix-board issues` places it in a project or milestone of the focus. The members of a focus found by lead address or summary are that lead's reported scope and focus tickets.
-- A ticket whose place is not known (its project not said, the ticket not read or unknown to Linear, a member of the focus without a known id, or a definition whose members cannot be read) SHALL NOT be dropped: it SHALL be listed under its lead behind `▸ N tickets with unknown project`. A ticket SHALL be left out of a focus only where every project of the focus is known.
+- Under a named focus a lead's tickets SHALL be only those of the focus. A ticket is of the focus where the definition names it, where a focus status answer over the definition's members lists it, or where `ix-board issues` places it in a project or milestone of the definition.
+- A ticket whose place is not known (its project not said, the ticket not read or unknown to Linear, or a member of the focus without a known id) SHALL NOT be dropped: it SHALL be listed under its lead behind `▸ N tickets with unknown project`. A ticket SHALL be left out of a focus only where every project of the focus is known.
 - Where a focus definition has exclusions, the view SHALL say they are not applied.
 - A lead that was read and has no ticket in the focus and none of unknown place SHALL be folded into one line, `▸ N leads with nothing in this focus`, which shows and hides their addresses and how many tickets each has outside it. A lead whose report could not be read SHALL stay listed as without a focus.
-- Where no focus matches the name, the view SHALL say `no focus matches "<name>"`.
-- Until the members of the chosen focus are read, and where they could not be, the view SHALL show every ticket and say `focus <name> is not read yet: every ticket is shown`.
+- Where the focus selects nothing, the view SHALL say `this focus selects nothing`.
+- Until the chosen focus is read, the view SHALL show every ticket and say `the focus is not read yet: every ticket is shown`.
+- Where the chosen focus cannot be applied ([FR-020](./FR-020-named-focus-resolution.md)), the view SHALL show every ticket and say why.
 
 ### Recent
 
@@ -141,8 +142,8 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-33 | A lead with nothing in the focus is counted in one line that shows and hides its address. | Test |
 | FR-028-AC-34 | Under a named focus Recent lists only the role events of its tickets and says how many of unknown project it leaves out, and the widget counts its leads and tickets with those of unknown project apart. | Test |
 | FR-028-AC-35 | A lead whose report cannot be read stays listed under a named focus. | Test |
-| FR-028-AC-36 | A focus that matches nothing is said to, and every lead read is folded. | Test |
-| FR-028-AC-37 | Where the focus cannot be read every ticket is shown with the reason. | Test |
+| FR-028-AC-36 | A focus that selects nothing is said to, and every lead that was read is folded. | Test |
+| FR-028-AC-37 | Where the chosen focus cannot be read, every ticket is listed and the view says why. | Test |
 | FR-028-AC-38 | The header's choices list the teams and the focus names, save what is pressed and show it. | Test |
 
 ## Dependencies

@@ -157,23 +157,28 @@ export type FocusView = {
   warnings: FocusWarning[]
   /** The name shown in place of the address: a named focus definition's name. */
   title: string | null
-  /** How the focus was found when the choice is a name: a definition, a lead address or a lead summary. */
-  via: 'definition' | 'lead' | 'summary' | null
+  /** `definition` for the chosen focus definition; null for a lead's own focus. */
+  via: 'definition' | null
   /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, earlier outcome. */
   notes: string[]
   /** What the focus is made of: a definition's members, or a lead's reported scope. */
   selectors: { kind: 'initiative' | 'project' | 'milestone' | 'ticket'; ref: string; project?: string; label?: string }[]
-  /** The tickets the lead's own focus names. */
-  tickets: string[]
-  /** True for a definition whose members cannot be read. */
-  isUnreadable: boolean
 }
+
+/** A focus definition `agent-msg focuses list` prints; `name` is null, with `reason`, for one that cannot be used. */
+export type FocusDefinition = { id: string; name: string | null; team: string | null; reason: string | null }
+
+/**
+ * What the last read found of the chosen definition: `unknown` where relay has none of that ID, `unavailable` where
+ * it cannot be used, `unread` where relay could not be asked and `stale` where it could not be asked again.
+ */
+export type ChosenFocus = { id: string; name: string | null; state: 'active' | 'archived' | 'unknown' | 'unavailable' | 'unread' | 'stale'; reason?: string }
 
 /** A source's error, shown on the pane and in `/factory show`. */
 export type SourceError = { source: string; text: string }
 
 /** `scope` is the focus and teams the last finished read was made for, `heldFor` those the focuses held were found for. */
-export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string; heldFor?: string }
+export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string; heldFor?: string; chosen?: ChosenFocus; /** absent until a list of definitions has been read */ definitions?: FocusDefinition[] }
 
 // ---------------------------------------------------------------- Escalations and Relay panes
 
@@ -321,8 +326,8 @@ export type WorkLeadFocus = { summary: string; tickets: string[]; at: number | n
  */
 export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number; /** the teams of every lead `agent-msg who` lists */ teams: string[] }
 
-/** The choice open under the Work tab's header, the focus names it offers and why it failed. */
-export type WorkPicker = { open: 'teams' | 'focus' | null; names: string[]; error: string | null }
+/** The choice open under the Work tab's header, and why a choice failed. */
+export type WorkPicker = { open: 'teams' | 'focus' | null; error: string | null }
 
 /** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
 export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }

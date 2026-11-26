@@ -38,7 +38,7 @@ What is shown is decided one feature at a time, from the first of these that sel
 2. A declaration an agent wrote for this session, usually because a skill told it to.
 3. The automatic view from the relay.
 
-The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `work`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus (`all` or a focus name) and the teams list.
+The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `work`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus (`all` or a focus definition ID) and the teams list.
 
 | Command | Effect |
 | --- | --- |
@@ -55,18 +55,13 @@ Your choices are kept in `~/.ix/factory-panel/choices/<key>.json`. The key is th
 
 A skill selects cells for its agent by telling it to write `~/.ix/factory-panel/features/<key>.json` for its own key. The file is a JSON object with the optional keys `modules`, `hosts`, `focus` and `teams`. Writing it replaces everything an earlier write selected, and the mod re-reads it on every refresh. `/factory help` prints a snippet to paste into a skill. A file that is not a JSON object, or a value of the wrong kind, is ignored with one note naming the file and the reason. The mod never writes a declaration.
 
-The first line of the Focus pane, and a line of `/factory show`, says why these focuses are shown: `your choice: <name>`, `could not tell who this session is, showing every focus`, `focuses of every team`, `focuses of <teams>` or `no focus reported by <teams>`. A name that matches nothing adds the line `no focus matches "<name>"`. `/factory show` and a choice command read the focuses themselves when no view has, through the same gates, and wait up to 5 seconds. Until a read has ended they say `focus data: not read yet` and claim neither that no focus is reported nor that none matches; afterwards they say how old the data is.
+The first line of the Focus pane, and a line of `/factory show`, says why these focuses are shown: `your choice: <name>`, `could not tell who this session is, showing every focus`, `focuses of every team`, `focuses of <teams>` or `no focus reported by <teams>`. A chosen focus that is archived, unavailable, unread or unknown to relay adds a line saying so. `/factory show` and a choice command read the focuses themselves when no view has, through the same gates, and wait up to 5 seconds. Until a read has ended they say `focus data: not read yet` and claim neither that no focus is reported nor that none matches; afterwards they say how old the data is.
 
-### Name resolution
+### Focus definitions
 
-`/factory focus <name>` looks the name up in this order and stops at the first step that matches:
+A focus is `all` or one named focus definition of ix-relay (`agent-msg focuses`). `/factory focus <name or ID>` asks relay for the exact name or ID and stores the ID; the views show the name. An unknown name, or one that definitions of two teams share, is refused with the definitions listed, and your choice stays as it was. Nothing else is matched: not lead addresses, focus summaries or parts of names. The mod only runs `agent-msg focuses list` and `show`. Where relay has no definition, the Work tab says so; one is created with `agent-msg focuses create --file <file.json>`.
 
-1. The keyword `all` (`own` and `team` mean the same).
-2. A named focus definition. The mod reads them with `agent-msg focuses list --json` and then `agent-msg focuses show <focus_id> --json` for the match, and never creates, changes or archives one. A definition matches by its name or its `focus_id`, ignoring case, when it is active and belongs to your team (every team when the relay cannot tell who you are). Its progress is computed over its `include` members. Exclusions are not applied, and the pane says so. A definition that selects nothing, or whose selection cannot be read, is named with that reason and shows no progress. Two definitions with the same name are both shown, with the count. A row `list` marks unavailable matches by its `focus_id` only and shows the reason.
-3. A lead address, as `host:team:segment` or `team:segment`, ignoring case. A `team:segment` that matches leads on several hosts shows every match, with the count.
-4. A lead's focus summary: the summary equal to the name ignoring case, else those that contain it.
-
-The lookup runs again on every refresh while your choice is a name, so a definition whose members change is followed. If `agent-msg focuses` fails, times out (after 5 seconds) or prints something that is not JSON, the pane shows its error and carries on with steps 3 and 4. No named focus needs to exist.
+The definition is read again on every refresh. Progress is computed over its `include` members. Exclusions are not applied, and the views say so. An archived definition stays chosen and is labeled. A stored value that is not a definition ID, an ID relay does not know and an unavailable definition each show everything of your teams, with a line saying why. A failed or slow (5 seconds) `agent-msg focuses` is shown as an error; what was read before is kept and labeled as last read.
 
 ### When a source fails
 

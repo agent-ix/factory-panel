@@ -62,8 +62,6 @@ const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
     via: null,
     notes: [],
     selectors: [],
-    tickets: [],
-    isUnreadable: false,
     },
   ],
   escalations: [],

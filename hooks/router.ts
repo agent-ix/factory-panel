@@ -1,14 +1,15 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
-import { choiceApplied, focusBannerNow, focusDetailNow, readForCommand } from './focus'
+import { choiceApplied, focusBannerNow, focusDetailNow, focusHeld, readForCommand } from './focus'
 import { readRecords } from './progress'
 import { SOURCE_NAMES, selectorErrorList, sourceState } from './sources'
 import { ALL, clearChoice, focusValue, getSelection, normalizeModules, refreshSelection, writeChoice } from './selection'
 import type { Feature, Selection } from './selection'
 import { defaultView, isViewId, showView } from './views'
 import type { ViewId } from './views'
-import { ago } from './shared'
+import { choicesText, listDefinitions, showDefinition } from './namedfocus'
+import { ago, errorText } from './shared'
 import type { Options } from './shared'
 
 // The one command. `/factory` opens the detail, `/factory <view>` opens that view, `use`, `focus`,
@@ -25,14 +26,14 @@ export const snippetFor = (sel: Selection): string => {
     'Skill snippet (the agent writes this file for its own session; writing it again replaces the earlier choice):',
     `  Write ~/.ix/factory-panel/features/${sel.key}.json with this content:`,
     `  ${JSON.stringify(example)}`,
-    `  Keys, all optional: modules (${VALID_MODULES}), hosts (${VALID_HOSTS}), focus (all or a focus name), teams (a list of team names, or ["all"]).`,
+    `  Keys, all optional: modules (${VALID_MODULES}), hosts (${VALID_HOSTS}), focus (all or a focus definition ID), teams (a list of team names, or ["all"]).`,
   ].join('\n')
 }
 
 const CHOICE_HELP = [
   '  Choose:      what to display (your choice beats a skill\'s, which beats the automatic view)',
   '    /factory use queue,lanes     the modules, in this order',
-  '    /factory focus Release Train the tickets of one focus, within the teams; all clears it',
+  '    /factory focus Release Train one relay focus definition, by name or ID, within the teams; or all',
   '    /factory teams QSL,ENG       the teams whose leads and lanes show; all is every team',
   '    /factory hosts all           all | local machines',
   '    /factory show                what is shown and where each value came from',
@@ -88,11 +89,13 @@ export const showText = async ($: EngineInterface, sel: Selection): Promise<stri
   // The state the panes keep is the host's; a caller without it just has no banner line.
   const banner = await focusBannerNow($, sel).catch(() => null)
   const detail = await focusDetailNow($, sel).catch(() => [])
+  const chosen = await focusHeld($).then(held => held.meta.chosen, () => undefined)
+  const focus = chosen?.id === sel.focus.value && chosen.name !== null ? `${chosen.name} (${sel.focus.value})` : sel.focus.value
   return [
     id.status === 'detected' ? `Session key: ${sel.key} (address ${id.address}, third segment: ${id.segment})` : `Session key: ${sel.key} (could not tell who this session is)`,
     line('modules', sel.modules.value.join(', '), sel.modules.source),
     line('hosts', sel.hosts.value, sel.hosts.source),
-    line('focus', sel.focus.value, sel.focus.source),
+    line('focus', focus, sel.focus.source),
     line('teams', sel.teams.value.length > 0 ? sel.teams.value.join(', ') : 'every team', sel.teams.source),
     ...(banner === null ? [] : [banner]),
     ...detail,
@@ -111,6 +114,26 @@ const readFocuses = ($: EngineInterface, changed: boolean): Promise<void> => rea
 async function applied($: EngineInterface, lead: string): Promise<string> {
   const sel = await choiceApplied($)
   return `${lead}\n${await showText($, sel)}`
+}
+
+/**
+ * The definition relay resolves a reference to: its ID, and its name to say. Where it names none that can be chosen,
+ * `id` is null and `message` says why and lists those that can.
+ */
+async function chooseDefinition($: EngineInterface, reference: string): Promise<{ id: string | null; message: string }> {
+  const refused = async (why: string): Promise<{ id: null; message: string }> => {
+    const valid = await listDefinitions($).then(choicesText, error => `The definitions could not be listed: ${errorText(error)}`)
+    return { id: null, message: `${why}. The focus is unchanged.\n${valid}` }
+  }
+  try {
+    const answer = await showDefinition($, reference)
+    if (answer.kind !== 'found') return refused(answer.message)
+    const { focusId, name, isArchived } = answer.definition
+    if (isArchived) return refused(`${name ?? focusId} is archived`)
+    return { id: focusId, message: name ?? focusId }
+  } catch (error) {
+    return { id: null, message: `Could not ask relay for the focus: ${errorText(error)}. The focus is unchanged.` }
+  }
 }
 
 async function choose($: EngineInterface, command: string, rest: string): Promise<string> {
@@ -132,8 +155,12 @@ async function choose($: EngineInterface, command: string, rest: string): Promis
       return failed(() => writeChoice($, c => ({ ...c, modules })), `Showing ${modules.join(', ')}.`)
     }
     case 'focus': {
-      const value = focusValue(rest)
-      return failed(() => writeChoice($, c => ({ ...c, focus: value })), `Focus: ${value}.`)
+      const reference = focusValue(rest)
+      if (reference === ALL) return failed(() => writeChoice($, c => ({ ...c, focus: ALL })), 'Focus: all.')
+      const found = await chooseDefinition($, reference)
+      if (found.id === null) return found.message
+      const id = found.id
+      return failed(() => writeChoice($, c => ({ ...c, focus: id })), `Focus: ${found.message}.`)
     }
     case 'teams': {
       const named = list(rest)

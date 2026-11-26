@@ -18,7 +18,7 @@ relationships:
 
 ## Context
 
-The scope of the Focus pane comes from four possible causes: the user's choice, the session's own focus, the team list, or a fallback when the relay says too little. Which one applied was not visible. Separately, ix-relay now stores named focus definitions (`agent-msg focuses`, `crates/relay-core/src/named_focus/model.rs`) whose members are initiatives, projects, milestones and tickets. The mod reads them and never writes them. No named focus exists on the current system, so the lookup must also work, and fall through, when there are none.
+The scope of the Focus pane comes from four possible causes: the user's choice, the session's own focus, the team list, or a fallback when the relay says too little. Which one applied was not visible. Separately, ix-relay now stores named focus definitions (`agent-msg focuses`, `crates/relay-core/src/named_focus/model.rs`) whose members are initiatives, projects, milestones and tickets. The mod reads them and never writes them. A relay may hold no definition at all, so the views must then say so and show everything of the selected teams.
 
 ## Acceptance Examples (Illustrative)
 
@@ -31,5 +31,5 @@ The scope of the Focus pane comes from four possible causes: the user's choice, 
 ### US-012-EX-2: A named focus
 
 - **Given** a named focus `Beta` exists for this team
-- **When** the user types `/factory focus beta`
+- **When** the user types `/factory focus Beta`
 - **Then** the pane shows progress over that focus's initiatives, projects, milestones and tickets

@@ -162,6 +162,9 @@ export function answerRun(w: World, argv: readonly string[], init: Init): Run | 
     return found === undefined ? out('', 1, 'no report') : out(JSON.stringify(found))
   }
   if (line === 'agent-msg doctor --json') return w.relayFails.value ? out('', 1, 'redis down') : out(JSON.stringify({ ok: true, checks: [] }))
+  // Unless a test says otherwise, relay has no focus definition.
+  if (line === 'agent-msg focuses list --json') return out(JSON.stringify({ definitions: [] }))
+  if (line.startsWith('agent-msg focuses show ')) return out('', 1, JSON.stringify({ code: 'not_found', message: `no definition "${argv[3]}"` }))
   if (line.startsWith('ix-board --json agents')) return out(JSON.stringify({ agents: w.boardAgents }))
   // Unless a test says otherwise, ix-board knows none of the single tickets asked for.
   if (line.startsWith('ix-board --json issues ')) return out(JSON.stringify({ complete: true, missing: [], issues: [] }))
@@ -333,14 +336,33 @@ const memberSet = (m: Members = {}) => ({
   tickets: (m.tickets ?? []).map(ref => ({ ref, label: `label ${ref}` })),
 })
 /** `agent-msg focuses show <id> --json`: the definition under `definition`, and `empty_selection`. */
-export const showJson = (name: string, team: string, include: Members, exclude: Members = {}, over: { empty?: boolean; definition?: null } = {}) =>
+export const showJson = (name: string, team: string, include: Members, exclude: Members = {}, over: { empty?: boolean; definition?: null; id?: string; state?: string } = {}) =>
   JSON.stringify({
-    focus_id: 'foc-x',
-    state: 'active',
+    focus_id: over.id ?? 'foc-0123456789abcdef0123456789abcdef',
+    state: over.state ?? 'active',
     latest_revision: 1,
     empty_selection: over.empty ?? false,
     definition: over.definition === null ? null : { team, name, description: '', include: memberSet(include), exclude: memberSet(exclude) },
   })
+
+/** A focus ID as relay spells it, from one hexadecimal character. */
+export const focId = (c: string) => `foc-${c.repeat(32)}`
+
+type Held = { id: string; name: string; team?: string; include?: Members }
+/** Stands in for relay's definitions: `list` lists them, and `show` resolves an ID or exact name as relay does. */
+export function relayFocuses(w: World, ...defs: Held[]): void {
+  const prior = w.stub.value
+  const refused = (code: string, message: string) => out('', 1, JSON.stringify({ code, message }))
+  w.stub.value = (argv, init) => {
+    if (argv[0] !== 'agent-msg' || argv[1] !== 'focuses') return prior?.(argv, init)
+    if (argv[2] === 'list') return out(listJson(...defs.map(d => defRow(d.id, d.name, d.team ?? 'QSL'))))
+    const found = defs.filter(d => d.id === argv[3] || d.name === argv[3])
+    if (found.length === 0) return refused('not_found', `no definition "${argv[3]}"`)
+    if (found.length > 1) return refused('invalid_argument', `invalid argument focus: the name "${argv[3]}" belongs to definitions of several teams; use the focus ID`)
+    const d = found[0]!
+    return out(showJson(d.name, d.team ?? 'QSL', d.include ?? { projects: ['p1'] }, {}, { id: d.id }))
+  }
+}
 
 export const NEVER = (): Promise<never> => new Promise<never>(() => undefined)
 /** A call that stays out until its own timeout passes on the moving clock, then fails as the host does. */

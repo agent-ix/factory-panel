@@ -21,7 +21,7 @@ A skill SHALL select features by instructing its agent to write a declaration fi
 - Where that file does not exist, the mod SHALL read `default.json`.
 - The mod SHALL NOT use the working directory as part of the key.
 - Where two sessions with no placement write `default.json`, the last write SHALL win.
-- The file SHALL be a JSON object with the optional keys `modules` (list of module names), `hosts` (`all` or `local`), `focus` (`all` or a focus name) and `teams` (list of team names, or `["all"]`).
+- The file SHALL be a JSON object with the optional keys `modules` (list of module names), `hosts` (`all` or `local`), `focus` (`all` or a focus definition ID) and `teams` (list of team names, or `["all"]`).
 - Writing the file SHALL replace every earlier selection from that file, so that writing the same content again leaves the same display.
 - The mod SHALL re-read the file on each refresh.
 - The mod SHALL ignore a key it does not know.

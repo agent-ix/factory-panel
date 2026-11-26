@@ -22,7 +22,7 @@ export type Cell = { id: ModuleId; pane: string; parts: Part[]; alert?: string }
 /** What the selection narrows the band to. `teams` empty means every team. */
 export type Scope = {
   hosts: 'all' | 'local'
-  /** `all` or a focus name. */
+  /** `all` or a focus definition ID. */
   focus: string
   teams: readonly string[]
   /** The session's own team; null when the relay did not say. */
@@ -46,6 +46,8 @@ export type Snapshot = {
   teamViews: readonly TeamView[]
   /** True once the focus reports and once ix-board's agents have been read: only then can a team be said to match nothing. */
   focusesLoaded: boolean
+  /** what is wrong with the chosen focus definition */
+  focusNotice?: string | null
   boardLoaded: boolean
   prometheusError: string | null
   /** When the relay check last answered (null: never) and what it last said when it failed. */
@@ -81,30 +83,15 @@ export const teamOf = (address: string): string => address.split(':')[1] ?? ''
 /** The teams whose leads are read and listed; null is every team. */
 export const focusTeams = (scope: Scope): string[] | null => (scope.teams.length > 0 ? [...scope.teams] : null)
 
-/** Whether the focus value is a name, which narrows what the teams show. */
-export const isNamedFocus = (focus: string): boolean => focus.trim() !== '' && focus.trim().toLowerCase() !== 'all'
-
-/** The focus entries this scope shows, in order, and a note when a name matched none or several. */
-export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: FocusView[]; note: string | null } => {
-  const want = scope.focus.trim()
-  const lower = want.toLowerCase()
+/** The focus entries this scope shows: the chosen definition's where it is held, else the leads' of the selected teams. */
+export const scopeFocuses = (all: readonly FocusView[], scope: Scope): FocusView[] => {
+  const chosen = all.filter(f => f.via === 'definition' && f.address === scope.focus)
+  if (chosen.length > 0) return chosen
   const teams = focusTeams(scope)
-  const inTeams = (f: FocusView) => teams === null || teams.some(t => same(t, teamOf(f.address)))
-  if (!isNamedFocus(want)) {
-    // Together under each team, in the order the teams are listed.
-    const shown = all.filter(inTeams)
-    if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
-    return { shown, note: null }
-  }
-  // A focus name the poll already resolved (a definition, a lead address or a summary) is shown as it found it.
-  const resolved = all.filter(f => f.via !== null && f.via !== undefined)
-  if (resolved.length > 0) return { shown: resolved, note: resolved.length > 1 ? `${resolved.length} focuses matched "${want}"` : null }
-  // A focus name never widens the teams.
-  const pool = all.filter(inTeams)
-  const exact = pool.filter(f => same(f.summary, want))
-  const shown = exact.length > 0 ? exact : pool.filter(f => f.summary.toLowerCase().includes(lower))
-  const note = shown.length === 0 ? `no focus matches "${want}"` : shown.length > 1 ? `${shown.length} focuses matched "${want}"` : null
-  return { shown, note }
+  const shown = all.filter(f => f.via !== 'definition' && (teams === null || teams.some(t => same(t, teamOf(f.address)))))
+  // Together under each team, in the order the teams are listed.
+  if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
+  return shown
 }
 
 /** The start of the line that says no lead of the teams has reported a focus. */
@@ -112,30 +99,29 @@ export const NO_FOCUS_BY = 'no focus reported by'
 
 /** The one line that says why these focuses are shown; null while the session is still being identified. */
 export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
-  const name = scope.focus.trim()
-  if (isNamedFocus(name)) return `your choice: ${name}`
+  const chosen = focuses.find(f => f.via === 'definition' && f.address === scope.focus)
+  if (chosen !== undefined) return `your choice: ${chosen.title ?? chosen.address}`
   const teams = focusTeams(scope)
   if (teams === null) {
     if (scope.identity === 'unknown') return 'could not tell who this session is, showing every focus'
     return scope.identity === 'pending' ? null : 'focuses of every team'
   }
-  const has = scopeFocuses(focuses, scope).shown.length > 0
+  const has = scopeFocuses(focuses, scope).length > 0
   return `${has ? 'focuses of' : NO_FOCUS_BY} ${teams.join(', ')}`
 }
 
-const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope).shown
+const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope)
 const pickFocus = (s: Snapshot): FocusView | undefined => scoped(s)[0]
 
 /** Machines the hosts scope covers: every machine, or this one. */
 const hostsOf = (s: Snapshot): readonly Machine[] =>
   s.scope.hosts === 'all' ? s.machines : s.machines.filter(m => m.name.toLowerCase() === s.localMachine)
 
-/** What the scope has to say: who the session is, a focus name that matched none or several, a team nothing answers for. */
+/** What the scope has to say: who the session is, what is wrong with the chosen focus, a team nothing answers for. */
 export const scopeNotes = (s: Snapshot): string[] => {
   const notes: string[] = []
   if (s.scope.identity === 'unknown') notes.push('could not tell who this session is')
-  const { note } = scopeFocuses(s.focuses, s.scope)
-  if (note !== null && s.focusesLoaded) notes.push(note)
+  if (s.focusNotice != null) notes.push(s.focusNotice)
   const known = new Set([...s.focuses.map(f => teamOf(f.address).toLowerCase()), ...s.board.agents.map(a => a.team.toLowerCase())])
   // Only the sources of what is drawn are read, so both that could name a team must have answered,
   // ix-board for a list that holds it.
@@ -187,7 +173,7 @@ const focus = (s: Snapshot): Cell | null => {
   if (f === undefined) return null
   const { done, total } = progressOf(f)
   const share = total > 0 ? done / total : null
-  const label = onlyProject(f)?.name ?? (f.summary || f.address)
+  const label = f.title ?? onlyProject(f)?.name ?? (f.summary || f.address)
   const parts: Part[] = [
     { text: `${fit(label, 18)} `, bold: true },
     { text: cellBar(share, 8), tone: 'claude' },

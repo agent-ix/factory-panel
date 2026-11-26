@@ -8,8 +8,8 @@ import { gatedBoard } from './linear'
 import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson } from './shared'
 import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
 import type { LeadRead, WorkReport } from './leads'
-import { focusTeams, isNamedFocus, statusOf, teamOf } from './band/modules'
-import { definitionNames } from './namedfocus'
+import { focusTeams, statusOf, teamOf } from './band/modules'
+import { CREATE_HINT, NO_DEFINITIONS, focusNotice, isFocusId } from './namedfocus'
 import { markStale, track } from './schedule'
 import { ALL, getSelection, scopeKeyOf, scopeOf, selectionReady, writeChoice } from './selection'
 import type { Picked } from './selection'
@@ -46,7 +46,7 @@ export const workCollapsed = atom({ plugin: 'factory-panel', key: 'workCollapsed
 const workAll = atom({ plugin: 'factory-panel', key: 'workAll' } as const, false)
 const workWarnings = atom({ plugin: 'factory-panel', key: 'workWarnings' } as const, false)
 /** The choice open under the header, and the focus names it offers. */
-const workPicker = atom({ plugin: 'factory-panel', key: 'workPicker' } as const, { open: null, names: [], error: null } as WorkPicker, { shape: 'workPicker-1' })
+const workPicker = atom({ plugin: 'factory-panel', key: 'workPicker' } as const, { open: null, error: null } as WorkPicker, { shape: 'workPicker-2' })
 /** The folded rows that are open: `silent`, `outside`, `finished-<address>` and `unplaced-<address>`. */
 const workOpen = atom({ plugin: 'factory-panel', key: 'workOpen' } as const, [] as string[])
 
@@ -164,7 +164,7 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
       markStale('tickets')
       return true
     }
-    const isFiltered = isNamedFocus(getSelection().focus.value)
+    const isFiltered = isFocusId(getSelection().focus.value)
     const named = new Set(isFiltered ? [] : boards.flatMap(b => b.issues.map(i => i.identifier)))
     const askable = (ids: string[]) => ids.filter(id => TICKET_ID.test(id) && !named.has(id)).sort()
     // Where there are more than can be asked for, those in hand come first.
@@ -334,19 +334,9 @@ async function choose($: EngineInterface, change: (c: Picked) => Picked): Promis
   await choiceApplied($)
 }
 
-/** Opens a choice under the header, or closes it; the focus names are read as it opens. */
+/** Opens a choice under the header, or closes it. */
 async function openPicker($: EngineInterface, which: 'teams' | 'focus'): Promise<void> {
-  const held = await read($, workPicker)
-  const open = held.open === which ? null : which
-  await update($, workPicker, p => ({ ...p, open, error: null }))
-  if (open !== 'focus') return
-  try {
-    const sel = getSelection()
-    const names = await definitionNames($, sel.identity.status === 'detected' ? sel.identity.team : null)
-    await update($, workPicker, p => ({ ...p, names, error: null }))
-  } catch (error) {
-    await update($, workPicker, p => ({ ...p, error: `agent-msg focuses: ${errorText(error)}` }))
-  }
+  await update($, workPicker, p => ({ open: p.open === which ? null : which, error: null }))
 }
 
 async function toggleCollapsed($: EngineInterface, address: string): Promise<void> {
@@ -449,15 +439,30 @@ export function registerWork(on: On, _options: Options): void {
       </Box>
     )
 
-    const lookups = isNamedFocus(scope.focus) ? (focusNow.meta.errors ?? []).filter(e => e.source === 'agent-msg focuses').map(e => `${e.source}: ${e.text}`) : []
+    const lookups = (focusNow.meta.errors ?? []).filter(e => e.source === 'agent-msg focuses').map(e => `${e.source}: ${e.text}`)
     const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`), ...lookups]
     const reporting = view.leads.length > 0 || meta.at !== null
-    const filterNotes = filter.kind === 'unread' ? [filter.why] : filter.kind === 'named' ? filter.notes : []
+    const isHeld = focusNow.meta.heldFor === scopeKeyOf(scope)
+    const notice = isHeld ? focusNotice(focusNow.meta.chosen) : null
+    // A stored value that names no definition was said when the files were read.
+    const ignored = scope.focus === ALL ? sel.notes.filter(n => n.includes('is not a focus definition ID')) : []
+    const filterNotes = [...ignored, ...(notice === null ? [] : [notice]), ...(filter.kind === 'unread' ? [filter.why] : filter.kind === 'named' ? filter.notes : [])]
+    const definitions = focusNow.meta.definitions
+    const hasNone = definitions !== undefined && definitions.length === 0
     const teams = focusTeams(scope) ?? []
     const isOn = (value: boolean) => (value ? '✓ ' : '  ')
     const known = [...teams, ...meta.teams].filter((t, i, list) => list.findIndex(o => o.toLowerCase() === t.toLowerCase()) === i).sort((a, b) => a.localeCompare(b))
-    const focus = isNamedFocus(scope.focus) ? scope.focus : ALL
-    const names = [ALL, ...(focus === ALL || picker.names.some(n => n.toLowerCase() === focus.toLowerCase()) ? [] : [focus]), ...picker.names]
+    // An ID relay has no definition of is all.
+    const focus = isHeld && focusNow.meta.chosen?.state === 'unknown' && focusNow.meta.chosen.id === scope.focus ? ALL : scope.focus
+    // The chosen definition by its name; its ID where no read has named it.
+    const focusName = focus === ALL ? ALL : (definitions?.find(d => d.id === focus)?.name ?? (focusNow.meta.chosen?.id === focus ? focusNow.meta.chosen.name : null) ?? focus)
+    const usable = (definitions ?? []).filter(d => d.name !== null)
+    const labelOf = (d: (typeof usable)[number]) => (usable.filter(o => o.name === d.name).length > 1 && d.team !== null ? `${d.name} (${d.team})` : d.name!)
+    const options_ = [{ id: ALL, label: ALL }, ...usable.map(d => ({ id: d.id, label: labelOf(d) }))]
+    const noneLines = [
+      <Text key="no-definitions" dimColor size="caption">{NO_DEFINITIONS}</Text>,
+      <Text key="create-definition" dimColor size="caption">{`create one: ${CREATE_HINT}`}</Text>,
+    ]
     const pickTeam = (t: string) => () => void choose($, c => ({ ...c, teams: toggledTeams(teams, t) }))
     const options =
       picker.open === 'teams' ? (
@@ -469,9 +474,11 @@ export function registerWork(on: On, _options: Options): void {
         </Box>
       ) : picker.open === 'focus' ? (
         <Box key="focus-picker" flexDirection="column" paddingLeft={2}>
-          {names.map(n => (
-            <Button key={`focus-option-${n}`} plain label={`${isOn(n.toLowerCase() === focus.toLowerCase())}${n}`} onPress={() => void choose($, c => ({ ...c, focus: n })).then(() => update($, workPicker, p => ({ ...p, open: null })))} />
+          {options_.map(o => (
+            <Button key={`focus-option-${o.id}`} plain label={`${isOn(o.id === focus)}${o.label}`} onPress={() => void choose($, c => ({ ...c, focus: o.id })).then(() => update($, workPicker, p => ({ ...p, open: null })))} />
           ))}
+          {definitions === undefined && <Text dimColor size="caption">the focus definitions are not read yet</Text>}
+          {(definitions ?? []).filter(d => d.name === null).map(d => <Text key={`bad-${d.id}`} dimColor size="caption">{`${d.id} unavailable: ${d.reason}`}</Text>)}
         </Box>
       ) : null
 
@@ -481,13 +488,14 @@ export function registerWork(on: On, _options: Options): void {
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text weight="semibold" size="heading">Work</Text>
             <Button key="teams-choice" plain label={`Teams: ${teamsText(teams)} ▾`} onPress={() => void openPicker($, 'teams')} />
-            <Button key="focus-choice" plain label={`Focus: ${clip(focus, VALUE_CELLS)} ▾`} onPress={() => void openPicker($, 'focus')} />
+            <Button key="focus-choice" plain label={`Focus: ${clip(focusName, VALUE_CELLS)} ▾`} onPress={() => void openPicker($, 'focus')} />
           </Box>
           <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($), pollTickets($)])} />
         </Box>
-        {(options !== null || picker.error !== null || filterNotes.length > 0 || reporting) && (
+        {(options !== null || picker.error !== null || filterNotes.length > 0 || hasNone || reporting) && (
           <Box flexDirection="column">
             {options}
+            {hasNone && noneLines}
             {picker.error !== null && <Text color="warning" size="caption">{picker.error}</Text>}
             {filterNotes.map((t, i) => <Text key={`filter-${i}`} color="warning" size="caption">{t}</Text>)}
             {reporting && <Text dimColor size="caption">{`${plural(view.leads.length, 'lead')}${notRead}`}</Text>}

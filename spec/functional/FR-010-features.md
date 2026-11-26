@@ -19,7 +19,7 @@ The mod SHALL expose what it can show as features that a skill, an agent or the 
 ## Behavior
 
 - The mod SHALL offer each module in the module-to-view table of [FR-009](./FR-009-band-cells.md) as a selectable feature.
-- The mod SHALL offer the hosts scope (`all` or `local`), the focus (`all` or a focus name) and the `teams` list as selectable features.
+- The mod SHALL offer the hosts scope (`all` or `local`), the focus (`all` or a focus definition) and the `teams` list as selectable features.
 - The mod SHALL NOT use a role to decide what is displayed.
 - Where no feature has been selected by the user or by a declaration, the mod SHALL show the fallback modules of [FR-002](./FR-002-fallback-defaults.md).
 

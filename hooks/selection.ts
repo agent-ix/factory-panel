@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import { MODULE_IDS } from './band/modules'
 import type { ModuleId, Scope } from './band/modules'
 import { isDue, track } from './schedule'
+import { isFocusId } from './namedfocus'
 import { errorText } from './shared'
 
 // What the panel shows is selected per feature: modules, hosts, focus and teams. Each feature
@@ -101,8 +102,13 @@ export function parseFile(text: string, file: string): Parsed {
   }
   if ('focus' in o) {
     const v = typeof o.focus === 'string' ? o.focus.trim() : ''
-    if (v !== '') picked.focus = v
-    else notes.push(`${file}: focus ignored, must be all or a focus name`)
+    if (v === '') notes.push(`${file}: focus ignored, must be all or a focus definition ID`)
+    else if (focusValue(v) === ALL || isFocusId(v)) picked.focus = v
+    else {
+      // A value that names no definition is all, and is said.
+      picked.focus = ALL
+      notes.push(`${file}: focus "${v}" is not a focus definition ID, showing all`)
+    }
   }
   if ('teams' in o) {
     const list = strings(o.teams)?.map(t => t.trim()).filter(Boolean)
