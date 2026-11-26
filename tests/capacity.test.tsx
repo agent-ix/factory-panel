@@ -234,7 +234,7 @@ for (const [name, lanes, done, most, earlier, shown] of [
     trace("FR-032-AC-7")
     const w = await setup($, on, { lanes: [['draco', 'a', lanes]], most: [['draco', most]], earlier: earlier === null ? [] : [['draco', earlier]] }, rowsOf(done === null ? [] : [row('draco', { output_per_hour: done })]))
     const d = await draw($, w)
-    expect((await d.cells('draco')).includes('churning')).toBe(shown)
+    expect((await d.cells('draco')).includes('⏱ 2h')).toBe(shown)
     await d.ui.unmount()
   })
 }

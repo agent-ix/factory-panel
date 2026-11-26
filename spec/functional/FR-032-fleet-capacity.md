@@ -39,7 +39,7 @@ The Team view SHALL show a table of the fleet's hosts: `host`, `working`, `stuck
 - `CPU` SHALL be a gauge glyph and a whole percentage rounded down, from the one busy sample of the host at most 60 seconds old.
 - `done/h` SHALL be the `output_per_hour` of the host's ledger row, with `(best N)` where the row has a `recorded_output_per_hour`. It SHALL read `—` where there is no row (the view has one only for a host with a recorded best), where the output is null, where rows differ, or where the sample is more than 10 minutes old.
 - `needs work N` SHALL follow a host whose deficit is above 0 and sampled at most 10 minutes ago.
-- `churning` SHALL follow a host that has lanes working, whose `done/h` is 0, and whose `ix_fleet_host_output_share_of_recorded_level` was 0 at every sample of the last 2 hours and had a sample 2 hours ago. Without `done/h` data it SHALL NOT be said.
+- `⏱ 2h`, the mark of churning, SHALL follow a host that has lanes working, whose `done/h` is 0, and whose `ix_fleet_host_output_share_of_recorded_level` was 0 at every sample of the last 2 hours and had a sample 2 hours ago. Without `done/h` data it SHALL NOT be said.
 
 ### Missing
 
@@ -59,7 +59,7 @@ The Team view SHALL show a table of the fleet's hosts: `host`, `working`, `stuck
 | FR-032-AC-4 | Blocked and stuck lanes are stuck, listed with their reason by a press; a lane blocked for `wait_loop` is waiting. | Test |
 | FR-032-AC-5 | done/h is the row's output with its best, and `—` with no row, a null output, differing rows or an old sample, never 0. | Test |
 | FR-032-AC-6 | A shortfall above 0 reads `needs work N`, and one of 0 or from an old sample says nothing. | Test |
-| FR-032-AC-7 | `churning` is said only with lanes working, a done/h of 0 and samples of 0 across the last 2 hours. | Test |
+| FR-032-AC-7 | `⏱ 2h` is said only with lanes working, a done/h of 0 and samples of 0 across the last 2 hours. | Test |
 | FR-032-AC-8 | What is missing is said only behind the one `○`, which is not drawn where only done/h is missing, columns of nothing, done/h among them, are left out, a failing command marks its source failed and a missing command or view does not, and before the first read the section says it is reading. | Test |
 | FR-032-AC-9 | The pane runs only the ledger query, once a minute and on `r`, and the widget reads nothing of the hosts. | Test |
 | FR-032-AC-10 | In a real session the Team view shows the live hosts. | Demonstration |

@@ -201,7 +201,7 @@ test('retro health is one line, which says what it checks, what regresses, when 
   trace("FR-029-AC-4", "FR-029-AC-5")
   const w = await setup($, on)
   const d = await draw($, w, 1000, false)
-  expect(await healthLabel(d.ui)).toMatch(/^Health  retro \d+[smhd] old ▸$/)
+  expect(await healthLabel(d.ui)).toMatch(/^Health  retro \d+[smhd] ▸$/)
   expect(await healthMarkOf(d.ui)).toEqual({ text: '◔', color: 'error' })
   expect(d.lines.join('\n')).not.toMatch(/prs idle|snapshots/)
   expect(await healthLines(d.ui)).toEqual([

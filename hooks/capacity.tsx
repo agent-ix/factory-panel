@@ -32,8 +32,8 @@ const VIEW = 'host_output_share_of_recorded_level'
  */
 const WAIT_LOOP = 'wait_loop'
 
-const STATE = 'ix_fleet_lane_state_ratio'
-const BLOCKED = 'ix_fleet_lane_blocked_ratio'
+export const STATE = 'ix_fleet_lane_state_ratio'
+export const BLOCKED = 'ix_fleet_lane_blocked_ratio'
 const BUSY = 'ix_fleet_host_busy_ratio'
 const DEFICIT = 'ix_fleet_ready_buffer_deficit'
 const SHARE = 'ix_fleet_host_output_share_of_recorded_level'
@@ -94,7 +94,7 @@ const of = (samples: readonly Sample[], host: string): Sample[] => samples.filte
 const seriesOf = (s: Sample): string => JSON.stringify(Object.entries(s.metric).filter(([k]) => k !== '__name__').sort(([a], [b]) => a.localeCompare(b)))
 
 /** The newest series of each lane of a `timestamp(...)` answer, where it is current, by host and lane. */
-function newestByLane(samples: readonly Sample[], now: number): Map<string, { host: string; lane: string; labels: Record<string, string>; at: number }> {
+export function newestByLane(samples: readonly Sample[], now: number): Map<string, { host: string; lane: string; labels: Record<string, string>; at: number }> {
   const lanes = new Map<string, { host: string; lane: string; labels: Record<string, string>; at: number }>()
   for (const s of samples) {
     const host = hostOf(s)
@@ -212,7 +212,7 @@ const amount = (v: number): string => String(Math.round(v * 10) / 10)
 const doneText = (at: HostRow): string => (at.done === null ? '—' : `${amount(at.done)}${at.best === null ? '' : ` (best ${amount(at.best)})`}`)
 /** What follows a host's figures, only where there is something to say. */
 const extras = (at: HostRow): string =>
-  [at.needs === null ? null : `needs work ${at.needs}`, at.waiting === 0 ? null : `${at.waiting} waiting`, at.isChurning ? 'churning' : null].filter(x => x !== null).join(' · ')
+  [at.needs === null ? null : `needs work ${at.needs}`, at.waiting === 0 ? null : `${at.waiting} waiting`, at.isChurning ? '⏱ 2h' : null].filter(x => x !== null).join(' · ')
 
 /**
  * The table: a row for each host, a column only where some host has a figure of it. A host with stuck or waiting lanes

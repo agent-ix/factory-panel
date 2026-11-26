@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
+import { LEAD_FOLDS, openWork } from './open'
 import { CLASSIC, FP, drawBand, out, report, startSession, world } from './world'
 import type { Run, World } from './world'
 
@@ -41,7 +42,11 @@ function leadsWorld(on: Parameters<TestBody>[1], addresses: string[], answer: An
 
 const asked = (w: World, address: string) => w.ran.filter(l => l === `agent-msg work --lead ${address} show`).length
 const mount = ($: $t, requestId = 'work') => $.ui.mount({ ...PANE, requestId, surface: 'terminal' } as never)
-const lines = async (ui: Awaited<ReturnType<typeof mount>>) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+/** The lines of the Work pane with its hosts and leads opened. */
+const lines = async (ui: Awaited<ReturnType<typeof mount>>) => {
+  await openWork(ui, async () => undefined, LEAD_FOLDS)
+  return (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+}
 
 test('a lead’s report is given 20 seconds, so a report that takes 10 is read', async ($, on) => {
   trace("FR-030-AC-1", "NFR-004-M-2")
@@ -74,7 +79,7 @@ test('at most eight lead reports are read at once, and every lead is read', asyn
   await w.clock!.advance(30 * SEC)
   expect(most).toBe(8)
   expect(addresses.map(a => asked(w, a))).toEqual(addresses.map(() => 1))
-  expect((await lines(work)).filter(l => /^ {3}QSL-/.test(l))).toHaveLength(30)
+  expect((await lines(work)).filter(l => /^ QSL-/.test(l))).toHaveLength(30)
   await work.unmount()
   await focus.unmount()
 })
@@ -91,7 +96,7 @@ test('the Focus and the Work view share one read of each lead, and the refresh k
   const work = await mount($)
   await w.clock!.advance(SEC)
   expect([asked(w, NEAR), asked(w, FAR)]).toEqual([1, 1])
-  expect((await lines(work)).filter(l => /^ {3}QSL-/.test(l))).toHaveLength(2)
+  expect((await lines(work)).filter(l => /^ QSL-/.test(l))).toHaveLength(2)
   await work.press({ key: 'refresh' })
   await w.clock!.advance(SEC)
   expect([asked(w, NEAR), asked(w, FAR)]).toEqual([2, 2])
@@ -158,17 +163,18 @@ test('a lead never read is listed as not read, beside the leads that were', asyn
   const ui = await mount($)
   await w.clock!.advance(SEC)
   const drawn = await lines(ui)
-  expect(drawn).toContain(FAR)
-  expect(drawn).toContain('not read')
+  // The one selected team and the host are implied by where a lead stands.
+  expect(drawn).toContain('QSL:code')
+  // A lead never read has the bare mark, and its host counts it.
   expect(drawn).toContain('▲')
-  expect(drawn).toContain('2 leads · 1 not read')
+  expect(drawn).toContain('▲ 1')
   // Nothing is claimed about its tickets.
   expect(drawn.join('\n')).not.toMatch(/no ticket reported/)
   await ui.press({ key: 'warnings-toggle' })
   expect((await lines(ui)).join('\n')).toMatch(/terra:QSL:code: agent-msg: machine terra is unreachable/)
   await ui.unmount()
   const widget = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, placement: 'widget' } } as never)
-  expect((await widget.findAll({ type: 'Text' })).map(t => t.text).join('')).toBe('2 leads · ≥1 ticket · merged 24h unavailable (no focus status read) · 1 not read')
+  expect((await widget.findAll({ type: 'Text' })).map(t => t.text).join('')).toBe('2 leads · 1 active · ≥1 ticket · ▲ 1')
   await widget.unmount()
 })
 
@@ -183,10 +189,10 @@ test('a lead that cannot be read now is drawn as last read, marked old, until it
   isDown = true
   await w.clock!.advance(3 * MIN)
   const drawn = await lines(ui)
-  expect(drawn.some(l => /^ {3}QSL-2/.test(l))).toBe(true)
-  expect(drawn.some(l => /^old [234]m$/.test(l))).toBe(true)
-  expect(drawn).toContain('▲')
-  expect(drawn).toContain('2 leads · 1 old')
+  expect(drawn.some(l => /^ QSL-2/.test(l))).toBe(true)
+  expect(drawn.some(l => /^▲ [234]m$/.test(l))).toBe(true)
+  // A failed read is no old report: the lead stays in its place, marked.
+  expect(await ui.find({ key: 'old:terra' })).toBeUndefined()
   await ui.unmount()
   const band = await drawBand($, CLASSIC)
   await w.clock!.advance(20 * SEC)
@@ -197,7 +203,7 @@ test('a lead that cannot be read now is drawn as last read, marked old, until it
   isDown = false
   const again = await mount($)
   await w.clock!.advance(2 * MIN)
-  expect((await lines(again)).join('\n')).not.toMatch(/old \d|not read/)
+  expect((await lines(again)).join('\n')).not.toMatch(/▲|not read/)
   await again.unmount()
 })
 
@@ -228,14 +234,14 @@ test('where the leads cannot be listed those drawn are marked old, and a lead no
   isListed = false
   await w.clock!.advance(MIN + 20 * SEC)
   let drawn = await lines(ui)
-  expect(drawn).toContain('2 leads · 2 old')
-  expect(drawn.filter(l => /^ {3}QSL-/.test(l))).toHaveLength(2)
+  expect(drawn.filter(l => /^▲ \dm$/.test(l))).toHaveLength(2)
+  expect(drawn.filter(l => /^ QSL-/.test(l))).toHaveLength(2)
   isListed = true
   w.leads.delete(FAR)
   await w.clock!.advance(6 * MIN)
   drawn = await lines(ui)
-  expect(drawn).not.toContain(FAR)
-  expect(drawn).toContain('1 lead')
+  expect(drawn).not.toContain('QSL:code')
+  expect(await ui.find({ key: 'host:terra' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -252,9 +258,9 @@ test('a lead that had reported nothing and stops answering is old, not never rea
   // A lead on another machine that reported nothing is asked again after five minutes.
   await w.clock!.advance(6 * MIN)
   const drawn = (await lines(ui)).join('\n')
-  expect(drawn).toContain(FAR)
-  expect(drawn).toMatch(/old 6m/)
-  expect(drawn).toContain('1 old')
+  expect(drawn).toContain('QSL:code')
+  expect(drawn).toMatch(/▲ 6m/)
+  expect(drawn).toContain('▲ 1')
   expect(drawn).not.toMatch(/not read/)
   await ui.unmount()
 })
@@ -306,10 +312,12 @@ test('a lead is drawn as soon as it answers, and review events are read while an
   }
   await startSession($)
   const ui = await mount($)
+  await w.clock!.advance(SEC)
+  await ui.press({ key: 'recent' })
   await ui.press({ key: 'kinds' })
   await w.clock!.advance(3 * SEC)
   // The near lead is drawn while the far one is still being read.
-  expect((await lines(ui)).some(l => /^ {3}QSL-1/.test(l))).toBe(true)
+  expect((await lines(ui)).some(l => /^ QSL-1/.test(l))).toBe(true)
   reported = true
   await w.clock!.advance(46 * SEC)
   expect((await lines(ui)).some(l => /review start +QSL-9001/.test(l))).toBe(true)
@@ -420,7 +428,7 @@ test('a read that failed in another session is drawn as old with its error, and 
   await w.clock!.advance(SEC)
   expect(asked(w, FAR)).toBe(0)
   const drawn = await lines(ui)
-  expect(drawn).toContain('1 lead · 1 old')
+  expect(drawn).toContain('▲ 10m')
   expect(drawn.some(l => /QSL-90/.test(l))).toBe(true)
   await ui.unmount()
 })

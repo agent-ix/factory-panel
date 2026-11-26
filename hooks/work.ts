@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { FocusMeta, FocusView, WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLead, WorkPr, WorkRoleEvent } from '../types'
+import type { FocusMeta, FocusView, WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLanes, WorkLead, WorkPr, WorkRoleEvent } from '../types'
 import { parseRef } from './focuschoice'
 import { isUuid } from './progress'
 
@@ -177,14 +177,28 @@ export function issuesOf(answer: unknown): WorkIssue[] {
     const o = obj(v)
     if (o === null) return []
     const issue = issueOf({ ...o, state: str(o.state_name) || str(o.state), prs: o.attachments_complete === false ? null : o.pull_requests })
-    return issue === null ? [] : [{ ...issue, project: idOf(o, 'project_id'), milestone: idOf(o, 'project_milestone_id') }]
+    const prTimes = list(o.pull_requests).flatMap(p => [timeOf(obj(p)?.created_at), timeOf(obj(p)?.merged_at)]).filter((t): t is number => t !== null)
+    return issue === null ? [] : [{ ...issue, project: idOf(o, 'project_id'), milestone: idOf(o, 'project_milestone_id'), stateType: str(o.state_type), updatedAt: timeOf(o.updated_at), prAt: prTimes.length === 0 ? null : Math.max(...prTimes) }]
   })
 }
 
 // ---------------------------------------------------------------- composing the view
 
+/** Where a ticket stands: `unread` where nothing says, which is never guessed. */
+export type TicketState = 'done' | 'review' | 'working' | 'new' | 'unread' | 'canceled'
+
+/** The states a bar draws, in its order. A canceled ticket is neither work done nor work left: it is not drawn. */
+export const BAR_STATES = ['done', 'review', 'working', 'new', 'unread'] as const
+export type BarState = (typeof BAR_STATES)[number]
+
+/** The order tickets are listed in under their project: those moving first, those finished last. */
+const LISTED: Record<TicketState, number> = { working: 0, review: 1, new: 2, unread: 3, done: 4, canceled: 5 }
+
 export type WorkTicket = {
   id: string
+  state: TicketState
+  /** its project's id; null in none, undefined where not said */
+  project?: string | null
   title: string
   /** why there is no title, where ix-board has answered or failed: unknown to Linear, or not read; else null */
   why: string | null
@@ -193,15 +207,14 @@ export type WorkTicket = {
   at: number | null
 }
 
-/** `tickets` are those in hand, `finished` those whose agents have all finished. */
+/** `tickets` are every ticket the lead reports, the finished ones among them. */
 export type WorkLeadView = {
   address: string
   status: string
   at: number | null
   /** the tickets of the focus */
   tickets: WorkTicket[]
-  finished: WorkTicket[]
-  /** the tickets, in hand or finished, that may or may not be of the focus: their project is unknown */
+  /** the tickets that may or may not be of the focus: their project is unknown */
   unplaced: WorkTicket[]
   /** how many of its tickets are not of the focus */
   outside: number
@@ -251,7 +264,7 @@ function placeIn(f: FocusView, issue: WorkIssue | undefined): Place {
  */
 export function focusFilter(choice: string, key: string, meta: Partial<FocusMeta>, focuses: readonly FocusView[], boards: readonly WorkBoard[]): FocusFilter {
   if (parseRef(choice) === null) return ALL_TICKETS
-  const unread: FocusFilter = { kind: 'unread', why: 'the focus is not read yet: every ticket is shown' }
+  const unread: FocusFilter = { kind: 'unread', why: 'focus not read: all tickets shown' }
   if (meta.heldFor !== key || meta.chosen === undefined) return unread
   if (!meta.chosen.known) return ALL_TICKETS
   const f = focuses.find(v => v.via === 'chosen' && v.address === choice)
@@ -324,7 +337,7 @@ const has = (role: string, word: string): boolean => role.toLowerCase().includes
 const isOpenPr = (p: WorkPr): boolean => p.status === 'open' || p.status === 'draft'
 
 /** The distinct tickets one lead reports: those of its agents and those its focus names. */
-const ticketsOf = (lead: WorkLead): string[] => [...new Set([...lead.agents.map(a => a.ticket), ...(lead.focus?.tickets ?? [])].filter(t => t !== ''))]
+export const ticketsOf = (lead: WorkLead): string[] => [...new Set([...lead.agents.map(a => a.ticket), ...(lead.focus?.tickets ?? [])].filter(t => t !== ''))]
 
 /** A ticket every agent of which has finished, and that the lead's focus does not name, is no longer in hand. */
 function isFinished(lead: WorkLead, id: string): boolean {
@@ -351,6 +364,93 @@ const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): stri
 }
 
 /**
+ * Where a ticket stands, from what ix-board says of it: finished as Linear has it; in review where Linear says so or a PR
+ * of it is open; being worked on where Linear has it started or an agent runs on it; else not started.
+ */
+export function stateOf(issue: WorkIssue | undefined, isRunning: boolean): TicketState {
+  if (issue?.stateType === undefined || issue.stateType === '') return 'unread'
+  if (issue.stateType === 'completed') return 'done'
+  if (issue.stateType === 'canceled') return 'canceled'
+  if (/review/i.test(issue.state) || issue.prs?.some(isOpenPr)) return 'review'
+  return issue.stateType === 'started' || isRunning ? 'working' : 'new'
+}
+
+/** What `ix-board issues` said of each ticket asked for: it alone says where a ticket stands. */
+export const singlesOf = (boards: readonly WorkBoard[]): Map<string, WorkIssue> => new Map(boards.filter(b => b.ticketsOnly === true).flatMap(b => b.issues.map(i => [i.identifier, i] as const)))
+
+/** The cells of a bar of at most this many. */
+export const BAR_CELLS = 20
+
+/**
+ * The cells of each state in a bar: one a ticket up to BAR_CELLS; above that the bar is shared in proportion, and every
+ * state that has a ticket keeps a cell.
+ */
+export function barCells(states: readonly TicketState[], cells = BAR_CELLS): { state: BarState; cells: number }[] {
+  const counts = BAR_STATES.map(state => ({ state, count: states.filter(s => s === state).length })).filter(c => c.count > 0)
+  const total = counts.reduce((n, c) => n + c.count, 0)
+  if (total <= cells) return counts.map(c => ({ state: c.state, cells: c.count }))
+  const shares = counts.map(c => ({ state: c.state, share: (c.count * cells) / total }))
+  const out = shares.map(s => ({ state: s.state, cells: Math.max(1, Math.floor(s.share)), rest: s.share % 1 }))
+  let spare = cells - out.reduce((n, c) => n + c.cells, 0)
+  // Cells left over go to the largest remainders; cells taken by the one each state keeps come off the widest.
+  for (const c of [...out].sort((a, b) => b.rest - a.rest)) if (spare > 0) (c.cells++, spare--)
+  while (spare < 0) (out.reduce((a, b) => (b.cells > a.cells ? b : a)).cells--, spare++)
+  return out.map(({ state, cells: n }) => ({ state, cells: n }))
+}
+
+/** A lead that needs a look: stuck, or churning; `since` is when that began, at the latest. */
+export type Flag = { kind: 'stuck' | 'churning'; since: number | null; why: string }
+
+/** A working lane with no change of ticket, role or PR for this long is churning. */
+export const CHURN_MS = 2 * 60 * 60 * 1000
+/** Lane states older than this say nothing of now. */
+const LANES_OLD_MS = 5 * 60 * 1000
+
+const REASONS: Record<string, string> = { permission: 'blocked on a permission request', dialog: 'blocked on a dialog', question: 'blocked on a question', queued_question: 'blocked on a queued question', login: 'blocked on a login' }
+
+/**
+ * What is wrong with a lead, where the data says. Stuck: its lane waits on a question, a login or a permission, or a tool
+ * call ran past its limit. Churning: its lane works, and for CHURN_MS no agent of it changed role, status or ticket
+ * (`turnAt`, from the events), Linear updated none of its tickets and no PR of them was opened or merged. With any of
+ * those unknown nothing is said.
+ */
+export function flagOf(lead: WorkLead, lanes: WorkLanes | null, singles: ReadonlyMap<string, WorkIssue>, turnAt: number | undefined, now: number): Flag | null {
+  const lane = lanes === null || now - lanes.at > LANES_OLD_MS ? undefined : lanes.lanes[lead.address]
+  if (lane === undefined) return null
+  if (lane.isStuck) return { kind: 'stuck', since: lane.since, why: lane.reason === null ? 'a tool call ran past its limit' : (REASONS[lane.reason] ?? lane.reason) }
+  if (lane.state !== 'working' || turnAt === undefined) return null
+  const issues = ticketsOf(lead).filter(id => TICKET_ID.test(id)).map(id => singles.get(id))
+  if (issues.length === 0 || issues.some(i => i === undefined || i.updatedAt === undefined || i.updatedAt === null || i.prs === null)) return null
+  // With every ticket finished there is nothing for the lane to move.
+  if (issues.every(i => i!.stateType === 'completed' || i!.stateType === 'canceled')) return null
+  const last = Math.max(turnAt, ...issues.flatMap(i => [i!.updatedAt!, i!.prAt ?? 0]))
+  return now - last < CHURN_MS ? null : { kind: 'churning', since: last, why: 'the lane is working, and no ticket, role or PR of it has changed' }
+}
+
+/**
+ * Notes when an agent of each lead last changed: its role, status or ticket, or its removal. A report that repeats the
+ * same is no change.
+ */
+export function foldTurns(events: readonly unknown[], held: Pick<WorkFeed, 'turns' | 'marks'>): { turns: Record<string, number>; marks: Record<string, string> } {
+  const turns = { ...held.turns }
+  const marks = { ...held.marks }
+  for (const e of events) {
+    const event = obj(e)
+    const at = typeof event?.at_ms === 'number' ? event.at_ms : null
+    const address = str(obj(event?.binding)?.address)
+    const change = obj(event?.change)
+    if (at === null || address === '' || change === null) continue
+    const agent = obj(change.agent)
+    const key = `${address}\u0000${str(change.agent_id) || str(agent?.agent_id) || str(agent?.name)}`
+    const mark = change.kind === 'remove' ? 'removed' : `${str(agent?.role)}|${str(agent?.status)}|${str(agent?.ticket)}`
+    if (marks[key] === mark) continue
+    marks[key] = mark
+    turns[address] = Math.max(at, turns[address] ?? at)
+  }
+  return { turns, marks }
+}
+
+/**
  * Joins the leads' agents with the ticket facts. Only tickets a lead's agents report are listed under it; a started
  * ticket no lead reports is already on the Focus tab. A ticket's time is that of the latest transition of an agent on
  * it, else of the latest report of one.
@@ -358,15 +458,15 @@ const badgesOf = (all: readonly WorkAgent[], issue: WorkIssue | undefined): stri
 export function composeWork(leads: readonly WorkLead[], last: Record<string, number>, boards: readonly WorkBoard[], filter: FocusFilter = ALL_TICKETS): WorkView {
   const board = mergeBoards(boards)
   const byId = new Map(board.issues.map(i => [i.identifier, i]))
+  const singles = singlesOf(boards)
   const unknown = new Set(boards.flatMap(b => b.unknown ?? []))
-  const isUnread = boards.some(b => b.ticketsOnly === true && b.at === null)
-  // The tickets the read of single tickets asked for: one left out of it was not read.
-  const asked = boards.find(b => b.ticketsOnly === true)?.asked
+  // The tickets a read of single tickets left out, or could not read.
+  const left = new Set(boards.flatMap(b => b.left ?? []))
   /** Why a ticket has no title, where ix-board has answered that or failed. */
   const whyOf = (id: string, issue: WorkIssue | undefined): string | null => {
     if (issue !== undefined) return null
     if (unknown.has(id)) return 'not in Linear'
-    return isUnread || (asked !== undefined && TICKET_ID.test(id) && !asked.includes(id)) ? 'state not read' : null
+    return left.has(id) ? 'state not read' : null
   }
   const views = leads.map((lead): WorkLeadView => {
     const tickets = ticketsOf(lead).map((id): WorkTicket => {
@@ -376,14 +476,15 @@ export function composeWork(leads: readonly WorkLead[], last: Record<string, num
       // A ticket only the focus names is as old as the focus.
       const named = lead.focus?.tickets.includes(id) ? lead.focus.at : null
       const at = last[`${lead.address}\u0000${id}`] ?? (reports.length === 0 ? named : Math.max(...reports))
-      return { id, title: issue?.title ?? '', why: whyOf(id, issue), badges: badgesOf(agents, issue), at }
+      const single = singles.get(id)
+      const state = stateOf(single, agents.some(a => a.status === 'running'))
+      return { id, state, project: single?.project, title: issue?.title ?? '', why: whyOf(id, issue), badges: badgesOf(agents, issue), at }
     })
-    tickets.sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || a.id.localeCompare(b.id))
+    tickets.sort((a, b) => LISTED[a.state] - LISTED[b.state] || (b.at ?? 0) - (a.at ?? 0) || a.id.localeCompare(b.id))
     const mine = tickets.filter(t => placeOf(filter, t.id) === 'in')
     const unplaced = tickets.filter(t => placeOf(filter, t.id) === 'unknown')
-    const finished = mine.filter(t => isFinished(lead, t.id))
     const outside = tickets.length - mine.length - unplaced.length
-    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets: mine.filter(t => !finished.includes(t)), finished, unplaced, outside, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
+    return { address: lead.address, status: lead.status, at: lead.reportedAt, tickets: mine, unplaced, outside, summary: lead.focus?.summary ?? '', error: lead.error, readAt: lead.readAt }
   })
   views.sort((a, b) => a.address.localeCompare(b.address))
   return { leads: views, activity: board.activity, cutAt: board.cutAt, hasBoard: boards.some(isAnswer) }

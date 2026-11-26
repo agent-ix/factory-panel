@@ -53,9 +53,9 @@ Every session that draws a view reads the leads, and a lead on another machine i
 
 ### A lead that cannot be read
 
-- Where a lead's read fails and a report of it was read earlier in the session, the views SHALL draw that report, marked old.
+- Where a lead's read fails and a report of it was read earlier in the session, the views SHALL draw that report, marked old; the Work view's mark is `▲` with the age of that read.
 - An answer that the lead has reported nothing SHALL count as a report read: such a lead whose later read fails is drawn as old, with no ticket.
-- Where a lead's read fails and no report of it was ever read, the Work view SHALL list the lead as not read and claim nothing of its tickets.
+- Where a lead's read fails and no report of it was ever read, the Work view SHALL list the lead with `▲` and claim nothing of its tickets.
 - The Focus view SHALL draw a card from an earlier report with a note of how long ago it was read.
 - Where `agent-msg who` fails, the leads drawn SHALL stay, marked old.
 - Where the read of the leads failed and none is drawn, the Work view SHALL say the leads could not be read, and not that none has reported.

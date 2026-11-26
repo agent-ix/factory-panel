@@ -18,6 +18,10 @@ export type SourceId =
   | 'work'
   | 'events'
   | 'tickets'
+  | 'workLanes'
+  | 'projects'
+  | 'membership'
+  | 'choices'
   | 'retro'
   | 'capacity'
 
@@ -45,6 +49,7 @@ export const intervalOf = (id: SourceId): number => {
     case 'relay':
       return Math.max(MINUTE, refreshMs)
     case 'focus':
+    case 'membership':
       return 2 * MINUTE
     // The relay's event stream: cheap to ask, and a review has to show within a minute of its report.
     case 'events':

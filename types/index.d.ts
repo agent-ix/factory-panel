@@ -268,7 +268,14 @@ export type WorkIssue = {
   /** the ids of its project and milestone, of an `ix-board issues` answer: null in none, absent where not said */
   project?: string | null
   milestone?: string | null
+  /** Linear's state category, when it last updated the ticket and when a PR of it was last opened or merged */
+  stateType?: string
+  updatedAt?: number | null
+  prAt?: number | null
 }
+
+/** The lanes by lead address: `since` is the time a stuck lane has been so for at least. */
+export type WorkLanes = { at: number; lanes: Record<string, { state: string; reason: string | null; isStuck: boolean; since: number | null }> }
 
 /** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
 export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
@@ -279,7 +286,7 @@ export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; i
  * answer held for the views, `at` is when it was read, null where none ever was, and `error` why the latest read
  * failed. `ticketsOnly` marks the read of single tickets, which says nothing of what was merged.
  */
-export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[] }
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[]; /** the tickets wanted that no read has asked for, or could */ left?: string[] }
 
 /** The gated `ix-board issues` answer: the tickets asked for, those answered, and when. */
 export type TicketsAnswer = { /** the TICKETS_SHAPE of the build that read it */ shape?: number; at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
@@ -312,7 +319,7 @@ export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step
  * What the event stream has said of those roles: the latest events, oldest first, and where each assignment
  * (lead, agent, ticket) stands, so that a repeated report adds no event. `error` is the last read's problem.
  */
-export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null }
+export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null; /** when an agent of each lead last changed role, status or ticket, and what each was */ turns?: Record<string, number>; marks?: Record<string, string> }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -359,9 +366,10 @@ declare module 'claude-code' {
       workMeta: Shaped<WorkMeta>
       workPicker: Shaped<WorkPicker>
       workFeed: Shaped<WorkFeed>
+      workLanes: Shaped<WorkLanes | null>
+      workProjects: Record<string, string | null>
       workBoards: Shaped<Record<string, WorkBoard>>
       workTickets: Shaped<WorkBoard | null>
-      workCollapsed: string[]
       workOpen: string[]
       workAll: boolean
       workWarnings: boolean

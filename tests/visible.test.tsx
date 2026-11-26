@@ -13,7 +13,7 @@ const MIN = 60 * SEC
 const LEAD = 'draco:QSL:code'
 
 /** Every read the mod makes, by the source behind it. */
-type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; events: number; retro: number; capacity: number; whoami: number }
+type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; events: number; retro: number; capacity: number; whoami: number; tickets: number }
 
 const VIEWS = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'] as const
 type View = (typeof VIEWS)[number]
@@ -47,6 +47,7 @@ function watched(on: Parameters<TestBody>[1]) {
     retro: count(l => l.startsWith('ix-board --json retro delta')),
     // The capacity's ledger query and its series.
     capacity: count(l => l.startsWith('ix-board --json fleet')) + fleet.length,
+    tickets: count(l => l.startsWith('ix-board --json issues')),
     whoami: count(l => l === 'agent-msg whoami'),
   })
   return { w, reads }
@@ -89,7 +90,9 @@ test('a session with nobody at it reads nothing and does not ask who it is', asy
 const DRAWS: Record<View, string[]> = {
   factory: ['prometheus', 'herdr', 'doctor', 'board'],
   focus: ['focus'],
-  work: ['focus', 'events'],
+  // Closed, the Work pane reads the leads' reports and events, their lanes' states (a fleet series, counted as
+  // capacity) and the one read of the reported tickets.
+  work: ['focus', 'events', 'capacity', 'tickets'],
   escalations: ['escalations'],
   relay: ['announcements'],
   team: ['team', 'retro', 'capacity'],
@@ -143,7 +146,7 @@ const BANDS: [string[], string[]][] = [
   [['relay'], ['doctor']],
   [['team'], ['team']],
   // The leads' work reports, which the Focus view reads with the same command; the events are the Work pane's alone.
-  [['work'], ['focus']],
+  [['work'], ['focus', 'tickets']],
 ]
 
 for (const [modules, expected] of BANDS) {

@@ -338,7 +338,7 @@ function healthMark(v: RetroView): { mark: string; color: string } {
 function healthWords(v: RetroView, now: number): string {
   if (v.classes === null) return 'no retro'
   const at = v.latest === null ? NaN : Date.parse(v.latest)
-  return Number.isFinite(at) ? `retro ${agoShort(at, now)} old` : 'retro'
+  return Number.isFinite(at) ? `retro ${agoShort(at, now)}` : 'retro'
 }
 
 /** What an opened health line says: what it checks, what regresses, when it last ran and the command that runs it. */

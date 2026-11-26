@@ -1,27 +1,31 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { TicketsAnswer, WorkAgent, WorkFeed, WorkLead, WorkMeta, WorkPicker } from '../types'
+import type { TicketsAnswer, WorkAgent, WorkBoard, WorkFeed, WorkLead, WorkMeta, WorkPicker } from '../types'
 import { CALL_TIMEOUT_MS, limited } from './board'
-import { choiceApplied, focusHeld, focusWasRead } from './focus'
+import { choiceApplied, focusHeld, focusWasRead, pollFocus } from './focus'
 import { gatedBoard } from './linear'
 import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson } from './shared'
 import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
 import type { LeadRead, WorkReport } from './leads'
 import { focusTeams, statusOf, teamOf } from './band/modules'
-import { NOT_A_FOCUS, focusNotice, labelOf, parseRef } from './focuschoice'
+import { NOT_A_FOCUS, focusNotice, labelOf, namesOf, parseRef } from './focuschoice'
+import { lanesHeld, pollLanes } from './worklane'
 import { markStale, track } from './schedule'
+import type { SourceId } from './schedule'
 import { ALL, getSelection, scopeKeyOf, scopeOf, selectionReady, writeChoice } from './selection'
 import type { Picked } from './selection'
 import { sourceClear, sourceFailed, sourceOk } from './sources'
-import { TICKET_ID, activeIds, boardNotes, composeWork, focusCounts, focusEvents, focusFilter, foldFeed, focusBoards, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf } from './work'
-import type { RecentEntry, WorkTicket } from './work'
+import { TICKET_ID, activeIds, boardNotes, composeWork, focusCounts, focusEvents, focusFilter, foldFeed, foldTurns, flagOf, barCells, BAR_CELLS, singlesOf, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf } from './work'
+import type { RecentEntry, TicketState, WorkTicket } from './work'
 import type { Options } from './shared'
 
-// The Work pane: who works on what right now. One block per code lead, from the relay's work reports
-// (`agent-msg who`, `agent-msg work --lead <a> show`), with each ticket's title and PRs from the focus status
-// ix-board already answers for the Focus pane, then what happened lately: the merges, and on `a` every ticket event
-// and the review, spec and gate starts and finishes of `agent-msg work events`.
+// The Work pane: where each code lead's work stands, and which leads are stuck or going nowhere. It opens as one line
+// for each host: a bar of its tickets by state, how many, and its alerts. A host opens to the same line for each lead,
+// and a lead to its tickets under their Linear projects. The closed lines read the leads' work reports and events from
+// the relay, the lanes' states from Prometheus and one `ix-board issues` of every reported ticket, which the sessions
+// share. Project names are read when a lead is opened, Recent's focus status when Recent is opened, and the focus
+// choices when their list is opened. A chosen focus needs its focus status to say which tickets are its own.
 
 const PANE = 'work'
 const TITLE = 'Work'
@@ -31,24 +35,29 @@ const EVENT_LIMIT = 1000
 const EVENT_PAGES = 5
 const RECENT_ROWS = 10
 /** The version of what a tickets answer holds; a cached answer of another is read again. */
-const TICKETS_SHAPE = 2
-/** The tickets no focus names are read again within the gate's interval only where there are new ones, and this long after. */
+const TICKETS_SHAPE = 3
+/** The reported tickets are read again this long after they were last read. */
 const TICKETS_AGAIN_MS = 5 * 60 * 1000
-/** At most this many tickets are asked for at once. */
-const TICKETS_MAX = 100
+/** At most this many tickets go into one call, and at most this many calls into one read. */
+const TICKETS_PER_CALL = 100
+const TICKET_CALLS = 10
 
 const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
 const workLast = atom({ plugin: 'factory-panel', key: 'workLast' } as const, {} as Record<string, number>, { shape: 'workLast-2' })
 const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0, teams: [] } as WorkMeta, { shape: 'workMeta-6' })
 const EMPTY_FEED: WorkFeed = { events: [], phase: {}, error: null }
 const workFeed = atom({ plugin: 'factory-panel', key: 'workFeed' } as const, EMPTY_FEED, { shape: 'workFeed-1' })
-export const workCollapsed = atom({ plugin: 'factory-panel', key: 'workCollapsed' } as const, [] as string[])
 const workAll = atom({ plugin: 'factory-panel', key: 'workAll' } as const, false)
 const workWarnings = atom({ plugin: 'factory-panel', key: 'workWarnings' } as const, false)
 /** The choice open under the header, and the focus names it offers. */
 const workPicker = atom({ plugin: 'factory-panel', key: 'workPicker' } as const, { open: null, error: null } as WorkPicker, { shape: 'workPicker-2' })
-/** The folded rows that are open: `silent`, `outside`, `finished-<address>` and `unplaced-<address>`. */
+/**
+ * What is open, remembered for the session: `host:<host>`, `lead:<address>`, `old:<host>`, `silent:<host>`,
+ * `outside:<host>`, `unplaced-<address>` and `recent`.
+ */
 const workOpen = atom({ plugin: 'factory-panel', key: 'workOpen' } as const, [] as string[])
+/** The names of the projects of the opened leads' tickets, by id; null where none could be read. */
+const workProjects = atom({ plugin: 'factory-panel', key: 'workProjects' } as const, {} as Record<string, string | null>)
 
 // ---------------------------------------------------------------- data
 
@@ -85,7 +94,8 @@ const STREAM_START = '0-0'
 /** Where the last read of the event stream ended: the next read asks only for what came after. */
 let eventCursor = STREAM_START
 
-type Read = { last: Record<string, number>; feed: Pick<WorkFeed, 'events' | 'phase'>; cursor: string; truncated: boolean }
+type Feed = Pick<WorkFeed, 'events' | 'phase' | 'turns' | 'marks'>
+type Read = { last: Record<string, number>; feed: Feed; cursor: string; truncated: boolean }
 
 /**
  * The time of the latest transition of each (lead, ticket), folded into `prior`, and the role events, folded into `held`. The
@@ -96,14 +106,14 @@ type Read = { last: Record<string, number>; feed: Pick<WorkFeed, 'events' | 'pha
 async function readEvents($: EngineInterface, prior: Record<string, number>, held: WorkFeed): Promise<Read> {
   const last = { ...prior }
   // A read from the start of the stream tells the whole story again: nothing held is added to.
-  let feed: Pick<WorkFeed, 'events' | 'phase'> = eventCursor === STREAM_START ? EMPTY_FEED : held
+  let feed: Feed = eventCursor === STREAM_START ? EMPTY_FEED : held
   let cursor = eventCursor
   let more = false
   for (let page = 0; page < EVENT_PAGES; page++) {
     const answer = await twice(() => runJson<EventPage>($, ['agent-msg', 'work', 'events', '--limit', String(EVENT_LIMIT), '--after', cursor], RELAY_TIMEOUT_MS))
     const events = Array.isArray(answer.events) ? answer.events : []
     lastOfEvents(events, last)
-    feed = foldFeed(events, feed)
+    feed = { ...foldFeed(events, feed), ...foldTurns(events, feed) }
     if (typeof answer.next_cursor === 'string') cursor = answer.next_cursor
     more = answer.has_more === true && typeof answer.next_cursor === 'string'
     if (!more) break
@@ -143,33 +153,71 @@ export function resetWork(): void {
 let lastTickets = ''
 
 async function runIssues($: EngineInterface, ids: string[]): Promise<TicketsAnswer> {
-  const ran = await $.process.run(['ix-board', '--json', 'issues', ...ids], { timeoutMs: CALL_TIMEOUT_MS })
-  if (ran.exitCode === 2 && ran.stderr.includes("unrecognized subcommand 'issues'")) throw new Error('this ix-board has no `issues` command')
-  // Where Linear has none of the tickets asked for, ix-board answers all the same and exits 3 with nothing to say.
-  if (ran.exitCode !== 0 && !(ran.exitCode === 3 && ran.stderr.trim() === '')) throw new Error(failureText(ran.stderr, ran.exitCode))
-  if (ran.isStdoutTruncated) throw new Error('the answer was cut at 4 MiB')
-  const answer: unknown = JSON.parse(ran.stdout)
-  return { shape: TICKETS_SHAPE, at: await $.clock.now(), asked: ids, issues: issuesOf(answer), unknown: unknownOf(answer) }
+  const answer: TicketsAnswer = { shape: TICKETS_SHAPE, at: 0, asked: ids, issues: [], unknown: [] }
+  for (let i = 0; i < ids.length; i += TICKETS_PER_CALL) {
+    const some = ids.slice(i, i + TICKETS_PER_CALL)
+    const ran = await $.process.run(['ix-board', '--json', 'issues', ...some], { timeoutMs: CALL_TIMEOUT_MS })
+    if (ran.exitCode === 2 && ran.stderr.includes("unrecognized subcommand 'issues'")) throw new Error('this ix-board has no `issues` command')
+    // Where Linear has none of the tickets asked for, ix-board answers all the same and exits 3 with nothing to say.
+    if (ran.exitCode !== 0 && !(ran.exitCode === 3 && ran.stderr.trim() === '')) throw new Error(failureText(ran.stderr, ran.exitCode))
+    if (ran.isStdoutTruncated) throw new Error('the answer was cut at 4 MiB')
+    const body: unknown = JSON.parse(ran.stdout)
+    answer.issues.push(...issuesOf(body))
+    answer.unknown.push(...unknownOf(body))
+  }
+  answer.at = await $.clock.now()
+  return answer
+}
+
+const hostOf = (address: string): string => address.split(':')[0] ?? ''
+
+/** The leads whose tickets are on screen: opened, under an opened host, and under its opened `old` line where old. */
+const openLeads = (leads: readonly WorkLead[], opened: readonly string[], now: number): WorkLead[] =>
+  leads.filter(l => {
+    const host = hostOf(l.address)
+    return opened.includes(`lead:${l.address}`) && opened.includes(`host:${host}`) && (!isOldLead(l, now) || opened.includes(`old:${host}`))
+  })
+
+/** A lead whose report is old: it is folded under its host. */
+const isOldLead = (l: { readAt: number | null; reportedAt: number | null }, now: number): boolean => l.readAt !== null && isOldReport(l.reportedAt, now)
+
+/** What the Work pane reads for what is now open and chosen in it (hooks/visible.ts). */
+export async function workSources($: EngineInterface, isWidget: boolean): Promise<SourceId[]> {
+  // A chosen focus needs its tickets' membership for every count.
+  const isFiltered = parseRef(getSelection().focus.value) !== null
+  if (isWidget) return ['selection', 'work', ...(isFiltered ? (['membership', 'tickets'] as const) : [])]
+  const [leads, opened, picker] = await Promise.all([read($, workLeads), read($, workOpen), read($, workPicker)])
+  const isLeadOpen = openLeads(leads, opened, await $.clock.now()).length > 0
+  return [
+    'selection',
+    'work',
+    // The closed lines need where each ticket stands, each lane's state and each lead's latest change.
+    'tickets',
+    'workLanes',
+    'events',
+    ...(isFiltered ? (['membership'] as const) : []),
+    ...(isLeadOpen ? (['projects'] as const) : []),
+    ...(opened.includes('recent') ? (['focus'] as const) : []),
+    ...(picker.open === 'focus' ? (['choices'] as const) : []),
+  ]
 }
 
 /**
- * Reads the titles, states and PRs of the reported tickets no focus status names; false when that failed. Under a named
- * focus every reported ticket is read, for the project that places it.
+ * Reads the titles, states and PRs of every reported ticket in one read, which the sessions share; false when that failed.
  */
 export function pollTickets($: EngineInterface): Promise<boolean> {
   return track($, 'tickets', async () => {
-    const [meta, leads, boards, isFocusRead] = await Promise.all([read($, workMeta), read($, workLeads), focusBoards($), focusWasRead($)])
-    // Which tickets no focus names is known once the leads and the focus statuses have been read: asked again then.
-    if (meta.at === null || !isFocusRead) {
+    const [meta, leads] = await Promise.all([read($, workMeta), read($, workLeads)])
+    // The leads have to be read first.
+    if (meta.at === null) {
       markStale('tickets')
       return true
     }
-    const isFiltered = parseRef(getSelection().focus.value) !== null
-    const named = new Set(isFiltered ? [] : boards.flatMap(b => b.issues.map(i => i.identifier)))
-    const askable = (ids: string[]) => ids.filter(id => TICKET_ID.test(id) && !named.has(id)).sort()
     // Where there are more than can be asked for, those in hand come first.
+    const askable = (ids: string[]) => ids.filter(id => TICKET_ID.test(id)).sort()
     const inHand = askable(activeIds(leads))
-    const wanted = [...inHand, ...askable(ticketIds(leads)).filter(id => !inHand.includes(id))].slice(0, TICKETS_MAX).sort()
+    const every = [...inHand, ...askable(ticketIds(leads)).filter(id => !inHand.includes(id))]
+    const wanted = every.slice(0, TICKETS_PER_CALL * TICKET_CALLS).sort()
     if (wanted.length === 0) {
       await holdTickets($, () => null)
       sourceClear('ix-board issues')
@@ -177,22 +225,37 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
     }
     const teams = focusTeams(scopeOf(getSelection()))
     const now = await $.clock.now()
-    // One answer for the sessions that read the same teams, in the gate every session shares.
-    const got = await gatedBoard($, `tickets:${teams === null ? '*' : teams.join(',').toLowerCase()}${isFiltered ? ':focus' : ''}`, () => limited(() => runIssues($, wanted)), {
-      outdated: (answer: TicketsAnswer) => answer.shape !== TICKETS_SHAPE || (now - answer.at >= TICKETS_AGAIN_MS && wanted.some(id => !answer.asked.includes(id))),
+    const got = await gatedBoard($, `tickets:${teams === null ? '*' : teams.join(',').toLowerCase()}`, () => limited(() => runIssues($, wanted)), {
+      outdated: (answer: TicketsAnswer) => answer.shape !== TICKETS_SHAPE || now - answer.at >= TICKETS_AGAIN_MS,
     })
     const error = got.backoffUntil !== null ? pausedText(got.backoffUntil, now) : got.error
-    const data = got.data
-    await holdTickets($, held =>
-      data !== null
-        ? { issues: data.issues, activity: null, at: data.at, error, ticketsOnly: true, unknown: data.unknown ?? [], asked: data.asked }
-        : held !== null
-          ? { ...held, error }
-          : error === null ? null : { issues: [], activity: null, at: null, error, ticketsOnly: true },
-    )
+    await holdTickets($, held => {
+      const data = got.data
+      // A read another session is making says nothing yet; a failed one leaves what was held.
+      if (data === null) return held === null && error === null ? null : { ...(held ?? { issues: [], activity: null, at: null, ticketsOnly: true as const }), error, left: held === null ? every : held.left }
+      return { issues: data.issues, activity: null, at: data.at, error, ticketsOnly: true, unknown: data.unknown, asked: data.asked, left: every.filter(id => !data.asked.includes(id)) }
+    })
     if (error !== null) sourceFailed('ix-board issues', error)
-    else if (data !== null) sourceOk('ix-board issues', now)
+    else if (got.data !== null) sourceOk('ix-board issues', await $.clock.now())
     return error === null
+  })
+}
+
+/** Reads the names of the projects of the opened leads' tickets: the headings under them. */
+export function pollProjects($: EngineInterface): Promise<boolean> {
+  return track($, 'projects', async () => {
+    const [leads, opened, boards] = await Promise.all([read($, workLeads), read($, workOpen), readBoards($)])
+    const singles = singlesOf(boards)
+    const ids = [...new Set(openLeads(leads, opened, await $.clock.now()).flatMap(l => ticketIds([l]).flatMap(id => singles.get(id)?.project ?? [])))]
+    // Until the tickets are read there is no project to name.
+    if (ids.length === 0) {
+      markStale('projects')
+      return true
+    }
+    const names = await namesOf($, ids.map(id => `project:${id}`))
+    // A project no name could be read for is headed by its id.
+    await update($, workProjects, held => ({ ...held, ...Object.fromEntries(ids.map(id => [id, names.find(n => n.id === id)?.name ?? null])) }))
+    return true
   })
 }
 
@@ -260,15 +323,15 @@ async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean
 
 // ---------------------------------------------------------------- pane
 
-const MARKS: Record<string, { mark: string; color: string }> = {
-  running: { mark: '◐', color: 'claude' },
-  waiting: { mark: '◌', color: 'warning' },
-  failed: { mark: '✕', color: 'error' },
-  done: { mark: '✓', color: 'success' },
+/** What each state is drawn with: a shade of its own, so that states are told apart without colour, and a colour. */
+export const STATE_MARKS: Record<TicketState, { mark: string; color: string }> = {
+  done: { mark: '█', color: 'success' },
+  review: { mark: '▓', color: 'warning' },
+  working: { mark: '▒', color: 'suggestion' },
+  new: { mark: '░', color: 'inactive' },
+  unread: { mark: '?', color: 'subtle' },
+  canceled: { mark: '×', color: 'inactive' },
 }
-const UNKNOWN = { mark: '◌', color: 'inactive' }
-/** The mark of a lead whose report the last read did not get. */
-const NOT_READ = { mark: '▲', color: 'warning' }
 
 const KIND_MARKS = { merged: { mark: '✓', color: 'success' }, closed: { mark: '●', color: 'warning' }, opened: { mark: '○', color: 'subtle' } } as const
 const STEP_MARKS = { start: { mark: '◐', color: 'claude' }, done: { mark: '✓', color: 'success' } } as const
@@ -331,24 +394,45 @@ async function choose($: EngineInterface, change: (c: Picked) => Picked): Promis
     await update($, workPicker, p => ({ ...p, error: `Could not save your choice: ${errorText(error)}` }))
     return
   }
-  await choiceApplied($)
+  await choiceApplied($, false)
 }
 
 /** Opens a choice under the header, or closes it. */
 async function openPicker($: EngineInterface, which: 'teams' | 'focus'): Promise<void> {
+  // The focus choices are read when their list is opened.
+  if (which === 'focus') markStale('choices')
   await update($, workPicker, p => ({ open: p.open === which ? null : which, error: null }))
 }
 
-async function toggleCollapsed($: EngineInterface, address: string): Promise<void> {
-  await update($, workCollapsed, list => (list.includes(address) ? list.filter(a => a !== address) : [...list, address]))
+/** Opens what `key` names, or closes it; what an opening shows is read at the next drawing. */
+async function toggle($: EngineInterface, key: string): Promise<void> {
+  // The events and Recent keep their own intervals: a source never read is due at once.
+  markStale('projects')
+  await update($, workOpen, list => (list.includes(key) ? list.filter(k => k !== key) : [...list, key]))
 }
 
-export function registerWork(on: On, _options: Options): void {
+/** The `r` key: the leads, then what is open, whatever was last read. */
+async function refresh($: EngineInterface, options: Options): Promise<void> {
+  await pollWork($, true)
+  const sources = await workSources($, false)
+  await Promise.all(
+    sources.map(async s => {
+      if (s === 'events') await pollEvents($)
+      if (s === 'tickets') await pollTickets($)
+      if (s === 'workLanes') await pollLanes($, options)
+      if (s === 'membership') await pollFocus($, true, true, true)
+      if (s === 'focus') await pollFocus($, true)
+    }),
+  )
+}
+
+export function registerWork(on: On, config: Options): void {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
-    const [leads, last, meta, feed, boards, collapsed, opened, all, warnOpen, isFocusRead] = await Promise.all([read($, workLeads), read($, workLast), read($, workMeta), read($, workFeed), readBoards($), read($, workCollapsed), read($, workOpen), read($, workAll), read($, workWarnings), focusWasRead($)])
-    const [picker, focusNow] = await Promise.all([read($, workPicker), focusHeld($)])
+    const [leads, last, meta, feed, boards, opened, all, warnOpen, isFocusRead] = await Promise.all([read($, workLeads), read($, workLast), read($, workMeta), read($, workFeed), readBoards($), read($, workOpen), read($, workAll), read($, workWarnings), focusWasRead($)])
+    const [picker, focusNow, lanes, projects] = await Promise.all([read($, workPicker), focusHeld($), lanesHeld($), read($, workProjects)])
+    const ticketsError = boards.find(b => b.ticketsOnly === true)?.error ?? null
     const sel = getSelection()
     const scope = scopeOf(sel)
     const filter = focusFilter(scope.focus, scopeKeyOf(scope), focusNow.meta, focusNow.focuses, boards)
@@ -356,60 +440,159 @@ export function registerWork(on: On, _options: Options): void {
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const view = composeWork(leads, last, boards, filter)
     const counts = focusCounts(leads, boards, now, true, meta.listed, filter)
+    const singles = singlesOf(boards)
     // Under a focus, a lead that was read and holds nothing of it, nor anything that may be of it, is folded away.
-    const isOutside = (l: (typeof view.leads)[number]) => filter.kind === 'named' && l.readAt !== null && l.error === null && l.tickets.length + l.finished.length + l.unplaced.length === 0
-    const shown = view.leads.filter(l => !isOutside(l))
-    const outside = view.leads.filter(isOutside)
+    const isOutside = (l: (typeof view.leads)[number]) => filter.kind === 'named' && l.readAt !== null && l.error === null && l.tickets.length + l.unplaced.length === 0
     const notes = boardNotes(boards, now)
     const oldAge = notes.oldAt === null ? null : agoShort(notes.oldAt, now)
-    // A lead whose report was never read may hold more tickets; one drawn as last read, or whose report is old, is marked old on its row.
-    const unread = view.leads.filter(l => l.readAt === null).length
-    const old = view.leads.filter(l => l.readAt !== null && (l.error !== null || isOldReport(l.at, now))).length
-    const notRead = [unread > 0 ? `${unread} not read` : '', old > 0 ? `${old} old` : ''].filter(Boolean).map(t => ` · ${t}`).join('')
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+    // A lead is active where its report is not old and it has running work.
+    const running = new Set(leads.filter(l => l.readAt !== null && l.error === null && !isOldReport(l.reportedAt, now) && l.agents.some(a => a.status === 'running')).map(l => l.address))
     // With no lead drawn and no read ended, nothing is known of them: no number is given.
     const unknown = view.leads.length > 0 ? null : meta.relayError !== null ? 'The leads could not be read.' : meta.at === null ? 'Reading the leads’ work reports…' : null
 
     if (e.props.placement === 'widget') {
       const isShort = counts.reporting < counts.listed
-      const tickets = `${isShort || counts.unplaced > 0 ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}${counts.unplaced > 0 ? ` · +${counts.unplaced} unknown project` : ''}${counts.oldTickets > 0 ? ` · +${counts.oldTickets} old` : ''}`
-      const merged = counts.merged === null ? ` · merged 24h unavailable (${counts.mergedWhy})` : ` · ${counts.mergedPartial ? '≥' : ''}${counts.merged} merged 24h`
+      const tickets = `${isShort || counts.unplaced > 0 ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}${counts.unplaced > 0 ? ` · +${counts.unplaced} unknown project` : ''}`
+      const failed = view.leads.filter(l => l.readAt === null || l.error !== null).length
+      const old = view.leads.filter(l => l.readAt !== null && l.error === null && isOldReport(l.at, now)).length
+      const alerts = [failed > 0 ? `▲ ${failed}` : '', old > 0 ? `⏱ ${old}` : ''].filter(Boolean).map(t => ` · ${t}`).join('')
       return (
         <Box flexDirection="row" gap={1}>
-          <Text weight="semibold">{unknown ?? `${plural(shown.length, 'lead')} · ${tickets}${merged}${notRead}${oldAge === null ? '' : ` · ix-board ${oldAge} old`}${filter.kind === 'unread' ? ' · focus not read' : ''}`}</Text>
+          <Text weight="semibold">{unknown ?? `${plural(view.leads.filter(l => !isOutside(l)).length, 'lead')} · ${running.size} active · ${tickets}${alerts}${filter.kind === 'unread' ? ' · focus not read' : ''}`}</Text>
         </Box>
       )
     }
 
-    const flip = (key: string) => () => void update($, workOpen, list => (list.includes(key) ? list.filter(k => k !== key) : [...list, key]))
-    const fold = (key: string, label: string) => <Button key={key} plain label={`${opened.includes(key) ? '▾' : '▸'} ${label}`} onPress={flip(key)} />
+    const isOpen = (key: string) => opened.includes(key)
+    const flip = (key: string) => () => void toggle($, key)
+    const fold = (key: string, label: string) => <Button key={key} plain label={`${isOpen(key) ? '▾' : '▸'} ${label}`} onPress={flip(key)} />
+    // The host is the group: a lead is named by its workspace and tab.
+    const leadName = (address: string) => address.split(':').slice(1).join(':')
+    const hosts = [...new Set([...view.leads.map(l => l.address), ...meta.silent].map(hostOf))].sort((a, b) => a.localeCompare(b))
+
+    // One column of names, so that every bar, count and alert starts at the same cell, whatever is open.
+    const COUNT_CELLS = 3
+    const ALERT_CELLS = 12
+    const longest = Math.max(0, ...hosts.map(h => h.length + 2), ...view.leads.map(l => leadName(l.address).length + 4))
+    const nameCells = Math.max(8, Math.min(longest, width - BAR_CELLS - COUNT_CELLS - ALERT_CELLS - 3))
+
+    type Alert = { text: string; color?: string; words: string }
+    /** What is to be said of a lead, the worst first: its row shows the first. */
+    const alertsOf = (l: (typeof view.leads)[number]): Alert[] => {
+      const raw = leads.find(r => r.address === l.address)!
+      const said: Alert[] = []
+      if (l.readAt === null) said.push({ text: '▲', color: 'warning', words: `report not read: ${l.error ?? 'no answer yet'}` })
+      else if (l.error !== null) said.push({ text: `▲ ${agoShort(l.readAt, now)}`, color: 'warning', words: `report last read ${ago(l.readAt, now)}: ${l.error}` })
+      const flag = flagOf(raw, lanes, singles, feed.turns?.[l.address], now)
+      const since = flag === null || flag.since === null ? '' : ` ${agoShort(flag.since, now)}`
+      if (flag?.kind === 'stuck') said.push({ text: `⚠${since}`, color: 'error', words: `⚠ stuck: ${flag.why}${since === '' ? '' : `, for${since}`}` })
+      if (l.error === null && isOldReport(l.at, now)) said.push({ text: `⏱ ${agoShort(l.at!, now)}`, words: `⏱ old report: the lead last reported ${ago(l.at, now)}` })
+      else if (flag?.kind === 'churning') said.push({ text: `⏱${since}`, color: 'warning', words: `⏱ no movement for${since}: ${flag.why}` })
+      return said
+    }
+
+    /** The bar and count of some tickets, each drawn once; a canceled one is not drawn. */
+    const barOf = (tickets: readonly WorkTicket[], key: string, isDim: boolean) => {
+      const states = new Map<string, TicketState>()
+      for (const t of tickets) if (t.state !== 'canceled' && (!states.has(t.id) || states.get(t.id) === 'new')) states.set(t.id, t.state)
+      return [
+        <Box key={`${key}-bar`} flexDirection="row" width={BAR_CELLS} flexShrink={0}>
+          {barCells([...states.values()]).map(c => (
+            <Text key={`${key}-${c.state}`} color={STATE_MARKS[c.state].color} dimColor={isDim}>{STATE_MARKS[c.state].mark.repeat(c.cells)}</Text>
+          ))}
+        </Box>,
+        <Box key={`${key}-count`} flexDirection="row" width={COUNT_CELLS} justifyContent="flex-end" flexShrink={0}>
+          <Text dimColor={isDim} tabular>{String(states.size)}</Text>
+        </Box>,
+      ]
+    }
 
     const leadBlock = (l: (typeof view.leads)[number]) => {
-      const isOpen = !collapsed.includes(l.address)
-      const isFailed = l.error !== null
+      const key = `lead:${l.address}`
+      const isShown = isOpen(key)
       const isOld = isOldReport(l.at, now)
-      const m = isFailed ? NOT_READ : isOld ? UNKNOWN : (MARKS[l.status] ?? UNKNOWN)
-      const age = l.readAt === null ? 'not read' : isFailed ? `old ${agoShort(l.readAt, now)}` : l.at === null ? 'no report time' : `${isOld ? 'old ' : ''}${agoShort(l.at, now)}`
-      const ticket = (t: WorkTicket) => <Text key={`${l.address}-${t.id}`} dimColor={isOld} wrap="truncate-end">{ticketLine(t, now, width)}</Text>
-      const done = `finished-${l.address}`
+      const said = alertsOf(l)
+      const row = said[0]
+      const every = [...l.tickets, ...l.unplaced]
+      const ticket = (t: WorkTicket) => (
+        <Box key={`${l.address}-${t.id}`} flexDirection="row">
+          <Box flexDirection="row" paddingLeft={3}>
+            <Text color={STATE_MARKS[t.state].color} dimColor={isOld}>{STATE_MARKS[t.state].mark}</Text>
+          </Box>
+          <Text dimColor={isOld} wrap="truncate-end">{ticketLine(t, now, width - 2).slice(2)}</Text>
+        </Box>
+      )
+      // Each project over its tickets, in the order the first of each is listed.
+      const heading = (id: string | null | undefined) => (id === null ? 'no project' : id === undefined ? 'project unknown' : (projects[id] ?? (id in projects ? `project ${id.slice(0, 8)}` : 'project …')))
+      const groups = [...new Set(l.tickets.map(t => t.project))]
+      const unread = every.filter(t => t.state === 'unread').length
       return (
         <Box key={`lead-${l.address}`} flexDirection="column">
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-            <Box flexDirection="row" gap={1} alignItems="center">
-              <Button key={`toggle-${l.address}`} plain label={isOpen ? '▾' : '▸'} onPress={() => void toggleCollapsed($, l.address)} />
-              <Text color={m.color}>{m.mark}</Text>
-              <Text wrap="truncate-end">{l.address}</Text>
-              {!isOpen && l.readAt !== null && <Text dimColor>{`(${plural(l.tickets.length, 'ticket')}${l.unplaced.length > 0 ? `, ${l.unplaced.length} unknown project` : ''})`}</Text>}
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Box flexDirection="row" width={nameCells} flexShrink={0} paddingLeft={2} gap={1}>
+              <Button key={key} plain label={isShown ? '▾' : '▸'} onPress={flip(key)} />
+              <Text dimColor={isOld} wrap="truncate-end">{clip(leadName(l.address), nameCells - 4)}</Text>
             </Box>
-            <Text dimColor size="caption" tabular>{age}</Text>
+            {barOf(l.tickets, l.address, isOld)}
+            {row !== undefined && <Text color={row.color} dimColor={row.color === undefined}>{row.text}</Text>}
           </Box>
-          {isOpen && l.tickets.map(ticket)}
-          {isOpen && l.readAt !== null && l.tickets.length + l.finished.length + l.unplaced.length === 0 && <Text dimColor>{l.outside > 0 ? '   no ticket in this focus' : '   no ticket reported'}</Text>}
-          {isOpen && l.tickets.length + l.unplaced.length === 0 && l.summary !== '' && <Text dimColor wrap="truncate-end">{`   focus: ${l.summary}`}</Text>}
-          {isOpen && l.finished.length > 0 && <Box flexDirection="row" paddingLeft={3}>{fold(done, `${l.finished.length} finished`)}</Box>}
-          {isOpen && opened.includes(done) && l.finished.map(ticket)}
-          {isOpen && l.unplaced.length > 0 && <Box flexDirection="row" paddingLeft={3}>{fold(`unplaced-${l.address}`, `${plural(l.unplaced.length, 'ticket')} with unknown project`)}</Box>}
-          {isOpen && opened.includes(`unplaced-${l.address}`) && l.unplaced.map(ticket)}
+          {isShown && said.map((a, i) => <Text key={`said-${l.address}-${i}`} color={a.color} dimColor={a.color === undefined} wrap="wrap">{`    ${a.words}`}</Text>)}
+          {isShown && groups.map(id => (
+            <Box key={`group-${l.address}-${id}`} flexDirection="column">
+              <Box flexDirection="row" paddingLeft={3}>
+                <Text weight="semibold" wrap="truncate-end">{heading(id)}</Text>
+              </Box>
+              {l.tickets.filter(t => t.project === id).map(ticket)}
+            </Box>
+          ))}
+          {isShown && unread > 0 && <Text dimColor wrap="wrap">{`    ? ${plural(unread, 'ticket')} with no state: ${ticketsError ?? 'ix-board has not said'}`}</Text>}
+          {isShown && l.readAt !== null && every.length === 0 && <Text dimColor>{l.outside > 0 ? '    no ticket in this focus' : '    no ticket reported'}</Text>}
+          {isShown && every.length === 0 && l.summary !== '' && <Text dimColor wrap="truncate-end">{`    focus: ${l.summary}`}</Text>}
+          {isShown && l.unplaced.length > 0 && <Box flexDirection="row" paddingLeft={3}>{fold(`unplaced-${l.address}`, `${plural(l.unplaced.length, 'ticket')} with unknown project`)}</Box>}
+          {isShown && isOpen(`unplaced-${l.address}`) && l.unplaced.map(ticket)}
+        </Box>
+      )
+    }
+
+    const hostBlock = (host: string) => {
+      const key = `host:${host}`
+      const mine = view.leads.filter(l => hostOf(l.address) === host)
+      const silent = meta.silent.filter(a => hostOf(a) === host)
+      const inside = mine.filter(l => !isOutside(l))
+      const outside = mine.filter(isOutside)
+      const oldLeads = inside.filter(l => isOldLead({ readAt: l.readAt, reportedAt: l.at }, now))
+      const fresh = inside.filter(l => !oldLeads.includes(l))
+      const shown = inside.map(l => alertsOf(l)[0]?.text ?? '')
+      const stuck = shown.filter(t => t.startsWith('⚠')).length
+      const late = shown.filter(t => t.startsWith('⏱')).length
+      const unread = shown.filter(t => t.startsWith('▲')).length
+      return (
+        <Box key={`host-block-${host}`} flexDirection="column">
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Box flexDirection="row" width={nameCells} flexShrink={0}>
+              <Button key={key} plain label={`${isOpen(key) ? '▾' : '▸'} ${clip(host, nameCells - 2)}`} onPress={flip(key)} />
+            </Box>
+            {barOf(inside.flatMap(l => l.tickets), host, false)}
+            {stuck > 0 && <Text color="error">{`⚠ ${stuck}`}</Text>}
+            {late > 0 && <Text color="warning">{`⏱ ${late}`}</Text>}
+            {unread > 0 && <Text color="warning">{`▲ ${unread}`}</Text>}
+          </Box>
+          {isOpen(key) && fresh.map(leadBlock)}
+          {isOpen(key) && oldLeads.length > 0 && <Box flexDirection="row" paddingLeft={2}>{fold(`old:${host}`, `⏱ ${oldLeads.length}`)}</Box>}
+          {isOpen(key) && isOpen(`old:${host}`) && oldLeads.map(leadBlock)}
+          {isOpen(key) && outside.length > 0 && (
+            <Box flexDirection="column" paddingLeft={2}>
+              <Box flexDirection="row">{fold(`outside:${host}`, `${plural(outside.length, 'lead')} with nothing in this focus`)}</Box>
+              {isOpen(`outside:${host}`) && outside.map(l => <Text key={`outside-${l.address}`} dimColor wrap="truncate-end">{`   ${l.address} · ${l.outside === 0 ? 'no ticket reported' : `${plural(l.outside, 'ticket')} outside the focus`}`}</Text>)}
+            </Box>
+          )}
+          {isOpen(key) && silent.length > 0 && (
+            <Box flexDirection="column" paddingLeft={2}>
+              <Box flexDirection="row">{fold(`silent:${host}`, `${silent.length} ${silent.length === 1 ? 'lead reports' : 'leads report'} no work`)}</Box>
+              {isOpen(`silent:${host}`) && <Text dimColor wrap="wrap">{silent.join(', ')}</Text>}
+            </Box>
+          )}
         </Box>
       )
     }
@@ -420,10 +603,11 @@ export function registerWork(on: On, _options: Options): void {
     const focuses = boards.filter(b => b.ticketsOnly !== true)
     const none = focuses.some(b => b.error) ? 'ix-board’s focus status could not be read.' : isFocusRead && focuses.length === 0 ? 'No focus names a project or ticket, so there is no focus status to read merges from.' : 'Waiting for ix-board’s focus status…'
     const missing = !view.hasBoard ? none : view.activity === null ? 'needs ix-board ≥0.9.0' : null
+    const isRecent = isOpen('recent')
     const nothing = oldAge !== null ? 'Nothing merged in that answer.' : all ? 'Nothing happened lately.' : 'Nothing merged lately.'
     const recent = () => (
       <Box flexDirection="column">
-        {oldAge !== null && <Text color="warning" size="caption">{`ix-board’s answer is ${oldAge} old: states, PRs and merges are as of then.`}</Text>}
+        {oldAge !== null && <Text color="warning" size="caption">{`⏱ ${oldAge}`}</Text>}
         {rows.map((row, i) => {
           const m = row.event !== undefined ? STEP_MARKS[row.event.step] : KIND_MARKS[row.activity.kind]
           return (
@@ -440,7 +624,6 @@ export function registerWork(on: On, _options: Options): void {
     )
 
     const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`)]
-    const reporting = view.leads.length > 0 || meta.at !== null
     const isHeld = focusNow.meta.heldFor === scopeKeyOf(scope)
     const notice = isHeld ? focusNotice(focusNow.meta.chosen) : null
     // A stored value that is no focus was said when the files were read.
@@ -490,50 +673,37 @@ export function registerWork(on: On, _options: Options): void {
             <Button key="teams-choice" plain label={`Teams: ${teamsText(teams)} ▾`} onPress={() => void openPicker($, 'teams')} />
             <Button key="focus-choice" plain label={`Focus: ${clip(focusName, VALUE_CELLS)} ▾`} onPress={() => void openPicker($, 'focus')} />
           </Box>
-          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($), pollTickets($)])} />
+          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void refresh($, config)} />
         </Box>
-        {(options !== null || picker.error !== null || filterNotes.length > 0 || reporting) && (
+        {(options !== null || picker.error !== null || filterNotes.length > 0) && (
           <Box flexDirection="column">
             {options}
             {picker.error !== null && <Text color="warning" size="caption">{picker.error}</Text>}
             {filterNotes.map((t, i) => <Text key={`filter-${i}`} color="warning" size="caption">{t}</Text>)}
-            {reporting && <Text dimColor size="caption">{`${plural(view.leads.length, 'lead')}${notRead}`}</Text>}
           </Box>
         )}
 
         {/* A read that failed says nothing of who has reported. */}
         {view.leads.length === 0 && <Text dimColor>{unknown ?? (meta.busy ? 'Reading the leads’ work reports…' : 'No lead has reported work.')}</Text>}
 
-        {shown.length > 0 && (
+        {hosts.length > 0 && (
           <Box flexDirection="column" backgroundColor={CARD_BG}>
-            {shown.map(leadBlock)}
+            {hosts.map(hostBlock)}
           </Box>
         )}
-
-        {outside.length > 0 && (
-          <Box flexDirection="column">
-            <Box flexDirection="row">{fold('outside', `${outside.length} ${outside.length === 1 ? 'lead' : 'leads'} with nothing in this focus`)}</Box>
-            {opened.includes('outside') && outside.map(l => <Text key={`outside-${l.address}`} dimColor wrap="truncate-end">{`   ${l.address} · ${l.outside === 0 ? 'no ticket reported' : `${plural(l.outside, 'ticket')} outside the focus`}`}</Text>)}
-          </Box>
-        )}
-
-        {(meta.silent.length > 0 || meta.pending > 0) && (
-          <Box flexDirection="column">
-            {meta.silent.length > 0 && <Box flexDirection="row">{fold('silent', `${meta.silent.length} ${meta.silent.length === 1 ? 'lead reports' : 'leads report'} no work`)}</Box>}
-            {meta.silent.length > 0 && opened.includes('silent') && <Text dimColor wrap="wrap">{meta.silent.join(', ')}</Text>}
-            {meta.pending > 0 && <Text dimColor>{`${plural(meta.pending, 'lead')} being read by another session`}</Text>}
-          </Box>
-        )}
+        {meta.pending > 0 && <Text dimColor>{`${plural(meta.pending, 'lead')} being read by another session`}</Text>}
 
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-            <Text dimColor>── Recent ──</Text>
-            <Box flexDirection="row" gap={1}>
-              <Text dimColor size="caption">{all ? 'all ·' : 'merges ·'}</Text>
-              <Button key="kinds" plain label={all ? 'a merges' : 'a all'} hotkey="a" onPress={() => void update($, workAll, v => !v)} />
-            </Box>
+            {fold('recent', 'Recent')}
+            {isRecent && (
+              <Box flexDirection="row" gap={1}>
+                <Text dimColor size="caption">{all ? 'all ·' : 'merges ·'}</Text>
+                <Button key="kinds" plain label={all ? 'a merges' : 'a all'} hotkey="a" onPress={() => void update($, workAll, v => !v)} />
+              </Box>
+            )}
           </Box>
-          {recent()}
+          {isRecent && recent()}
         </Box>
 
         {warnings.length > 0 && warnOpen && (
