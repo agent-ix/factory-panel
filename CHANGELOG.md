@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.2
+
+The classic-layout `/factory help` no longer points at a line above the prompt and a number to type when the band is off, which is now the default. It says to type `/factory`; with `inlineView` set to `band` or `status` the earlier text is unchanged.
+
 ## 0.10.1
 
 Quiet by default. A session that does not ask for the panes opens none, draws no band and reads nothing.

@@ -48,6 +48,14 @@ const CLASSIC_HELP = [
   CHOICE_HELP,
 ].join('\n')
 
+const QUIET_CLASSIC_HELP = [
+  "factory-panel shows the factory's health, your project's progress and what needs you.",
+  '  See it:      type /factory. The line above the prompt is off; set inlineView to band to show it.',
+  '  Open more:   /factory, or /factory focus | work | escalations | relay | team | factory',
+  '  Switch:      r refreshes, Esc closes the view.',
+  CHOICE_HELP,
+].join('\n')
+
 const FULLSCREEN_HELP = [
   "factory-panel shows the factory's health, your project's progress and what needs you.",
   '  See it:      the panel at the right of the chat, one tab for each view.',
@@ -56,7 +64,7 @@ const FULLSCREEN_HELP = [
   CHOICE_HELP,
 ].join('\n')
 
-export const helpText = (isFullscreen: boolean, sel: Selection = getSelection()): string => `${isFullscreen ? FULLSCREEN_HELP : CLASSIC_HELP}\n\n${snippetFor(sel)}`
+export const helpText = (isFullscreen: boolean, sel: Selection = getSelection(), inlineView: Options['inlineView'] = 'band'): string => `${isFullscreen ? FULLSCREEN_HELP : inlineView === 'off' ? QUIET_CLASSIC_HELP : CLASSIC_HELP}\n\n${snippetFor(sel)}`
 
 const SOURCE_NOTE: Record<string, string> = { user: 'your choice', declaration: 'a skill\'s declaration', default: 'automatic' }
 
@@ -180,7 +188,7 @@ export async function runFactory($: EngineInterface, options: Options, args: str
   const rest = text.slice(command.length).trim()
   // Every command sees the files as they are now, so a declaration written a moment ago counts.
   const sel = await refreshSelection($)
-  if (command === 'help' && rest === '') return helpText(isFullscreen, sel)
+  if (command === 'help' && rest === '') return helpText(isFullscreen, sel, options.inlineView)
   if (command === 'show' && rest === '') {
     await readFocuses($, false)
     return showText($, sel)
@@ -191,7 +199,7 @@ export async function runFactory($: EngineInterface, options: Options, args: str
   let view: ViewId
   if (text === '') view = defaultView(sel.modules.value)
   else if (isViewId(command) && rest === '') view = command
-  else return `"${text}" is not a /factory command.\n\n${helpText(isFullscreen, sel)}`
+  else return `"${text}" is not a /factory command.\n\n${helpText(isFullscreen, sel, options.inlineView)}`
   return showView($, options, view, isFullscreen)
 }
 
