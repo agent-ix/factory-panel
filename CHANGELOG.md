@@ -1,20 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
-- The Work tab is one line a host, closed, then a line a lead, then its tickets. Each line is a bar of tickets by state (done, in review, being worked on, not started, unread), a count and short alerts: `⚠` stuck, `⏱` old report or no movement for 2 hours, `▲` report not read. Opening a lead says in words what the alert means and lists its tickets under their projects. Recent starts closed. The ticket rows’ age column, the lead status marks, `▸ N finished` and the header counts are gone.
-- The Work tab reads less until opened: no focus status, roadmap, project or focus name while every line is closed and the focus is `all`. It reads one `ix-board issues` of every reported ticket (in calls of 100) every 5 minutes, the relay’s work reports and events, and the lane series. The widget reads the reports only and no longer counts merges.
-- The Team tab’s figures stand in one grid: names, right-aligned values and sparklines in fixed columns, two figures a line where the pane has room and one where not. A short six-hour sparkline is filled to the column width with `·`.
-- A lane blocked on its usage limit is stuck on the Work tab. In the Hosts table `needs work N` and `N waiting` read `↓ N` and `◌ N`, which a press puts in words.
-- On the Team tab a churning host reads `⏱ 2h` and the retro line `retro 3d`.
-- The Team tab shows each team’s figures with their own names and sparklines: closed and merged; in progress, blocked and oldest; ready; first review and PR cycle, with leaf work remaining, ready unmerged PRs, findings and changes requested behind `more`. Verified closures, effort per closure, merges per hour, PRs with findings and executing agents are gone; the widget and the band’s team cell read tickets closed today.
-- A missing figure is left out, with one `○` beside the team’s name that says what is missing and why when pressed. Retro health is one line for each team, which opens to what it checks, what regresses, when it last ran and the command. The Roles section and its `ix-board retro eval` read are removed, since the rules it scored have no captured data.
-- Capacity is replaced by Hosts: working, stuck and idle lanes, CPU, done/h with the best recorded (the column is drawn once a host has one), `needs work` for a shortfall of ready work, and `churning`. A lane the watcher marks `wait_loop` reads as waiting, not stuck.
-- A focus is `all` or a Linear initiative or project the leads report, listed by Linear name, stored by Linear ID. Matching by named focus definition, lead address and lead summary is gone; a stored name reads as `all` and says so.
-- Teams and focus are two settings. Teams say which leads are listed (your own by default, one or more, or `all`); the focus, one initiative or project, or `all` (the default), narrows their tickets and never widens the teams. Both are at the top of the Work tab, clickable, and `/factory teams` and `/factory focus` set the same values.
-- Under a focus the Work tab lists the tickets of the focus, folds the leads with nothing in it, keeps tickets of unknown project behind a line of their own and keeps unread leads listed; Recent, the widget and the band's work cell follow.
-- The `own` and `team` focus values are gone: a stored or declared one means `all`. The Focus tab and band pick lead focus entries by the teams, or show the chosen focus, and their banner reads `focuses of <teams>` or `your choice: <name>`.
-- A Work tab ticket row reads id, title, badges, age. The role and status words (`coder running`, `reviewer done`, `focus`) and the Linear state are gone, the ages stand in one column and the title takes the freed width. A ticket with no title because Linear has no record of it, or it could not be read, still says so.
+A Work tab that shows where each lead’s tickets stand, a quieter Team tab, and separate teams and focus settings.
+
+### Work tab
+
+- One line a host, closed, then a line a lead, then its tickets under their Linear projects. Each host and lead line is a bar of tickets by state (done, in review, being worked on, not started, unread), a count and short alerts: `⚠` stuck, `⏱` old report or no movement for 2 hours, `▲` report not read. Opening a lead says in words what an alert means. A lane blocked on a permission, dialog, question, login or usage limit, or in a tool call past its limit, is stuck; a wait loop is not.
+- Ticket rows read state mark, id, title, badges and age. The role and status words and the Linear state are gone. A ticket with no title because Linear has no record of it, or it could not be read, says so.
+- Recent starts closed. The lead status marks, the per-lead age, `▸ N finished` and the header counts are gone; finished tickets are listed with the rest.
+- Less is read until opened: with every line closed and the focus `all`, no focus status, roadmap, project or focus name. The view reads the relay’s work reports and events, the watcher’s lane series and one `ix-board issues` of every reported ticket (in calls of 100) every 5 minutes.
+- The widget reads `N leads · A active · M tickets` from the work reports and no longer counts merges.
+
+### Teams and focus
+
+- Teams and focus are two settings. Teams say which leads are listed (your own by default, one or more, or `all`); the focus narrows their tickets and never widens the teams. Both are at the top of the Work tab, clickable, and `/factory teams` and `/factory focus` set the same values.
+- A focus is `all` (the default) or a Linear initiative or project the leads report, listed by Linear name, stored by Linear ID. Matching by named focus definition, lead address and lead summary is gone; a stored name reads as `all` and says so. The `own` and `team` values are gone: a stored or declared one means `all`.
+- Under a focus the Work tab lists the tickets of the focus, folds the leads with nothing in it, keeps tickets of unknown project apart and keeps unread leads listed; Recent, the widget and the band’s work cell follow.
+- The Focus tab and band pick lead focus entries by the teams, or show the chosen focus, and their banner reads `focuses of <teams>` or `your choice: <name>`.
+
+### Team tab
+
+- Each team shows its figures with their own names and sparklines: closed and merged; in progress, blocked and oldest; ready; first review and PR cycle, with leaf work remaining, ready unmerged PRs, findings and changes requested behind `more`. They stand in fixed columns, two a line where the pane has room. Verified closures, effort per closure, merges per hour, PRs with findings and executing agents are gone; the widget and the band’s team cell read tickets closed today.
+- A missing figure is left out, with one `○` beside the team’s name that says what is missing and why when pressed.
+- Retro health is one line a team (`retro 3d`), which opens to what it checks, what regresses, when it last ran and the command. The Roles section and its `ix-board retro eval` read are removed, since the rules it scored have no captured data.
+- Capacity is replaced by Hosts: working, stuck and idle lanes, CPU, and done/h with the best recorded (the column is drawn once a host has one). After a host’s figures `↓ N` is a shortfall of ready work, `◌ N` lanes in a wait loop and `⏱ 2h` churning; a press says so in words.
 
 ## 0.9.0
 
