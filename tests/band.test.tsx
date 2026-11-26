@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './loud'
 
 import { MODULE_IDS, buildCells, machineTone } from '../hooks/band/modules'
 import { boardOf } from '../hooks/work'

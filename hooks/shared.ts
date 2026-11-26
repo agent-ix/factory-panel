@@ -11,6 +11,8 @@ export type Options = {
   refreshSeconds: number
   /** band | status | off: what a classic (non-fullscreen) session shows. */
   inlineView: 'band' | 'status' | 'off'
+  /** Whether a docking layout opens the panes at session start; false leaves them to /factory. */
+  openOnStart: boolean
 }
 
 export const readOptions = (options: Record<string, unknown>): Options => ({
@@ -22,7 +24,9 @@ export const readOptions = (options: Record<string, unknown>): Options => ({
     .map(t => t.trim())
     .filter(Boolean),
   refreshSeconds: Math.max(5, Number(options.refreshSeconds ?? 15) || 15),
-  inlineView: ['status', 'off'].includes(String(options.inlineView)) ? (String(options.inlineView) as 'status' | 'off') : 'band',
+  // Quiet unless asked: nothing is drawn or read until the person opens a view.
+  inlineView: ['band', 'status'].includes(String(options.inlineView)) ? (String(options.inlineView) as 'band' | 'status') : 'off',
+  openOnStart: ['true', '1', 'yes', 'on'].includes(String(options.openOnStart ?? false).toLowerCase()),
 })
 
 export const errorText = (error: unknown): string =>

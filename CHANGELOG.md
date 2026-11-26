@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.1
+
+Quiet by default. A session that does not ask for the panes opens none, draws no band and reads nothing.
+
+- New setting `openOnStart`, default off: a fullscreen session no longer opens the panes at start; `/factory` opens them. Set it on to get the old behaviour.
+- `inlineView` now defaults to `off` (was `band`). A classic session shows no band and says how to open the panes.
+- Orchestrator projects opt in with `pluginConfigs.factory-panel.options` in their `.claude/settings.json`.
+
 ## 0.10.0
 
 A Work tab that shows where each lead’s tickets stand, a quieter Team tab, and separate teams and focus settings.

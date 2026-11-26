@@ -95,7 +95,8 @@ All settings are optional and appear in the config menu.
 
 | Setting | What it does |
 | --- | --- |
-| `inlineView` | What a classic session shows: band, status or off |
+| `inlineView` | What a classic session shows: band, status or off. Default off |
+| `openOnStart` | Open the panes when a fullscreen session starts. Default off; `/factory` opens them |
 | `prometheusUrl` | Prometheus to query. Empty uses the shared ix config, then this host's relay endpoint, then the factory's |
 | `grafanaUrl` | Grafana for dashboard links. Empty follows Prometheus's name |
 | `teams` | Comma-separated herdr workspace labels. The ix-board query list for a session the relay cannot identify, used only when no choice or declaration names teams. For such a session the board is fetched for these teams alone, so lanes show only them |

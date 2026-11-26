@@ -33,13 +33,14 @@ let isBeating = false
 const HINT = 'panes open beside the chat in the fullscreen layout. Type /factory to open them here.'
 
 /** Opens the panes once the layout is known to dock them; otherwise leaves a hint. */
-function decideLayout($: EngineInterface, viewport: RenderViewport | undefined, inlineView: string): void {
+function decideLayout($: EngineInterface, viewport: RenderViewport | undefined, inlineView: string, openOnStart: boolean): void {
   if (isLayoutDecided || viewport?.isFullscreen === undefined) return
   isLayoutDecided = true
   if (viewport.isFullscreen !== true) {
     if (inlineView === 'off') $.ui.status(HINT)
     return
   }
+  if (!openOnStart) return
   PANES.forEach(p => everOpened.add(p.id))
   // The settle timer starts after the opens answer: it reads the panes the host now lists.
   void guarded($, 'pane open', async () => {
@@ -103,7 +104,7 @@ export const register: Register = (on, rawOptions) => {
   // The prompt band is drawn on every terminal, so its first render carries the layout. The
   // hook adds nothing to the band.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    decideLayout($, e.viewport, options.inlineView)
+    decideLayout($, e.viewport, options.inlineView, options.openOnStart)
     // A classic layout has no dock, so the band is the compact view; fullscreen keeps its panes.
     // A layout the host has not reported counts as classic: a band is harmless, a blank is not.
     if (e.viewport?.isFullscreen !== true && (options.inlineView === 'band' || options.inlineView === 'status')) {
@@ -124,7 +125,7 @@ export const register: Register = (on, rawOptions) => {
   // before it came waits undrawn and is placed now. Only a docking layout opens panes, and a
   // pane the person closed stays closed.
   on('session.attach', async ($, e, next) => {
-    if (isInteractive && e.viewport?.isFullscreen === true) {
+    if (isInteractive && options.openOnStart && e.viewport?.isFullscreen === true) {
       const waiting = await paneIdsToReopen($).catch(() => new Set<string>())
       const reopen = PANES.filter(p => waiting.has(p.id) || !everOpened.has(p.id))
       reopen.forEach(p => everOpened.add(p.id))

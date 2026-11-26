@@ -135,6 +135,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | FR-027-AC-26 | The `r` key reads while the pane is off view. | Test |
 | FR-027-AC-27 | A desktop pane or widget reads on being drawn, without a view check and whatever `$.ui.panes()` says. | Test |
 | FR-027-AC-28 | In real herdr and tmux sessions a panel that is behind another tab, or in a session nobody is attached to, makes no read other than the view check, and reads again when it comes back. | Demonstration |
+| FR-027-AC-29 | With `openOnStart` and `inlineView` at their defaults (off), a session opens no pane at start, draws no band and reads nothing until `/factory` opens a view. | Test |
 
 ## Dependencies
 
