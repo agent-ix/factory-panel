@@ -26,6 +26,7 @@ export const options = (over: Partial<Options> = {}): Options => ({
   teams: [],
   refreshSeconds: 15,
   inlineView: 'band',
+  openOnStart: true,
   ...over,
 })
 

@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './loud'
 
 import { FACTORY_GRAFANA, FACTORY_PROMETHEUS, grafanaFrom, originOf, otlpEndpointOf, resolveEndpoints } from '../hooks/endpoints'
 import type { Options } from '../hooks/shared'
@@ -10,6 +11,7 @@ const base = (over: Partial<Options> = {}): Options => ({
   teams: [],
   refreshSeconds: 15,
   inlineView: 'band',
+  openOnStart: true,
   ...over,
 })
 

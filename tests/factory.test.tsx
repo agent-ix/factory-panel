@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './loud'
 import type { TestBody } from 'claude-code/testing'
 import { shortError } from '../hooks/shared'
 import { trace } from './trace'

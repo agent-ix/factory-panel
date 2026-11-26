@@ -1,6 +1,6 @@
 {
   "name": "factory-panel",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Panes beside the chat for running an Agent IX factory: machines, focuses, an escalations inbox, ix-relay announcements, and team health.",
   "author": {
     "name": "Agent IX"
@@ -42,10 +42,16 @@
       "default": 15,
       "title": "Refresh interval (seconds)"
     },
+    "openOnStart": {
+      "type": "boolean",
+      "description": "Open the panes beside the chat when a fullscreen session starts. Off leaves them to /factory",
+      "default": false,
+      "title": "Open panes at startup"
+    },
     "inlineView": {
       "type": "string",
       "description": "What a classic-layout session shows above the prompt: band, status or off",
-      "default": "band",
+      "default": "off",
       "title": "Non-fullscreen view"
     }
   },

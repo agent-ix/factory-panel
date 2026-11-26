@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './loud'
 
 import { ACCENT, DOING, READY, TRACK, bar, cellBar, loadColor, spark, stackBar, tempColor, usd } from '../hooks/ui/glyphs'
 import { widgets } from '../hooks/ui/widgets'

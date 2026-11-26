@@ -1,6 +1,8 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './loud'
 import type { TestBody } from 'claude-code/testing'
 import { bulkStep, makeGate } from '../hooks/escalations'
+import { readOptions } from '../hooks/shared'
 
 // Fixtures are trimmed copies of what agent-msg, ix-board and Prometheus answered on
 // 2026-11-21, so the parsers are tested against the real formats.
@@ -903,4 +905,25 @@ recommendation:
   const box = await ui.find({ key: 'actions-e40' })
   expect((box as unknown as { children: { type: string }[] }).children.map(c => c.type)).toEqual(['Button', 'Button'])
   await ui.unmount()
+})
+
+test('with the shipped defaults a fullscreen session opens no pane and draws no band', { options: { openOnStart: false, inlineView: 'off' } }, async ($, on) => {
+  const ran: string[][] = []
+  const opens: string[] = []
+  engine(on, ran, { teamMetrics: false, open: id => (opens.push(id), { isPlaced: true }) })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await drawBand($, FULLSCREEN)
+  await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
+  expect(opens).toEqual([])
+  // No pane source is read: no ix-board call and no agent-msg read of work, escalations or who.
+  expect(ran.filter(a => a[0] === 'ix-board' || (a[0] === 'agent-msg' && ['who', 'work', 'escalations', 'escalation'].includes(a[1] ?? '')))).toEqual([])
+  const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
+  await ui.unmount()
+})
+
+test('the options default to quiet: panes closed at start and no band', async () => {
+  expect(readOptions({})).toMatchObject({ openOnStart: false, inlineView: 'off' })
+  expect(readOptions({ openOnStart: true, inlineView: 'band' })).toMatchObject({ openOnStart: true, inlineView: 'band' })
+  expect(readOptions({ openOnStart: 'false' }).openOnStart).toBe(false)
+  expect(readOptions({ inlineView: 'bogus' }).inlineView).toBe('off')
 })
