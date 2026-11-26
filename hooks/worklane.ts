@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { WorkLanes } from '../types'
 import { BLOCKED, STATE, newestByLane } from './capacity'
+import { originOf } from './endpoints'
 import { errorText, promQuery } from './shared'
 import type { Options, Sample } from './shared'
 import { track } from './schedule'
@@ -38,6 +39,8 @@ function timesByLane(samples: readonly Sample[], pick: (...n: number[]) => numbe
 
 /** Reads every lane's state, and since when a lane waiting on a person or a tool has; false when Prometheus failed. */
 export function pollLanes($: EngineInterface, options: Options): Promise<boolean> {
+  // Nothing is asked of an address that is not known, by the refresh key either.
+  if (originOf(options.prometheusUrl) === undefined) return Promise.resolve(true)
   return track($, 'workLanes', async () => {
     try {
       const [states, reasons, free, first] = await Promise.all([QUERIES.states, QUERIES.reasons, QUERIES.free, QUERIES.first].map(q => promQuery($, options.prometheusUrl, q)))

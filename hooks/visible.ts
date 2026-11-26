@@ -162,7 +162,7 @@ function dueNow(options: Options, sources: readonly SourceId[], now: number): So
   // A view can be drawn before session start has found the metrics address. Nothing is asked of an
   // unknown address, so it counts as no read; the redraw that ends session start asks.
   const isFound = originOf(options.prometheusUrl) !== undefined
-  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity')) && isDue(id, now))
+  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity' && id !== 'workLanes')) && isDue(id, now))
 }
 
 async function readDue($: EngineInterface, options: Options, surface: Surface, seat: Seat): Promise<void> {

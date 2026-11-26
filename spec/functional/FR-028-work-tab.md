@@ -34,16 +34,20 @@ The mod SHALL draw a Work view that shows where each code lead's tickets stand a
 - The mod SHALL list the verified leads of `agent-msg who` that the selected teams allow and that have a report or could not be read ([FR-030](./FR-030-lead-report-reads.md)), grouped by host, the first part of the lead's address.
 - The view SHALL open as one line for each host, every line closed, and Recent closed.
 - A host SHALL open to one closed line for each of its leads, and a lead to its tickets. What is open SHALL be remembered for the session.
+- The `⚠ N` of a host SHALL count every stuck lead of it, whatever the lead's row shows first, one folded away under a focus among them.
 - A host line SHALL show the host, a bar of the distinct tickets of its leads by state, their count, and its alerts: `⚠ N` for its stuck leads, `⏱ N` for its leads with a time warning and `▲ N` for its leads whose report was not read. A ticket of two leads SHALL count once.
 - A lead line SHALL show the lead by workspace and tab, a bar of its tickets by state, their count and at most one alert. It SHALL NOT name a project or a ticket.
 - The bars, counts and alerts of the host and lead lines SHALL each start in one column, whatever is open.
 - The tickets of a lead SHALL be those of the agents in `agent-msg work --lead <address> show`, keeping each agent's name, ticket, role, status and report time, and those the report's focus names (`focus.tickets`), the finished ones among them.
 - A ticket's state SHALL be, from the `ix-board issues` answer: `done` where Linear's state type is completed; else `in review` where its state name says Review or a PR of it is open or draft; else `being worked on` where its state type is started or an agent on it runs; else `not started`. A canceled ticket SHALL NOT be drawn in a bar or counted. A ticket ix-board gave no state of is `unread` and SHALL NOT be given another state.
 - The states SHALL be drawn, in this order, as `█` done (success colour), `▓` in review (warning), `▒` being worked on (suggestion), `░` not started (inactive) and `?` unread, so that they are told apart without colour.
-- A bar SHALL be one cell for each ticket up to 20 cells; above 20 the cells SHALL be shared in proportion, each state with a ticket keeping at least one. The count SHALL follow the bar.
+- A bar SHALL be one cell for each ticket up to 20 cells; above 20 the cells SHALL be shared in proportion, each state with a ticket keeping at least one, and no state SHALL have fewer cells than a state with fewer tickets. The count SHALL follow the bar.
+- Where tickets may be missing from a count (a lead's report never read, or tickets whose place under the chosen focus is unknown) it SHALL read `≥N`, and `—` where none is known. A count that is not known SHALL NOT read 0.
 - A lead line's alert SHALL be the first that applies of: `▲ <age>` where its last read failed, with the age of the report drawn, or `▲` where none ever was; `⚠ <duration>` where it is stuck; `⏱ <age>` where its report is more than 2 hours old; `⏱ <duration>` where it is churning. A row with an old report SHALL be dimmed. An alert SHALL be a mark and a number, with no words.
 - A lead is stuck where its lane ([FR-032](./FR-032-fleet-capacity.md) series) is `stuck`, or `blocked` with the reason `permission`, `dialog`, `question`, `queued_question`, `login` or `usage_limit`; `wait_loop` is not stuck. The duration SHALL run from the last sample of the past 24 hours at which the lane was neither blocked nor stuck, else from its first sample of those hours.
 - A lead is churning where its lane is `working` and for 2 hours no agent of it has changed role, status or ticket in `agent-msg work events`, Linear has updated none of its tickets and no PR of them was opened or merged. A repeated report is no change. Linear's update time stands for the ticket's last state change, so a ticket updated in any way within 2 hours is no churn.
+- A lead SHALL be said to be churning only where its report's last read succeeded, the tickets answer is at most 10 minutes old and its read succeeded, and the events were last read at most 5 minutes ago, without error and to the end of the stream.
+- A project name read that fails SHALL NOT be kept as an answer: a Linear rate limit SHALL hold every gated read, any other failure SHALL be held 5 minutes, and the failure SHALL be among the footer's warnings.
 - Where a lane's state is not known or older than 5 minutes, no change of the lead's agents is known, a ticket of it is unread, its PRs are not known, or every ticket of it is finished, the lead SHALL NOT be said to be churning; with no current lane state it SHALL NOT be said to be stuck.
 - An opened lead SHALL say each of its alerts in words: why its report was not read, what it is blocked on and for how long, that its report is old and since when, or that there is no movement and for how long.
 - An opened lead SHALL list its tickets under a heading for each Linear project, `no project` or `project unknown`, those being worked on first and the finished last. Where tickets are unread it SHALL say how many and why.
@@ -165,6 +169,9 @@ The mod SHALL draw a Work view that shows where each code lead's tickets stand a
 | FR-028-AC-45 | An opened lead says in words why it is stuck, has no movement or has an old report. | Test |
 | FR-028-AC-46 | Recent is closed at first, its focus status is read only once it is opened, and the focus choices only once their list is opened. | Test |
 | FR-028-AC-47 | Under a chosen focus with Recent and the list closed, only the chosen focus's status and name are read. | Test |
+| FR-028-AC-48 | A lead is not said to be churning once its tickets or the events are old, failed to be read or are still being caught up. | Test |
+| FR-028-AC-49 | A count with nothing known reads `—` and one that may be short `≥N`, in the pane and the widget, and never 0. | Test |
+| FR-028-AC-50 | A failed project name read is not cached as no name: a rate limit holds every gated read, another failure is held 5 minutes, and either is a warning. | Test |
 
 ## Dependencies
 

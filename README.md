@@ -85,7 +85,7 @@ Progress is read at most once every 30 minutes across all sessions on the machin
 
 Known limitation (SWM-295, SWM-296): ix-board fails a whole call when one ticket references a milestone missing from its project, and the roadmap lists names, not ids. An initiative scoped by UUID that has this defect, such as FSL Hardening, cannot be expanded until the data is fixed, the roadmap carries ids, or a project list was cached while it worked.
 
-The last good progress is kept in `~/.ix/factory-panel/progress.json`, shared by the sessions on the machine, by project id with the project's name, and with the project list of each initiative under the key `initiatives`; a record is dropped when no refresh has shown it for 24 hours. Errors of the other sources (`agent-msg work`, `agent-msg focuses`, Prometheus) are shown on the card of the module that uses them, and `/factory show` lists every failing source with its error and the age of its last success. A failing source never blocks another or the first paint.
+The last good progress is kept in `~/.ix/factory-panel/progress.json`, shared by the sessions on the machine, by project id with the project's name, and with the project list of each initiative under the key `initiatives`; a record is dropped when no refresh has shown it for 24 hours. Errors of the other sources (`agent-msg work`, Prometheus) are shown on the card of the module that uses them, and `/factory show` lists every failing source with its error and the age of its last success. A failing source never blocks another or the first paint.
 
 All of the mod's own files are under `~/.ix/factory-panel/`: the choices, the declarations it reads, the last good progress, the known-bad selectors and the Linear rate-limit cache.
 

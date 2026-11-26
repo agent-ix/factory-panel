@@ -213,7 +213,8 @@ export type TeamMetric = {
   /** whether `value` is a lower bound: the largest count of one of several scopes */
   atLeast: boolean
   unit: 'count' | 'rate' | 'seconds' | 'share'
-  history: number[]
+  /** the last sample of each cell of the last 6 hours, oldest first; null where a cell has none */
+  history: (number | null)[]
   /** the share of its population the exporter measured, 0 to 1; null where it does not say */
   coverage: number | null
   /** why there is no `value`; null where there is one */
@@ -319,7 +320,7 @@ export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step
  * What the event stream has said of those roles: the latest events, oldest first, and where each assignment
  * (lead, agent, ticket) stands, so that a repeated report adds no event. `error` is the last read's problem.
  */
-export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null; /** when an agent of each lead last changed role, status or ticket, and what each was */ turns?: Record<string, number>; marks?: Record<string, string> }
+export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null; /** when the events were last read without failing */ at?: number; /** when an agent of each lead last changed role, status or ticket, and what each was */ turns?: Record<string, number>; marks?: Record<string, string> }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -368,6 +369,7 @@ declare module 'claude-code' {
       workFeed: Shaped<WorkFeed>
       workLanes: Shaped<WorkLanes | null>
       workProjects: Record<string, string | null>
+      workNameError: string | null
       workBoards: Shaped<Record<string, WorkBoard>>
       workTickets: Shaped<WorkBoard | null>
       workOpen: string[]

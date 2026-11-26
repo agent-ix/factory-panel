@@ -811,7 +811,7 @@ test('the Team pane draws each figure’s six-hour series as blocks', async ($, 
   engine(on, ran, { teamMetrics: true })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const term = await $.ui.mount({ ...pane('team', 'Team'), surface: 'terminal' })
-  expect((await term.find({ type: 'Text', text: /^·*[▁▂▃▄▅▆▇█]+$/ }))?.text).toBe('·········▁▄█')
+  expect((await term.find({ type: 'Text', text: /^·*[▁▂▃▄▅▆▇█]+$/ }))?.text).toBe('···········▁')
   await term.unmount()
 })
 

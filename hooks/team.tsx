@@ -23,7 +23,7 @@ export const PANE_SPEC = { id: PANE, title: TITLE }
 const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
-const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-6' })
+const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-7' })
 /** What is opened under the teams: `why-<team>`, `more-<team>` and `unkeyed-<id>`. */
 const teamOpen = atom({ plugin: 'factory-panel', key: 'teamOpen' } as const, [] as string[])
 /** Teams whose health line is opened. */
@@ -214,7 +214,7 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
           const shown = isStage && coverage === 0 && !((value ?? 0) > 0) ? null : value
           // Why there is no value: the exporter publishes none for this team, measured none of it, or has stopped.
           const reason = shown !== null ? null : own(series).length === 0 ? NO_SERIES : value !== null ? 'age not measured' : NO_SAMPLE
-          return { key: spec.key, label: spec.label, unit: spec.unit, value: shown, atLeast: shown !== null && (isStage || (isCount && isShared)), history: samples.map(([, v]) => v), coverage, reason }
+          return { key: spec.key, label: spec.label, unit: spec.unit, value: shown, atLeast: shown !== null && (isStage || (isCount && isShared)), history: inCells(samples, seconds), coverage, reason }
         })
         const days = {} as TeamView['days']
         for (const { day, series } of daily) days[day.key] = dailyRow(own(series), isShared, seconds)
@@ -331,9 +331,22 @@ const plain = (m: TeamMetric, value: number): string => {
   return Math.round(value).toLocaleString('en-US')
 }
 
-/** At most `SPARK_CELLS` of the samples, spread over all of them, the last one kept. */
-const thin = (values: readonly number[]): number[] =>
-  values.length <= SPARK_CELLS ? [...values] : Array.from({ length: SPARK_CELLS }, (_, i) => values[Math.round((i * (values.length - 1)) / (SPARK_CELLS - 1))]!)
+/** The last sample of each of the SPARK_CELLS parts of the `span` seconds ending at `end`; null where a part has none. */
+const inCells = (samples: readonly [number, number][], end: number): (number | null)[] => {
+  const cells = Array<number | null>(SPARK_CELLS).fill(null)
+  for (const [time, value] of samples) {
+    const i = Math.floor(((time - (end - HISTORY_SECS)) / HISTORY_SECS) * SPARK_CELLS)
+    if (i >= 0) cells[Math.min(i, SPARK_CELLS - 1)] = value
+  }
+  return cells
+}
+
+/** A cell's block, scaled over the cells that have a sample, and `·` for one that has none; '' where none has. */
+const trailOf = (cells: readonly (number | null)[]): string => {
+  const blocks = [...spark(cells.flatMap(v => v ?? []))]
+  if (blocks.length === 0) return ''
+  return cells.map(v => (v === null ? '·' : blocks.shift()!)).join('')
+}
 
 const configOf = (team: string): string => `~/.local/state/team-retro/${team}/config.json`
 
@@ -429,8 +442,7 @@ export function registerTeam(on: On, options: Options): void {
       </Box>
     )
     const metricOf = (t: TeamView, key: string): TeamMetric => t.metrics.find(m => m.key === key)!
-    // A history of fewer points than the column is wide has `·` where there is no sample, before them.
-    const metricFigure = (t: TeamView, m: TeamMetric) => figure(`${t.team}-${m.key}`, m.label, format(m), m.history.length > 1 ? spark(thin(m.history)).padStart(SPARK_CELLS, '·') : '')
+    const metricFigure = (t: TeamView, m: TeamMetric) => figure(`${t.team}-${m.key}`, m.label, format(m), trailOf(m.history))
     const absent = (m: TeamMetric) => `${m.label}: ${m.reason}`
 
     /** The daily counts that have a day to draw. */

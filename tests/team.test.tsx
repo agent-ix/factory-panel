@@ -179,7 +179,7 @@ test('each figure draws its history: the last six hours, and for what shipped th
   const w = await setup($, on, { published: [...SERIES, ...daily('merged_prs_day', { 2: 12, 1: 2, 0: 124 }), series('merged_prs_day', [40], { day: 4, ago: 600 })] })
   const d = await draw($, w)
   expect(after(d.lines, 'PR cycle')).toBe('1.5h')
-  expect(d.lines[d.lines.indexOf('PR cycle') + 2]).toMatch(/^·{10}[▁▂▃▄▅▆▇█]{2}$/)
+  expect(d.lines[d.lines.indexOf('PR cycle') + 2]).toBe('···········▁')
   // Seven days, oldest first and today last; `·` for a day with no current sample.
   expect(d.lines[d.lines.indexOf('closed') + 2]).toBe('▂▁·▆·▃█')
   expect(after(d.lines, 'merged')).toBe('124')
@@ -715,3 +715,17 @@ for (const [columns, across] of [[60, 1], [90, 2]] as const) {
     expect(Math.max(...drawn.map(l => l.trimEnd().length))).toBeLessThanOrEqual(Math.max(columns, 80))
   })
 }
+
+test('each cell of a six-hour sparkline is a half hour, and one with no sample is a dot', async ($, on) => {
+  trace("FR-029-AC-39")
+  // Three hours of samples, 36 of them; and one series with a sample five hours old and one now.
+  const w = await setup($, on, { published: [
+    series('ready_issues', Array.from({ length: 36 }, (_, i) => i)),
+    series('wip_active', [1], { ago: 5 * 3600, scope: 'a' }),
+    series('wip_active', [9], { scope: 'a' }),
+  ] })
+  const d = await draw($, w)
+  expect(d.lines[d.lines.indexOf('ready') + 2]).toMatch(/^·{6}[▁▂▃▄▅▆▇█]{6}$/)
+  expect(d.lines[d.lines.indexOf('in progress') + 2]).toMatch(/^··▁·{8}█$/)
+  await d.ui.unmount()
+})

@@ -41,7 +41,7 @@ export const labelOf = (value: string, name: string | null | undefined): string 
  * The focuses with their Linear names, by name: from the progress already held, else `ix-board roadmap`, else, for a
  * project the roadmap does not hold, `ix-board project-chunk`.
  */
-export async function namesOf($: EngineInterface, refs: readonly string[]): Promise<FocusOption[]> {
+export async function namesOf($: EngineInterface, refs: readonly string[], onError?: (why: string) => void): Promise<FocusOption[]> {
   const file = await readFile($)
   const options: FocusOption[] = refs.flatMap(value => {
     const ref = parseRef(value)
@@ -53,7 +53,7 @@ export async function namesOf($: EngineInterface, refs: readonly string[]): Prom
     const roadmap = await roadmapNames($)
     for (const o of options) o.name ??= roadmap.get(o.value) ?? null
   }
-  await Promise.all(options.filter(o => o.name === null && o.kind === 'project').map(async o => void (o.name = await projectName($, o.id))))
+  await Promise.all(options.filter(o => o.name === null && o.kind === 'project').map(async o => void (o.name = await projectName($, o.id, onError))))
   return options.sort((a, b) => labelOf(a.value, a.name).localeCompare(labelOf(b.value, b.name)))
 }
 

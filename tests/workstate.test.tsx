@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { BAR_CELLS, barCells, flagOf, foldTurns, issuesOf, stateOf } from '../hooks/work'
+import { BAR_CELLS, barCells, flagOf, foldTurns, issuesOf, readsCurrent, stateOf } from '../hooks/work'
 import type { TicketState } from '../hooks/work'
 import type { WorkIssue, WorkLanes, WorkLead } from '../types'
 import { ix } from './board-kit'
@@ -54,7 +54,7 @@ const lanes = (state: string, reason: string | null = null, isStuck = false, sin
 test('a lead is stuck where its lane waits on a person or a tool, and churning where it works and nothing moves for two hours', () => {
   trace("FR-028-AC-41")
   const singles = new Map([['QSL-1', issue()]])
-  const flag = (l: WorkLanes | null, turn: number | undefined = NOW - 3 * HOUR, held: ReadonlyMap<string, WorkIssue> = singles, who = lead('QSL-1')) => flagOf(who, l, held, turn, NOW)
+  const flag = (l: WorkLanes | null, turn: number | undefined = NOW - 3 * HOUR, held: ReadonlyMap<string, WorkIssue> = singles, who = lead('QSL-1')) => flagOf(who, l, held, turn, NOW, true)
   expect(flag(lanes('blocked', 'permission', true, NOW - 2 * HOUR))).toEqual({ kind: 'stuck', since: NOW - 2 * HOUR, why: 'blocked on a permission request' })
   expect(flag(lanes('stuck', null, true, NOW - HOUR))?.why).toBe('a tool call ran past its limit')
   expect(flag(lanes('blocked', 'usage_limit', true, NOW - HOUR))?.why).toBe('usage limit')
@@ -69,7 +69,7 @@ test('a lead is stuck where its lane waits on a person or a tool, and churning w
   // Without the data nothing is said: no lanes, old lanes, no change known, a ticket or its PRs unread.
   expect(flag(null)).toBeNull()
   expect(flag(lanes('blocked', 'permission', true, null, NOW - 10 * MIN))).toBeNull()
-  expect(flagOf(lead('QSL-1'), lanes('working'), singles, undefined, NOW)).toBeNull()
+  expect(flagOf(lead('QSL-1'), lanes('working'), singles, undefined, NOW, true)).toBeNull()
   expect(flag(lanes('working'), NOW - 3 * HOUR, new Map())).toBeNull()
   expect(flag(lanes('working'), NOW - 3 * HOUR, new Map([['QSL-1', issue({ prs: null })]]))).toBeNull()
   expect(flag(lanes('idle'))).toBeNull()
@@ -194,7 +194,7 @@ test('a host opens to a line a lead with the bars in one column, and a lead to i
       widths.count.add(kids[2]!.props?.width as number)
     }
   })
-  expect([widths.name.size, [...widths.bar], [...widths.count]]).toEqual([1, [BAR_CELLS], [3]])
+  expect([widths.name.size, [...widths.bar], [...widths.count]]).toEqual([1, [BAR_CELLS], [4]])
   await ui.press({ key: `lead:${A}` })
   await w.clock!.advance(MIN)
   const stuck = (await text()).join('\n')
@@ -255,3 +255,142 @@ test('a lane blocked on its usage limit is stuck and says so when opened, and on
   expect(lines).toContain('    ⚠ stuck: usage limit, for 2h')
   await ui.unmount()
 })
+
+const texts = async (ui: { findAll: (q: { type: string }) => Promise<{ text?: string }[]> }) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+/** Makes the commands starting with `prefix` fail from the time `down.value` is set. */
+function failing(w: World, prefix: string) {
+  const down = { value: false }
+  const prior = w.stub.value!
+  w.stub.value = (argv, init) => (down.value && argv.join(' ').startsWith(prefix) ? out('', 1, 'broke') : prior(argv, init))
+  return down
+}
+
+test('tickets and events can say nothing has changed only where both were read lately, without error and to the end', () => {
+  trace("FR-028-AC-48")
+  const board = { issues: [], activity: null, at: NOW - MIN, error: null, ticketsOnly: true as const }
+  const feed = { at: NOW - MIN, error: null }
+  expect(readsCurrent(board, feed, NOW)).toBe(true)
+  expect(readsCurrent(undefined, feed, NOW)).toBe(false)
+  expect(readsCurrent({ ...board, error: 'broke' }, feed, NOW)).toBe(false)
+  expect(readsCurrent({ ...board, at: NOW - 11 * MIN }, feed, NOW)).toBe(false)
+  expect(readsCurrent({ ...board, at: null }, feed, NOW)).toBe(false)
+  expect(readsCurrent(board, { error: null }, NOW)).toBe(false)
+  expect(readsCurrent(board, { at: NOW - 6 * MIN, error: null }, NOW)).toBe(false)
+  // A failed read, and one still catching up, are held as an error.
+  expect(readsCurrent(board, { at: NOW - MIN, error: 'more than 5000 events behind, catching up' }, NOW)).toBe(false)
+  const working = lanes('working')
+  expect(flagOf(lead('QSL-1'), working, new Map([['QSL-1', issue()]]), NOW - 3 * HOUR, NOW, false)).toBeNull()
+  expect(flagOf({ ...lead('QSL-1'), error: 'unreachable' }, working, new Map([['QSL-1', issue()]]), NOW - 3 * HOUR, NOW, true)).toBeNull()
+  // A stuck lane is still said.
+  expect(flagOf(lead('QSL-1'), lanes('stuck', null, true, null), new Map(), undefined, NOW, false)?.kind).toBe('stuck')
+})
+
+for (const [what, prefix] of [['ix-board issues', 'ix-board --json issues'], ['the events', 'agent-msg work events']] as const) {
+  test(`a lead is no longer said to be churning once ${what} cannot be read`, async ($, on) => {
+    trace("FR-028-AC-48")
+    const w = await fleet($, on)
+    const down = failing(w, prefix)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+    await w.clock!.advance(MIN)
+    await openWork(ui, () => w.clock!.advance(MIN), /^host:luna/)
+    const said = async () => (await texts(ui)).filter(t => /^⏱ [0-9]+[hm]$/.test(t))
+    // The churning lead's row, beside the host's count.
+    expect((await said()).length).toBeGreaterThan(0)
+    down.value = true
+    await w.clock!.advance(7 * MIN)
+    expect(await said()).toEqual([])
+    await ui.unmount()
+  })
+}
+
+test('a bar gives no state fewer cells than a state with fewer tickets', () => {
+  trace("FR-028-AC-40")
+  const of = (review: number, working: number, fresh: number, done = 0): TicketState[] => [...Array<TicketState>(done).fill('done'), ...Array<TicketState>(review).fill('review'), ...Array<TicketState>(working).fill('working'), ...Array<TicketState>(fresh).fill('new')]
+  expect(barCells(of(1, 18, 2))).toEqual([{ state: 'review', cells: 1 }, { state: 'working', cells: 17 }, { state: 'new', cells: 2 }])
+  for (let done = 0; done <= 6; done++)
+    for (let review = 0; review <= 6; review++)
+      for (let working = 0; working <= 40; working++)
+        for (let fresh = 0; fresh <= 6; fresh++) {
+          const states = of(review, working, fresh, done)
+          const bar = barCells(states)
+          const count = (s: string) => states.filter(x => x === s).length
+          if (states.length > BAR_CELLS) expect(bar.reduce((n, c) => n + c.cells, 0)).toBe(BAR_CELLS)
+          for (const a of bar) for (const b of bar) if (count(a.state) > count(b.state) && a.cells < b.cells) throw new Error(`${done} ${review} ${working} ${fresh}: ${JSON.stringify(bar)}`)
+        }
+})
+
+test('a count that is not known is a dash and one that may be short is marked, never 0', async ($, on) => {
+  trace("FR-028-AC-49")
+  const w = await fleet($, on)
+  const prior = w.stub.value!
+  w.stub.value = (argv, init) => (argv.join(' ') === `agent-msg work --lead ${C} show` ? out('', 1, 'unreachable') : prior(argv, init))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  await openWork(ui, () => w.clock!.advance(MIN), /^(host:luna|old:)/)
+  const lines = await texts(ui)
+  // The lead never read, and its host, which holds the one ticket of its other lead.
+  expect(lines[lines.indexOf('QSL:code') + 1]).toBe('—')
+  expect(lines).toContain('≥1')
+  expect(lines).not.toContain('0')
+  await ui.unmount()
+})
+
+test('under a focus whose tickets cannot be placed the closed lines give no 0', async ($, on) => {
+  trace("FR-028-AC-49")
+  const w = await fleet($, on)
+  w.files.set(`${FP}/choices/draco_QSL_code.json`, JSON.stringify({ focus: `project:${P1}` }))
+  const down = failing(w, 'ix-board --json issues')
+  down.value = true
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(2 * MIN)
+  const lines = await texts(ui)
+  expect(lines).not.toContain('0')
+  expect(lines.some(t => t === '—' || /^≥[0-9]+$/.test(t))).toBe(true)
+  await ui.unmount()
+  const widget = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, placement: 'widget' } } as never)
+  await w.clock!.advance(MIN)
+  expect((await texts(widget)).join('')).not.toMatch(/(^| )≥?0 tickets/)
+  await widget.unmount()
+})
+
+test('a stuck lead counts on its host when its row shows that its report was not read', async ($, on) => {
+  trace("FR-028-AC-42")
+  const w = await fleet($, on)
+  const down = failing(w, `agent-msg work --lead ${A} show`)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(MIN)
+  down.value = true
+  await w.clock!.advance(3 * MIN)
+  await openWork(ui, () => w.clock!.advance(1000), /^host:draco/)
+  const lines = await texts(ui)
+  expect(lines.some(t => /^▲ [0-9]+m$/.test(t))).toBe(true)
+  expect(lines).toContain('⚠ 1')
+  await ui.unmount()
+})
+
+for (const [what, stderr, isRate] of [['a rate limit', 'Linear rate limited; retry in 3600s', true], ['another failure', 'broke', false]] as const) {
+  test(`a project name call that ends in ${what} is no answer: it is said and held${isRate ? ' for every read' : ' five minutes'}`, async ($, on) => {
+    trace("FR-028-AC-50")
+    const w = await fleet($, on)
+    const down = failing(w, 'ix-board --json project-chunk')
+    const prior = w.stub.value!
+    w.stub.value = (argv, init) => (down.value && argv[2] === 'project-chunk' ? out('', 1, stderr) : prior(argv, init))
+    down.value = true
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+    await w.clock!.advance(MIN)
+    await openWork(ui, () => w.clock!.advance(1000), /^host:draco/)
+    await ui.press({ key: `lead:${A}` })
+    await w.clock!.advance(MIN)
+    const gate = JSON.parse(w.files.get(`${FP}/linear-gate.json`)!) as { backoffUntil: number | null; entries: Record<string, { unkept?: boolean; data: unknown }> }
+    if (isRate) expect(gate.backoffUntil).toBeGreaterThan(w.clock!.now())
+    else expect(gate.entries[`project-name:${P1}`]).toMatchObject({ unkept: true, data: null })
+    await ui.press({ key: 'warnings-toggle' })
+    expect((await texts(ui)).join('\n')).toMatch(isRate ? /ix-board: .*(rate limit|paused|until)/i : /ix-board: broke/)
+    down.value = false
+    // A failure other than a rate limit is asked again after five minutes.
+    await w.clock!.advance(7 * MIN)
+    if (!isRate) expect((await texts(ui)).join('\n')).toContain('Ledger')
+    await ui.unmount()
+  })
+}

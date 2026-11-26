@@ -16,7 +16,7 @@ import type { SourceId } from './schedule'
 import { ALL, getSelection, scopeKeyOf, scopeOf, selectionReady, writeChoice } from './selection'
 import type { Picked } from './selection'
 import { sourceClear, sourceFailed, sourceOk } from './sources'
-import { TICKET_ID, activeIds, boardNotes, composeWork, focusCounts, focusEvents, focusFilter, foldFeed, foldTurns, flagOf, barCells, BAR_CELLS, singlesOf, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf } from './work'
+import { TICKET_ID, activeIds, boardNotes, composeWork, focusCounts, focusEvents, focusFilter, foldFeed, foldTurns, flagOf, readsCurrent, barCells, BAR_CELLS, singlesOf, holdTickets, isOldReport, issuesOf, lastOfEvents, readBoards, recentOf, recentRows, ticketIds, unknownOf } from './work'
 import type { RecentEntry, TicketState, WorkTicket } from './work'
 import type { Options } from './shared'
 
@@ -58,6 +58,8 @@ const workPicker = atom({ plugin: 'factory-panel', key: 'workPicker' } as const,
 const workOpen = atom({ plugin: 'factory-panel', key: 'workOpen' } as const, [] as string[])
 /** The names of the projects of the opened leads' tickets, by id; null where none could be read. */
 const workProjects = atom({ plugin: 'factory-panel', key: 'workProjects' } as const, {} as Record<string, string | null>)
+/** Why a project's name could not be read at the last try; one of the footer's warnings. */
+const workNameError = atom({ plugin: 'factory-panel', key: 'workNameError' } as const, null as string | null)
 
 // ---------------------------------------------------------------- data
 
@@ -252,10 +254,13 @@ export function pollProjects($: EngineInterface): Promise<boolean> {
       markStale('projects')
       return true
     }
-    const names = await namesOf($, ids.map(id => `project:${id}`))
-    // A project no name could be read for is headed by its id.
-    await update($, workProjects, held => ({ ...held, ...Object.fromEntries(ids.map(id => [id, names.find(n => n.id === id)?.name ?? null])) }))
-    return true
+    const failed: string[] = []
+    const names = await namesOf($, ids.map(id => `project:${id}`), why => failed.push(why))
+    // A project no name could be read for is headed by its id; a name read earlier stays.
+    await update($, workProjects, held => ({ ...held, ...Object.fromEntries(ids.map(id => [id, names.find(n => n.id === id)?.name ?? held[id] ?? null])) }))
+    await update($, workNameError, () => failed[0] ?? null)
+    if (failed.length > 0) sourceFailed('ix-board', failed[0]!)
+    return failed.length === 0
   })
 }
 
@@ -266,7 +271,8 @@ async function refreshEvents($: EngineInterface): Promise<boolean> {
     eventCursor = answer.cursor
     await update($, workLast, () => answer.last)
     const note = answer.truncated ? `agent-msg work events: more than ${EVENT_PAGES * EVENT_LIMIT} events behind, catching up` : null
-    await update($, workFeed, () => ({ ...answer.feed, error: note }))
+    const at = await $.clock.now()
+    await update($, workFeed, () => ({ ...answer.feed, error: note, at }))
     return true
   } catch (error) {
     await update($, workFeed, f => ({ ...f, error: `agent-msg work events: ${errorText(error)}` }))
@@ -431,7 +437,7 @@ export function registerWork(on: On, config: Options): void {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
     const [leads, last, meta, feed, boards, opened, all, warnOpen, isFocusRead] = await Promise.all([read($, workLeads), read($, workLast), read($, workMeta), read($, workFeed), readBoards($), read($, workOpen), read($, workAll), read($, workWarnings), focusWasRead($)])
-    const [picker, focusNow, lanes, projects] = await Promise.all([read($, workPicker), focusHeld($), lanesHeld($), read($, workProjects)])
+    const [picker, focusNow, lanes, projects, nameError] = await Promise.all([read($, workPicker), focusHeld($), lanesHeld($), read($, workProjects), read($, workNameError)])
     const ticketsError = boards.find(b => b.ticketsOnly === true)?.error ?? null
     const sel = getSelection()
     const scope = scopeOf(sel)
@@ -441,6 +447,7 @@ export function registerWork(on: On, config: Options): void {
     const view = composeWork(leads, last, boards, filter)
     const counts = focusCounts(leads, boards, now, true, meta.listed, filter)
     const singles = singlesOf(boards)
+    const isCurrent = readsCurrent(boards.find(b => b.ticketsOnly === true), feed, now)
     // Under a focus, a lead that was read and holds nothing of it, nor anything that may be of it, is folded away.
     const isOutside = (l: (typeof view.leads)[number]) => filter.kind === 'named' && l.readAt !== null && l.error === null && l.tickets.length + l.unplaced.length === 0
     const notes = boardNotes(boards, now)
@@ -453,7 +460,10 @@ export function registerWork(on: On, config: Options): void {
 
     if (e.props.placement === 'widget') {
       const isShort = counts.reporting < counts.listed
-      const tickets = `${isShort || counts.unplaced > 0 ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}${counts.unplaced > 0 ? ` · +${counts.unplaced} unknown project` : ''}`
+      const isBound = isShort || counts.unplaced > 0
+      // With none known where some may be missing there is no number to give.
+      const known = isBound && (counts.tickets ?? 0) === 0 ? '— tickets' : `${isBound ? '≥' : ''}${plural(counts.tickets ?? 0, 'ticket')}`
+      const tickets = `${known}${counts.unplaced > 0 ? ` · +${counts.unplaced} unknown project` : ''}`
       const failed = view.leads.filter(l => l.readAt === null || l.error !== null).length
       const old = view.leads.filter(l => l.readAt !== null && l.error === null && isOldReport(l.at, now)).length
       const alerts = [failed > 0 ? `▲ ${failed}` : '', old > 0 ? `⏱ ${old}` : ''].filter(Boolean).map(t => ` · ${t}`).join('')
@@ -472,7 +482,7 @@ export function registerWork(on: On, config: Options): void {
     const hosts = [...new Set([...view.leads.map(l => l.address), ...meta.silent].map(hostOf))].sort((a, b) => a.localeCompare(b))
 
     // One column of names, so that every bar, count and alert starts at the same cell, whatever is open.
-    const COUNT_CELLS = 3
+    const COUNT_CELLS = 4
     const ALERT_CELLS = 12
     const longest = Math.max(0, ...hosts.map(h => h.length + 2), ...view.leads.map(l => leadName(l.address).length + 4))
     const nameCells = Math.max(8, Math.min(longest, width - BAR_CELLS - COUNT_CELLS - ALERT_CELLS - 3))
@@ -484,7 +494,7 @@ export function registerWork(on: On, config: Options): void {
       const said: Alert[] = []
       if (l.readAt === null) said.push({ text: '▲', color: 'warning', words: `report not read: ${l.error ?? 'no answer yet'}` })
       else if (l.error !== null) said.push({ text: `▲ ${agoShort(l.readAt, now)}`, color: 'warning', words: `report last read ${ago(l.readAt, now)}: ${l.error}` })
-      const flag = flagOf(raw, lanes, singles, feed.turns?.[l.address], now)
+      const flag = flagOf(raw, lanes, singles, feed.turns?.[l.address], now, isCurrent)
       const since = flag === null || flag.since === null ? '' : ` ${agoShort(flag.since, now)}`
       if (flag?.kind === 'stuck') said.push({ text: `⚠${since}`, color: 'error', words: `⚠ stuck: ${flag.why}${since === '' ? '' : `, for${since}`}` })
       if (l.error === null && isOldReport(l.at, now)) said.push({ text: `⏱ ${agoShort(l.at!, now)}`, words: `⏱ old report: the lead last reported ${ago(l.at, now)}` })
@@ -492,8 +502,14 @@ export function registerWork(on: On, config: Options): void {
       return said
     }
 
-    /** The bar and count of some tickets, each drawn once; a canceled one is not drawn. */
-    const barOf = (tickets: readonly WorkTicket[], key: string, isDim: boolean) => {
+    /** Whether a lead may hold tickets that are not counted: its report never read, or tickets of unknown place. */
+    const isShortOf = (l: (typeof view.leads)[number]) => l.readAt === null || l.unplaced.length > 0
+
+    /**
+     * The bar and count of some tickets, each drawn once; a canceled one is not drawn. Where some may be missing
+     * (`isShort`) the count reads `≥N`, and `—` where none is known at all.
+     */
+    const barOf = (tickets: readonly WorkTicket[], key: string, isDim: boolean, isShort: boolean) => {
       const states = new Map<string, TicketState>()
       for (const t of tickets) if (t.state !== 'canceled' && (!states.has(t.id) || states.get(t.id) === 'new')) states.set(t.id, t.state)
       return [
@@ -503,7 +519,7 @@ export function registerWork(on: On, config: Options): void {
           ))}
         </Box>,
         <Box key={`${key}-count`} flexDirection="row" width={COUNT_CELLS} justifyContent="flex-end" flexShrink={0}>
-          <Text dimColor={isDim} tabular>{String(states.size)}</Text>
+          <Text dimColor={isDim} tabular>{!isShort ? String(states.size) : states.size === 0 ? '—' : `≥${states.size}`}</Text>
         </Box>,
       ]
     }
@@ -534,7 +550,7 @@ export function registerWork(on: On, config: Options): void {
               <Button key={key} plain label={isShown ? '▾' : '▸'} onPress={flip(key)} />
               <Text dimColor={isOld} wrap="truncate-end">{clip(leadName(l.address), nameCells - 4)}</Text>
             </Box>
-            {barOf(l.tickets, l.address, isOld)}
+            {barOf(l.tickets, l.address, isOld, isShortOf(l))}
             {row !== undefined && <Text color={row.color} dimColor={row.color === undefined}>{row.text}</Text>}
           </Box>
           {isShown && said.map((a, i) => <Text key={`said-${l.address}-${i}`} color={a.color} dimColor={a.color === undefined} wrap="wrap">{`    ${a.words}`}</Text>)}
@@ -564,7 +580,8 @@ export function registerWork(on: On, config: Options): void {
       const oldLeads = inside.filter(l => isOldLead({ readAt: l.readAt, reportedAt: l.at }, now))
       const fresh = inside.filter(l => !oldLeads.includes(l))
       const shown = inside.map(l => alertsOf(l)[0]?.text ?? '')
-      const stuck = shown.filter(t => t.startsWith('⚠')).length
+      // Every stuck lead of the host, whatever its row shows first, those folded away under a focus among them.
+      const stuck = mine.filter(l => alertsOf(l).some(a => a.text.startsWith('⚠'))).length
       const late = shown.filter(t => t.startsWith('⏱')).length
       const unread = shown.filter(t => t.startsWith('▲')).length
       return (
@@ -573,7 +590,7 @@ export function registerWork(on: On, config: Options): void {
             <Box flexDirection="row" width={nameCells} flexShrink={0}>
               <Button key={key} plain label={`${isOpen(key) ? '▾' : '▸'} ${clip(host, nameCells - 2)}`} onPress={flip(key)} />
             </Box>
-            {barOf(inside.flatMap(l => l.tickets), host, false)}
+            {barOf(inside.flatMap(l => l.tickets), host, false, inside.some(isShortOf))}
             {stuck > 0 && <Text color="error">{`⚠ ${stuck}`}</Text>}
             {late > 0 && <Text color="warning">{`⏱ ${late}`}</Text>}
             {unread > 0 && <Text color="warning">{`▲ ${unread}`}</Text>}
@@ -623,7 +640,7 @@ export function registerWork(on: On, config: Options): void {
       </Box>
     )
 
-    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`)]
+    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...[...new Set([...notes.errors, ...(nameError === null ? [] : [nameError])])].map(e => `ix-board: ${e}`)]
     const isHeld = focusNow.meta.heldFor === scopeKeyOf(scope)
     const notice = isHeld ? focusNotice(focusNow.meta.chosen) : null
     // A stored value that is no focus was said when the files were read.

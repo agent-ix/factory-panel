@@ -4,7 +4,7 @@ import type { FocusHeader, FocusInitiative, FocusProject, FocusWarning, WorkBoar
 import { gatedBoard } from './linear'
 import { MEMBERSHIP_MS, RETRY_MS, findRecord, isUsable, isUuid, keyOf, nameFor, projectKey, readBad, saveBad } from './progress'
 import type { Bad, BadEntry, Initiatives, Member, Membership, ProgressFile, ProgressRecord, ProjectRef, Records } from './progress'
-import { after, errorText } from './shared'
+import { after, errorText, pausedText } from './shared'
 import { boardOf, mergeBoards } from './work'
 
 // Progress of a focus: one combined `ix-board focus status` call over all its healthy projects. An
@@ -296,18 +296,24 @@ export async function roadmapNames($: EngineInterface): Promise<Map<string, stri
   return names
 }
 
-/** The name `ix-board project-chunk` gives a project; null where it gives none. */
-export async function projectName($: EngineInterface, id: string): Promise<string | null> {
+/**
+ * The name `ix-board project-chunk` gives a project; null where it gives none. A call that fails is no answer: the gate
+ * holds Linear's rate limit for every read, and any other failure 5 minutes, and `onError` is told why.
+ */
+export async function projectName($: EngineInterface, id: string, onError: (why: string) => void = () => undefined): Promise<string | null> {
   const read = await gatedBoard($, `project-name:${id}`, async (): Promise<{ name: string | null }> => {
     const ran = await limited(() => $.process.run(['ix-board', '--json', 'project-chunk', id], { timeoutMs: CALL_TIMEOUT_MS }))
-    if (ran.exitCode !== 0) return { name: null }
+    if (ran.exitCode !== 0) throw new Error(lastLine(ran.stderr) || lastLine(ran.stdout) || `ix-board exited ${ran.exitCode}`)
+    let chunk: { name?: unknown }
     try {
-      const chunk = JSON.parse(ran.stdout) as { name?: unknown }
-      return { name: text(chunk.name) ? chunk.name : null }
+      chunk = JSON.parse(ran.stdout) as { name?: unknown }
     } catch {
-      return { name: null }
+      throw new Error('ix-board printed text that is not JSON')
     }
+    return { name: text(chunk.name) ? chunk.name : null }
   })
+  if (read.backoffUntil !== null) onError(pausedText(read.backoffUntil, await $.clock.now()))
+  else if (read.error !== null) onError(read.error)
   return read.data?.name ?? null
 }
 

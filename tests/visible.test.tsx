@@ -457,3 +457,24 @@ test('a view drawn before the metrics address is found asks nothing of it, then 
   expect(asked.every(url => url.startsWith('http://prom.test/'))).toBe(true)
   await ui.unmount()
 })
+
+test('a Work view drawn before the metrics address is found asks nothing for its lanes', { options: { prometheusUrl: '' } }, async ($, on) => {
+  trace("FR-027-AC-17")
+  const { w } = watched(on)
+  const asked: string[] = []
+  w.fetch.value = url => (asked.push(url), undefined)
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === 'ix config get observability.prometheusUrl' ? w.clock!.sleep(5 * SEC).then(() => out('http://prom.test\n')) : prior?.(argv, init))
+  const started = startSession($)
+  const ui = await openPane($, 'work')
+  await pass(w, 2 * SEC)
+  await ui.press({ key: 'refresh' })
+  await pass(w, SEC)
+  expect(asked).toEqual([])
+  await pass(w, 4 * SEC)
+  await started
+  await pass(w, SEC)
+  expect(asked.length).toBeGreaterThan(0)
+  expect(asked.every(url => url.startsWith('http://prom.test/'))).toBe(true)
+  await ui.unmount()
+})

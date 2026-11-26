@@ -389,13 +389,25 @@ export function barCells(states: readonly TicketState[], cells = BAR_CELLS): { s
   const counts = BAR_STATES.map(state => ({ state, count: states.filter(s => s === state).length })).filter(c => c.count > 0)
   const total = counts.reduce((n, c) => n + c.count, 0)
   if (total <= cells) return counts.map(c => ({ state: c.state, cells: c.count }))
-  const shares = counts.map(c => ({ state: c.state, share: (c.count * cells) / total }))
-  const out = shares.map(s => ({ state: s.state, cells: Math.max(1, Math.floor(s.share)), rest: s.share % 1 }))
-  let spare = cells - out.reduce((n, c) => n + c.cells, 0)
-  // Cells left over go to the largest remainders; cells taken by the one each state keeps come off the widest.
-  for (const c of [...out].sort((a, b) => b.rest - a.rest)) if (spare > 0) (c.cells++, spare--)
-  while (spare < 0) (out.reduce((a, b) => (b.cells > a.cells ? b : a)).cells--, spare++)
-  return out.map(({ state, cells: n }) => ({ state, cells: n }))
+  // A state whose share is under a cell takes the one it keeps; the rest of the bar is shared among the others, and
+  // again where that leaves another under a cell.
+  const given = new Map<BarState, number>()
+  let rest = counts
+  let room = cells
+  for (;;) {
+    const sum = rest.reduce((n, c) => n + c.count, 0)
+    const small = rest.filter(c => (c.count * room) / sum < 1)
+    if (small.length === 0) break
+    for (const c of small) given.set(c.state, 1)
+    rest = rest.filter(c => !small.includes(c))
+    room -= small.length
+  }
+  // Largest remainders, a greater count first where they are equal, so that more tickets never draw fewer cells.
+  const sum = rest.reduce((n, c) => n + c.count, 0)
+  const shares = rest.map(c => ({ ...c, whole: Math.floor((c.count * room) / sum), over: (c.count * room) % sum }))
+  let spare = room - shares.reduce((n, c) => n + c.whole, 0)
+  for (const c of [...shares].sort((a, b) => b.over - a.over || b.count - a.count)) given.set(c.state, c.whole + (spare-- > 0 ? 1 : 0))
+  return counts.map(c => ({ state: c.state, cells: given.get(c.state)! }))
 }
 
 /** A lead that needs a look: stuck, or churning; `since` is when that began, at the latest. */
@@ -405,6 +417,18 @@ export type Flag = { kind: 'stuck' | 'churning'; since: number | null; why: stri
 export const CHURN_MS = 2 * 60 * 60 * 1000
 /** Lane states older than this say nothing of now. */
 const LANES_OLD_MS = 5 * 60 * 1000
+/** The tickets are read every 5 minutes and the events every 30 seconds: an answer this old has missed its reads. */
+const TICKETS_CURRENT_MS = 10 * 60 * 1000
+const EVENTS_CURRENT_MS = 5 * 60 * 1000
+
+/**
+ * Whether what is held of tickets and events can say that nothing has changed: both read lately, the last read of each
+ * without error, and the events read to the end of the stream (a read still catching up is held as an error).
+ */
+export function readsCurrent(tickets: WorkBoard | undefined, feed: Pick<WorkFeed, 'at' | 'error'>, now: number): boolean {
+  if (tickets === undefined || tickets.at === undefined || tickets.at === null || (tickets.error ?? null) !== null || now - tickets.at > TICKETS_CURRENT_MS) return false
+  return feed.at !== undefined && feed.error === null && now - feed.at <= EVENTS_CURRENT_MS
+}
 
 const REASONS: Record<string, string> = { permission: 'blocked on a permission request', dialog: 'blocked on a dialog', question: 'blocked on a question', queued_question: 'blocked on a queued question', login: 'blocked on a login', usage_limit: 'usage limit' }
 
@@ -412,13 +436,13 @@ const REASONS: Record<string, string> = { permission: 'blocked on a permission r
  * What is wrong with a lead, where the data says. Stuck: its lane waits on a question, a login or a permission, or a tool
  * call ran past its limit. Churning: its lane works, and for CHURN_MS no agent of it changed role, status or ticket
  * (`turnAt`, from the events), Linear updated none of its tickets and no PR of them was opened or merged. With any of
- * those unknown nothing is said.
+ * those unknown, or not current (`isCurrent`, of `readsCurrent`, and the lead's own report), nothing is said.
  */
-export function flagOf(lead: WorkLead, lanes: WorkLanes | null, singles: ReadonlyMap<string, WorkIssue>, turnAt: number | undefined, now: number): Flag | null {
+export function flagOf(lead: WorkLead, lanes: WorkLanes | null, singles: ReadonlyMap<string, WorkIssue>, turnAt: number | undefined, now: number, isCurrent: boolean): Flag | null {
   const lane = lanes === null || now - lanes.at > LANES_OLD_MS ? undefined : lanes.lanes[lead.address]
   if (lane === undefined) return null
   if (lane.isStuck) return { kind: 'stuck', since: lane.since, why: lane.reason === null ? 'a tool call ran past its limit' : (REASONS[lane.reason] ?? lane.reason) }
-  if (lane.state !== 'working' || turnAt === undefined) return null
+  if (lane.state !== 'working' || turnAt === undefined || !isCurrent || lead.error !== null) return null
   const issues = ticketsOf(lead).filter(id => TICKET_ID.test(id)).map(id => singles.get(id))
   if (issues.length === 0 || issues.some(i => i === undefined || i.updatedAt === undefined || i.updatedAt === null || i.prs === null)) return null
   // With every ticket finished there is nothing for the lane to move.
