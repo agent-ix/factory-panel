@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { DailyRow, RetroClass, RetroMeta, RetroView, TeamMeta, TeamMetric, TeamView } from '../types'
-import { CARD_BG, ago, agoShort, errorText, promRange } from './shared'
+import { CARD_BG, ago, agoShort, errorText, promRange, spawn } from './shared'
 import { ACCENT, daySpark, spark } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
@@ -172,7 +172,7 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
   const now = await $.clock.now()
   const seconds = Math.floor(now / 1000)
   try {
-    const query = (promql: string, span: number, step: number) => promRange($, options.prometheusUrl, promql, span, step)
+    const query = (promql: string, span: number, step: number) => promRange($, options.prometheusUrl, promql, span, step, 'team')
     // The daily counts and the coverage are drawn as they stand now, so one step of them is enough.
     const [tiles, daily, coverage, scopes] = await Promise.all([
       Promise.all(
@@ -275,7 +275,7 @@ async function readRetroTeam($: EngineInterface, dir: string, team: string): Pro
   const none = (reason: string, error: string | null): { view: RetroView; error: string | null } => ({ view: { team, classes: null, latest: null, reason }, error })
   try {
     // Only the stored snapshots are read: the delta makes no network call.
-    const ran = await $.process.run(['ix-board', '--json', 'retro', 'delta', '--config', `${dir}/${team}/config.json`], { timeoutMs: RETRO_TIMEOUT_MS })
+    const ran = await spawn($, ['ix-board', '--json', 'retro', 'delta', '--config', `${dir}/${team}/config.json`], RETRO_TIMEOUT_MS, 'retro')
     if (ran.exitCode === NO_CONFIG_EXIT) return none('no retro baseline', null)
     if (ran.exitCode !== 0) return none('retro unavailable', `${team}: ${ran.stderr.trim().split('\n').pop() || `ix-board exited ${ran.exitCode}`}`)
     const delta = JSON.parse(ran.stdout) as Delta

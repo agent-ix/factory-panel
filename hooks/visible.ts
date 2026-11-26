@@ -3,14 +3,15 @@ import type { EngineInterface, RenderSurface } from 'claude-code'
 import type { ModuleId } from './band/modules'
 import { pollCapacity } from './capacity'
 import { originOf } from './endpoints'
-import { pollEscalations } from './escalations'
+import { pollEscalationDetail, pollEscalations } from './escalations'
 import { pollBoard, pollDoctor, pollHerdr, pollPrometheus } from './factory'
+import { maybeWriteFile, meter } from './meter'
 import { isOnView, resetOnView } from './onview'
 import { pollRelay } from './relay'
 import { isDue, markStale, track } from './schedule'
 import type { SourceId } from './schedule'
-import { getSelection, refreshSelection } from './selection'
-import { guarded } from './shared'
+import { factoryDir, getSelection, refreshSelection } from './selection'
+import { guarded, writeWhole } from './shared'
 import type { Options } from './shared'
 import { pollRetro, pollTeam } from './team'
 import { pollLanes } from './worklane'
@@ -37,11 +38,13 @@ export const SETTLE_MS = 150
 export const HEARTBEAT_MS = 15 * 1000
 
 const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
-  factory: ['selection', 'prometheus', 'herdr', 'relay', 'board'],
+  // The Factory pane reads `ix-board agents` only while its chip is open (factorySources of hooks/factory.tsx).
+  factory: ['selection', 'prometheus', 'herdr', 'relay'],
   focus: ['selection', 'focus'],
   // What more the Work pane reads depends on what is open in it (workSources of hooks/workview.tsx).
   work: ['selection', 'work'],
-  escalations: ['escalations'],
+  // The list, and the detail of the rows the pane draws; the band's cell counts the list alone.
+  escalations: ['escalations', 'escalationDetail'],
   relay: ['announcements'],
   team: ['selection', 'team', 'retro', 'capacity'],
 }
@@ -110,6 +113,8 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollFocus($)
     case 'escalations':
       return pollEscalations($)
+    case 'escalationDetail':
+      return pollEscalationDetail($)
     case 'announcements':
       return pollRelay($)
     case 'team':
@@ -162,7 +167,7 @@ function dueNow(options: Options, sources: readonly SourceId[], now: number): So
   // A view can be drawn before session start has found the metrics address. Nothing is asked of an
   // unknown address, so it counts as no read; the redraw that ends session start asks.
   const isFound = originOf(options.prometheusUrl) !== undefined
-  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity' && id !== 'workLanes')) && isDue(id, now))
+  return sources.filter(id => (isFound || !NEEDS_ENDPOINT.has(id)) && isDue(id, now))
 }
 
 async function readDue($: EngineInterface, options: Options, surface: Surface, seat: Seat): Promise<void> {
@@ -173,14 +178,32 @@ async function readDue($: EngineInterface, options: Options, surface: Surface, s
   // The list of panes and herdr or tmux speak of the terminal. Elsewhere, and for a widget, nothing
   // says what is on screen, so the drawing is taken as the evidence.
   const isTerminal = seat.client === 'terminal'
-  if (surface !== 'band' && isTerminal && seat.placement !== 'widget' && !(await isShown($, VIEW_SPECS[surface].id))) return
-  if (dueNow(options, sources, await $.clock.now()).length === 0) return
-  if (isTerminal && !(await isOnView($))) return
+  if (surface !== 'band' && isTerminal && seat.placement !== 'widget' && !(await isShown($, VIEW_SPECS[surface].id))) {
+    const at = await $.clock.now()
+    for (const id of sources) if (isDue(id, at)) meter.skip(id, 'not-shown')
+    return
+  }
+  const at = await $.clock.now()
+  const ready = dueNow(options, sources, at)
+  if (originOf(options.prometheusUrl) === undefined) for (const id of sources) if (NEEDS_ENDPOINT.has(id) && isDue(id, at)) meter.skip(id, 'no-endpoint')
+  if (ready.length === 0) return
+  // The selection is the local declaration and choice files: it needs no view check, so a drawing whose only due
+  // source is the selection asks herdr or tmux nothing.
+  const isOnlySelection = ready.every(id => id === 'selection')
+  let isSeen = true
+  if (isTerminal && !isOnlySelection) {
+    isSeen = await isOnView($)
+    if (!isSeen) for (const id of dueNow(options, sources, await $.clock.now())) if (id !== 'selection') meter.skip(id, 'off-view')
+  }
   // Asked again after the waits, and started at once, so that two drawings do not start one read twice.
-  const due = dueNow(options, sources, await $.clock.now())
+  const due = dueNow(options, sources, await $.clock.now()).filter(id => isSeen || id === 'selection')
   // The selection is started first: the focus and the lanes wait for the scope it decides.
   await Promise.all(due.map(id => guarded($, `${id} read`, () => readSource($, options, id))))
+  await maybeWriteFile($, async session => `${await factoryDir($)}/meter-${session.replace(/[^\w.-]/g, '_')}.json`, (path, text) => writeWhole($, path, text))
 }
+
+/** The sources asked of Prometheus, which wait for its address. */
+const NEEDS_ENDPOINT: ReadonlySet<SourceId> = new Set(['prometheus', 'team', 'capacity', 'workLanes'])
 
 /**
  * Called by every drawing of a view. Reads nothing itself (a drawing may not write state): when a

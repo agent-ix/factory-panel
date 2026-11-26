@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface } from 'claude-code'
 
 import type { CapacityView, HostRow, LaneNote } from '../types'
-import { CARD_BG, errorText, failureText, promQuery } from './shared'
+import { CARD_BG, errorText, failureText, promQuery, spawn } from './shared'
 import type { Options, Sample } from './shared'
 import { track } from './schedule'
 import { sourceClear, sourceFailed, sourceOk } from './sources'
@@ -61,7 +61,7 @@ const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ?
 
 async function query($: EngineInterface, url: string, promql: string): Promise<Got<Sample[]>> {
   try {
-    return { data: await promQuery($, url, promql) }
+    return { data: await promQuery($, url, promql, 'capacity') }
   } catch (error) {
     return { missing: errorText(error), failed: true }
   }
@@ -72,7 +72,7 @@ type LedgerRow = Raw & { host: string }
 async function readLedger($: EngineInterface): Promise<Got<LedgerRow[]>> {
   const failed = (why: string): Got<LedgerRow[]> => ({ missing: why, failed: true })
   try {
-    const ran = await $.process.run(['ix-board', '--json', 'fleet', 'ledger', 'query', VIEW], { timeoutMs: LEDGER_TIMEOUT_MS })
+    const ran = await spawn($, ['ix-board', '--json', 'fleet', 'ledger', 'query', VIEW], LEDGER_TIMEOUT_MS, 'capacity')
     if (ran.exitCode !== 0) {
       // An ix-board from before the view, or before the command, has read nothing.
       if (ran.stderr.includes('unknown ledger view')) return { missing: `this ix-board has no ${VIEW} view`, failed: false }

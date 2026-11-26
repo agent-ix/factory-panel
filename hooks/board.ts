@@ -4,7 +4,7 @@ import type { FocusHeader, FocusInitiative, FocusProject, FocusWarning, WorkBoar
 import { gatedBoard } from './linear'
 import { MEMBERSHIP_MS, RETRY_MS, findRecord, isUsable, isUuid, keyOf, nameFor, projectKey, readBad, saveBad } from './progress'
 import type { Bad, BadEntry, Initiatives, Member, Membership, ProgressFile, ProgressRecord, ProjectRef, Records } from './progress'
-import { after, errorText, pausedText } from './shared'
+import { after, errorText, pausedText, spawn } from './shared'
 import { boardOf, mergeBoards } from './work'
 
 // Progress of a focus: one combined `ix-board focus status` call over all its healthy projects. An
@@ -276,7 +276,7 @@ const initiativeName = (s: Selector): string => s.label ?? `initiative ${short(s
 /** The Linear names `ix-board roadmap` gives its initiatives and projects, by focus value; none where it cannot be read. Shared with the progress reads. */
 export async function roadmapNames($: EngineInterface): Promise<Map<string, string>> {
   const read = await gatedBoard($, ROADMAP_KEY, async (): Promise<RoadmapRead> => {
-    const ran = await limited(() => $.process.run(['ix-board', '--json', 'roadmap'], { timeoutMs: CALL_TIMEOUT_MS }))
+    const ran = await limited(() => spawn($, ['ix-board', '--json', 'roadmap'], CALL_TIMEOUT_MS, 'focus'))
     if (ran.exitCode !== 0) {
       const stderr = lastLine(ran.stderr)
       if (AUTH.test(stderr) || RATE.test(stderr)) throw new Error(stderr)
@@ -302,7 +302,7 @@ export async function roadmapNames($: EngineInterface): Promise<Map<string, stri
  */
 export async function projectName($: EngineInterface, id: string, onError: (why: string) => void = () => undefined): Promise<string | null> {
   const read = await gatedBoard($, `project-name:${id}`, async (): Promise<{ name: string | null }> => {
-    const ran = await limited(() => $.process.run(['ix-board', '--json', 'project-chunk', id], { timeoutMs: CALL_TIMEOUT_MS }))
+    const ran = await limited(() => spawn($, ['ix-board', '--json', 'project-chunk', id], CALL_TIMEOUT_MS, 'focus'))
     if (ran.exitCode !== 0) throw new Error(lastLine(ran.stderr) || lastLine(ran.stdout) || `ix-board exited ${ran.exitCode}`)
     let chunk: { name?: unknown }
     try {
@@ -373,7 +373,7 @@ export async function refreshProgress($: EngineInterface, selectors: readonly Se
       if (left <= 0) return { ok: false, error: 'timed out', timedOut: true }
       let ran
       try {
-        ran = await $.process.run(argv(args), { timeoutMs: Math.min(CALL_TIMEOUT_MS, left) })
+        ran = await spawn($, argv(args), Math.min(CALL_TIMEOUT_MS, left), 'focus')
       } catch (error) {
         const message = errorText(error)
         // A call for one thing that timed out after others answered is that thing's failure. A timed out call for

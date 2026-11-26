@@ -30,6 +30,8 @@ The mod SHALL read the work reports of the leads once for the views that draw th
 - At most 8 lead reports SHALL be read at once in a session, whichever views ask.
 - A lead asked while a read of it is under way SHALL get that read's answer.
 - A lead asked less than 30 seconds ago SHALL be answered from that read, except where the refresh key or a choice command asks, which read anew.
+- For the Focus view and the band cells that draw it, a lead whose report was read less than 10 minutes ago SHALL be answered from that read, except where the refresh key or a choice command asks; a lead whose latest read failed SHALL be asked again after 30 seconds. What the Focus view draws of a lead changes when it takes up other work.
+- `agent-msg who` read less than 60 seconds ago SHALL answer the Focus, Work and Message views without a call, except for the refresh key of the Focus or Work view.
 - A call of `agent-msg who`, `work show` or `work events` that fails because Redis answers `Resource temporarily unavailable`, or because herdr or ssh did not answer for another machine (`herdr call timed out`, `ConnectionAborted`, `Connection closed by`), SHALL be made once more at once.
 
 ### Shared by the sessions of a machine

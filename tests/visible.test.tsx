@@ -89,7 +89,8 @@ test('a session with nobody at it reads nothing and does not ask who it is', asy
 })
 
 const DRAWS: Record<View, string[]> = {
-  factory: ['prometheus', 'herdr', 'doctor', 'board'],
+  // ix-board agents only once its chip is opened.
+  factory: ['prometheus', 'herdr', 'doctor'],
   focus: ['focus'],
   // Closed, the Work pane reads the leads' reports and events, their lanes' states (a fleet series, counted as
   // capacity) and the one read of the reported tickets.
@@ -326,7 +327,7 @@ test('a source that fails is read half as often each time, five minutes apart at
   await ui.unmount()
 })
 
-test('a source that answers slowly is read less often', async ($, on) => {
+test('a source that answers slowly is read a little less often, and never backed off like a failure', async ($, on) => {
   trace("FR-027-AC-11")
   const { w, reads } = watched(on)
   const prior = w.stub.value
@@ -334,8 +335,12 @@ test('a source that answers slowly is read less often', async ($, on) => {
   await startSession($)
   const ui = await openPane($, 'escalations')
   const apart = gaps(await readTimes(w, () => reads().escalations, 12 * MIN))
-  expect(apart[0]).toBeGreaterThanOrEqual(120)
-  expect(apart[1]).toBeGreaterThanOrEqual(240)
+  expect(apart.length).toBeGreaterThanOrEqual(5)
+  // Each slow answer stretches the next wait to 90 seconds, and slow answers in a row stretch it no further.
+  for (const gap of apart) {
+    expect(gap).toBeGreaterThanOrEqual(90 - 5)
+    expect(gap).toBeLessThanOrEqual(120)
+  }
   await ui.unmount()
 })
 
@@ -427,14 +432,16 @@ test('the refresh key of the Factory view reads ix-board agents again once 60 se
   await startSession($)
   const ui = await openPane($, 'factory')
   await pass(w, 2 * SEC)
+  expect(reads().board).toBe(0)
+  await ui.press({ key: 'board' })
+  await pass(w, 2 * SEC)
   expect(reads().board).toBe(1)
   await pass(w, 20 * SEC)
   await ui.press({ key: 'refresh' })
   await pass(w, SEC)
   expect(reads().board).toBe(1)
-  // Left alone, the gate holds the agents for 30 minutes; only the key asks after one.
-  await pass(w, 60 * SEC)
-  expect(reads().board).toBe(1)
+  // The agents are shared for a minute; after it the key, or the next drawing, reads them again.
+  await pass(w, 40 * SEC)
   await ui.press({ key: 'refresh' })
   await pass(w, SEC)
   expect(reads().board).toBe(2)

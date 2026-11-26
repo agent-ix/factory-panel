@@ -718,25 +718,25 @@ test('only an old cache is read once as the initial cache, later writes go to th
   trace("FR-015-AC-2")
   const w = world(on, true)
   fullWorld(w)
-  const old = JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at: Date.UTC(2026, 10, 24, 11, 50), claimAt: null, data: { agents: [{ team: 'QSL', agent: 'draco:QSL:code', status: 'idle', machine: 'draco', paneId: '', title: '', lastTurnAgeSecs: 1 }], notes: [] } } } })
+  // A Linear-gated read, the reported tickets, cached 30 seconds ago (it is read again once 5 minutes old).
+  const at = Date.UTC(2026, 10, 24, 11, 59, 30)
+  const old = JSON.stringify({ backoffUntil: null, entries: { 'tickets:qsl': { at, claimAt: null, data: { shape: 3, at, asked: ['QSL-1'], issues: [], unknown: [] } } } })
   w.files.set(`${HOME_CACHE}/linear-gate.json`, old)
-  // Without the work module, whose read of single tickets would be the first write.
-  w.files.set(`${FP}/features/default.json`, JSON.stringify({ modules: ['local', 'focus', 'lead', 'lanes'] }))
+  w.files.set(`${FP}/features/default.json`, JSON.stringify({ modules: ['work'] }))
   await startSession($)
   const standing = await drawBand($, CLASSIC)
-  await w.clock!.advance(1000)
+  await w.clock!.advance(30_000)
   await settle()
-  // The old content answered: ix-board was not asked, and the cached agent shows (1 idle).
+  // The old content answered: ix-board was not asked, and the gate counted a hit for the tickets.
   expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual([])
   expect(w.files.has(`${FP}/linear-gate.json`)).toBe(false)
-  const ui = await drawBand($, CLASSIC)
-  expect((await ui.find({ key: 'lanes' }))?.text).toBe('0 working · 1 idle')
-  await ui.unmount()
+  const shown = ((await $.command.run({ command: 'factory', args: 'show fetch' } as never)) as { text: string }).text
+  expect(shown.split('\n').find(l => l.startsWith('gate:tickets '))).toMatch(/hit/)
   expect(standing).toBeDefined()
   // Once the cached read is old enough the next read goes to the new path.
-  await w.clock!.advance(21 * 60_000)
+  await w.clock!.advance(6 * 60_000)
   await settle()
-  expect(w.ran.filter(l => l.startsWith('ix-board')).length).toBeGreaterThan(0)
+  expect(w.ran.filter(l => l.startsWith('ix-board --json issues')).length).toBeGreaterThan(0)
   expect(w.files.has(`${FP}/linear-gate.json`)).toBe(true)
   expect(w.files.get(`${HOME_CACHE}/linear-gate.json`)).toBe(old)
   expect(w.writes).not.toContain(`${HOME_CACHE}/linear-gate.json`)

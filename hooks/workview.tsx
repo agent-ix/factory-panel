@@ -5,7 +5,7 @@ import type { TicketsAnswer, WorkAgent, WorkBoard, WorkFeed, WorkLead, WorkMeta,
 import { CALL_TIMEOUT_MS, limited } from './board'
 import { choiceApplied, focusHeld, focusWasRead, pollFocus } from './focus'
 import { gatedBoard } from './linear'
-import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson } from './shared'
+import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson, spawn } from './shared'
 import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
 import type { LeadRead, WorkReport } from './leads'
 import { focusTeams, statusOf, teamOf } from './band/modules'
@@ -112,7 +112,7 @@ async function readEvents($: EngineInterface, prior: Record<string, number>, hel
   let cursor = eventCursor
   let more = false
   for (let page = 0; page < EVENT_PAGES; page++) {
-    const answer = await twice(() => runJson<EventPage>($, ['agent-msg', 'work', 'events', '--limit', String(EVENT_LIMIT), '--after', cursor], RELAY_TIMEOUT_MS))
+    const answer = await twice(() => runJson<EventPage>($, ['agent-msg', 'work', 'events', '--limit', String(EVENT_LIMIT), '--after', cursor], RELAY_TIMEOUT_MS, 'events'))
     const events = Array.isArray(answer.events) ? answer.events : []
     lastOfEvents(events, last)
     feed = { ...foldFeed(events, feed), ...foldTurns(events, feed) }
@@ -158,7 +158,7 @@ async function runIssues($: EngineInterface, ids: string[]): Promise<TicketsAnsw
   const answer: TicketsAnswer = { shape: TICKETS_SHAPE, at: 0, asked: ids, issues: [], unknown: [] }
   for (let i = 0; i < ids.length; i += TICKETS_PER_CALL) {
     const some = ids.slice(i, i + TICKETS_PER_CALL)
-    const ran = await $.process.run(['ix-board', '--json', 'issues', ...some], { timeoutMs: CALL_TIMEOUT_MS })
+    const ran = await spawn($, ['ix-board', '--json', 'issues', ...some], CALL_TIMEOUT_MS, 'tickets')
     if (ran.exitCode === 2 && ran.stderr.includes("unrecognized subcommand 'issues'")) throw new Error('this ix-board has no `issues` command')
     // Where Linear has none of the tickets asked for, ix-board answers all the same and exits 3 with nothing to say.
     if (ran.exitCode !== 0 && !(ran.exitCode === 3 && ran.stderr.trim() === '')) throw new Error(failureText(ran.stderr, ran.exitCode))
@@ -293,7 +293,7 @@ async function refreshWork($: EngineInterface, reuseMs: number): Promise<boolean
     let addresses: string[]
     let known: string[]
     try {
-      const all = await listLeads($)
+      const all = await listLeads($, reuseMs === 0 ? 0 : undefined)
       known = [...new Set(all.map(teamOf).filter(Boolean))].sort((a, b) => a.localeCompare(b))
       addresses = all.filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
     } catch (error) {

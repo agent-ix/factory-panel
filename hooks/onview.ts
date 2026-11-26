@@ -1,5 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
+import { spawn } from './shared'
+
 // Whether the terminal pane this session runs in is on view. The engine draws a view whether or not
 // anyone can see its terminal, so herdr or tmux is asked before a read. Only a definite no counts:
 // with neither of them, with both (one inside the other), or with a command that fails, is slow or
@@ -58,12 +60,12 @@ export const tmuxOnView = (stdout: string): boolean => {
 }
 
 async function askHerdr($: EngineInterface): Promise<boolean> {
-  const ran = await $.process.run(['herdr', 'api', 'snapshot'], { timeoutMs: TIMEOUT_MS })
+  const ran = await spawn($, ['herdr', 'api', 'snapshot'], TIMEOUT_MS, 'onview')
   return ran.exitCode !== 0 || herdrOnView(ran.stdout, await $.session.id())
 }
 
 async function askTmux($: EngineInterface, pane: string): Promise<boolean> {
-  const ran = await $.process.run(['tmux', 'display-message', '-p', '-t', pane, TMUX_FORMAT], { timeoutMs: TIMEOUT_MS })
+  const ran = await spawn($, ['tmux', 'display-message', '-p', '-t', pane, TMUX_FORMAT], TIMEOUT_MS, 'onview')
   return ran.exitCode !== 0 || tmuxOnView(ran.stdout)
 }
 

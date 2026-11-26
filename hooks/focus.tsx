@@ -5,7 +5,7 @@ import type { ChosenFocus, FocusOption, FocusInitiative, FocusMeta, FocusProject
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar } from './shared'
-import { LEAD_REUSE_MS, listLeads, readLead } from './leads'
+import { FOCUS_REUSE_MS, listLeads, readLead } from './leads'
 import type { LeadRead, WorkReport } from './leads'
 import { REFRESH_BUDGET_MS, resetBoard, selectorsOfScope } from './board'
 import { loadProgress, progressKeyOf } from './progressview'
@@ -164,7 +164,7 @@ export function pollFocus($: EngineInterface, manual = false, anew = manual, isM
         againFull = false
         const narrow = isNarrow
         const how = asManual
-        const reuse = asAnew ? 0 : LEAD_REUSE_MS
+        const reuse = asAnew ? 0 : FOCUS_REUSE_MS
         const early = isFirstPass
         isFirstPass = false
         await track($, narrow ? 'membership' : 'focus', () => refreshFocus($, how, reuse, early, narrow))
@@ -205,7 +205,7 @@ export function readChoices($: EngineInterface): Promise<boolean> {
       await selectionReady()
       const teams = focusTeams(scopeOf(getSelection()))
       const leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
-      const reads = await Promise.all(leads.map(lead => readLead($, lead)))
+      const reads = await Promise.all(leads.map(lead => readLead($, lead, FOCUS_REUSE_MS)))
       const options = await namesOf($, reportedRefs(reads.map(r => r.report?.scope)))
       await update($, focusMeta, m => ({ ...m, options }))
       return true
@@ -272,7 +272,7 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     const gather = async (): Promise<{ lead: string; report: WorkReport; note: string | null }[]> => {
       let leads: string[]
       try {
-        leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
+        leads = (await listLeads($, reuseMs === 0 ? 0 : undefined)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
       } catch (error) {
         listed = false
         errors.push({ source: 'agent-msg work', text: errorText(error) })
@@ -308,18 +308,24 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     // A report that could not be read now is drawn as it was last read, and says so.
     const drawn = (reports: readonly LeadRead[], now: number): { lead: string; report: WorkReport; note: string | null }[] =>
       reports.flatMap(r => (r.report ? [{ lead: r.address, report: r.report, note: r.error === null ? null : `work report not read, as read ${ago(r.at, now)}` }] : []))
-    const reports = await gather()
     const prior = await read($, focusMeta)
+    // A chosen focus is named first, from what is held, else by Linear through the gates. One that is named is drawn
+    // as itself, from its own focus status, so no lead report is read for it; only a choice no name is found for is
+    // looked for among the leads' reports.
+    let chosenName: string | null = null
+    if (choice !== null) {
+      chosenName = [...(prior.options ?? []), ...(prior.chosen === undefined ? [] : [prior.chosen])].find(o => o.value === choice)?.name ?? null
+      chosenName ??= (await namesOf($, [choice]))[0]?.name ?? null
+    }
+    const isNamed = chosenName !== null
+    const reports = isNamed ? [] : await gather()
+    // No lead was asked, so a failure of an earlier read of them says nothing of what is drawn now.
+    if (isNamed) sourceClear('agent-msg work')
 
     // The focuses that can be chosen are those the reports name.
     const refs = reportedRefs(reports.map(r => r.report.scope))
     let chosen: ChosenFocus | undefined
-    if (choice !== null) {
-      let name = [...(prior.options ?? []), ...(prior.chosen === undefined ? [] : [prior.chosen])].find(o => o.value === choice)?.name ?? null
-      // One no lead reports is a focus only where Linear names it, which is asked before anything is drawn for it.
-      if (!refs.includes(choice) && name === null) name = (await namesOf($, [choice]))[0]?.name ?? null
-      chosen = { value: choice, name, known: refs.includes(choice) || name !== null }
-    }
+    if (choice !== null) chosen = { value: choice, name: chosenName, known: refs.includes(choice) || chosenName !== null }
 
     const leadEntries = reports
       .filter(r => selectorsOfScope(r.report.scope).length > 0 || Boolean(r.report.focus?.summary))
@@ -351,12 +357,12 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     const publish = async (options: FocusOption[]) => {
       const name = chosen === undefined ? null : (options.find(o => o.value === chosen!.value)?.name ?? chosen.name)
       if (chosen !== undefined) chosen = { ...chosen, name }
-      await update($, focusMeta, m => ({ ...m, ...(isMembership ? {} : { options }), chosen }))
+      await update($, focusMeta, m => ({ ...m, ...(isMembership || isNamed ? {} : { options }), chosen }))
       if (name !== null) await update($, focuses, list => list.map(f => (f.via === 'chosen' && f.address === chosen!.value ? { ...f, title: name } : f)))
       return options
     }
     // For the Work tab's membership no name is read but the chosen one's, and that after its progress.
-    const naming = isMembership ? Promise.resolve<FocusOption[]>([]) : namesOf($, refs).then(publish)
+    const naming = isMembership || isNamed ? Promise.resolve<FocusOption[]>([]) : namesOf($, refs).then(publish)
     const failed = new Map<string, { name: string; error: string }>()
     // The 30 seconds of the refresh count from here, the first ix-board call, not from the lookups above.
     const endsAt = (await $.clock.now()) + REFRESH_BUDGET_MS
@@ -380,7 +386,7 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     const now = await $.clock.now()
     // With nothing to draw and reports still coming in, the views keep saying that the focuses are being read.
     // A membership read says nothing of the other focuses, so it claims no read of the scope.
-    await update($, focusMeta, m => ({ at: isPartial && entries.length === 0 ? m.at : now, busy: isPartial, error: null, errors, heldFor, chosen, options: isMembership ? m.options : options, ...(listed && !isMembership ? { scope: scopeKeyOf(scope) } : isMembership && m.scope !== undefined ? { scope: m.scope } : {}) }))
+    await update($, focusMeta, m => ({ at: isPartial && entries.length === 0 ? m.at : now, busy: isPartial, error: null, errors, heldFor, chosen, options: isMembership || isNamed ? m.options : options, ...(listed && !isMembership ? { scope: scopeKeyOf(scope) } : isMembership && m.scope !== undefined ? { scope: m.scope } : {}) }))
     return errors.length === 0
   } catch (error) {
     await update($, focusMeta, m => ({ ...m, busy: false, error: errorText(error) }))

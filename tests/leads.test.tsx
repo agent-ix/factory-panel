@@ -216,10 +216,11 @@ test('the Focus view keeps a lead it cannot read now, with a note of when its re
   const ui = await mount($, 'focus')
   await w.clock!.advance(SEC)
   isDown = true
-  await w.clock!.advance(2 * MIN + SEC)
+  // The Focus view reads a lead's report again once it is 10 minutes old (FR-030).
+  await w.clock!.advance(10 * MIN + SEC)
   expect((await lines(ui)).join('\n')).toMatch(/focus of draco:QSL:arch/)
   const shown = await $.command.run({ command: 'factory', args: 'show' } as never)
-  expect((shown as { text: string }).text).toMatch(/work report not read, as read \dm ago/)
+  expect((shown as { text: string }).text).toMatch(/work report not read, as read \d+m ago/)
   await ui.unmount()
 })
 

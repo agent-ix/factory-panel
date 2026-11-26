@@ -11,12 +11,13 @@ import type {
   RelayCheck,
   RelayView,
 } from '../types'
-import { CARD_BG, INK, ago, errorText, pausedText, promQuery, shortError } from './shared'
+import { CARD_BG, INK, ago, errorText, pausedText, promQuery, shortError, spawn } from './shared'
 import { ACCENT, tempColor, usd } from './ui/glyphs'
 import { widgets } from './ui/widgets'
 import { gatedBoard } from './linear'
 import { sourceFailed, sourceOk } from './sources'
-import { intervalOf, track } from './schedule'
+import { intervalOf, markStale, track } from './schedule'
+import type { SourceId } from './schedule'
 import { getSelection, selectionReady } from './selection'
 import type { Options, Sample } from './shared'
 
@@ -118,13 +119,13 @@ async function readPrometheus($: EngineInterface, options: Options): Promise<boo
   const now = await $.clock.now()
   try {
     const [lastSeen, leads, panes, spend, cpu, mem, temp] = await Promise.all([
-      promQuery($, options.prometheusUrl, QUERIES.lastSeen),
-      promQuery($, options.prometheusUrl, QUERIES.leads),
-      promQuery($, options.prometheusUrl, QUERIES.panes),
-      promQuery($, options.prometheusUrl, QUERIES.spend),
-      promQuery($, options.prometheusUrl, QUERIES.cpu).catch(() => [] as Sample[]),
-      promQuery($, options.prometheusUrl, QUERIES.mem).catch(() => [] as Sample[]),
-      promQuery($, options.prometheusUrl, QUERIES.temp).catch(() => [] as Sample[]),
+      promQuery($, options.prometheusUrl, QUERIES.lastSeen, 'machines'),
+      promQuery($, options.prometheusUrl, QUERIES.leads, 'machines'),
+      promQuery($, options.prometheusUrl, QUERIES.panes, 'machines'),
+      promQuery($, options.prometheusUrl, QUERIES.spend, 'machines'),
+      promQuery($, options.prometheusUrl, QUERIES.cpu, 'machines').catch(() => [] as Sample[]),
+      promQuery($, options.prometheusUrl, QUERIES.mem, 'machines').catch(() => [] as Sample[]),
+      promQuery($, options.prometheusUrl, QUERIES.temp, 'machines').catch(() => [] as Sample[]),
     ])
 
     const byName = new Map<string, Machine>()
@@ -204,7 +205,7 @@ export function pollHerdr($: EngineInterface): Promise<boolean> {
 async function readHerdr($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   try {
-    const ran = await $.process.run(['herdr', 'api', 'snapshot'], { timeoutMs: 10_000 })
+    const ran = await spawn($, ['herdr', 'api', 'snapshot'], 10_000, 'herdr')
     if (ran.exitCode !== 0) {
       throw new Error(ran.stderr.trim().split('\n')[0] || `herdr exited ${ran.exitCode}`)
     }
@@ -238,7 +239,7 @@ export function pollDoctor($: EngineInterface): Promise<boolean> {
 async function readDoctor($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   try {
-    const ran = await $.process.run(['agent-msg', 'doctor', '--json'], { timeoutMs: 30_000 })
+    const ran = await spawn($, ['agent-msg', 'doctor', '--json'], 30_000, 'relay')
     // A doctor that fails outright prints its reason on stderr, not JSON; show that reason.
     let parsed: { ok: boolean; checks: RelayCheck[] }
     try {
@@ -291,6 +292,12 @@ type BoardOutput = {
 
 type BoardRead = { agents: BoardAgent[]; notes: string[] }
 
+/**
+ * `ix-board agents` reads herdr on each machine and makes no Linear call, so it is shared across the sessions for a
+ * minute, not held to the 30 minute Linear gate, and Linear's rate limit does not hold it.
+ */
+export const AGENTS_INTERVAL_MS = 60 * 1000
+
 /** The teams ix-board is asked about: those the selection names, else the `teams` setting. */
 const boardTeams = (options: Options): string[] => {
   const picked = getSelection().teams.value
@@ -308,7 +315,7 @@ async function readBoardState($: EngineInterface, options: Options, how: { manua
   if (teams.length === 0) return true
   await update($, freshness, f => ({ ...f, boardBusy: true }))
   try {
-    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams), { manual: how.manual })
+    const read = await gatedBoard($, `agents:${teams.join(',')}`, () => readBoard($, teams), { manual: how.manual, intervalMs: AGENTS_INTERVAL_MS, linear: false })
     const now = await $.clock.now()
     const notes = read.data?.notes ?? []
     const error =
@@ -326,9 +333,7 @@ async function readBoardState($: EngineInterface, options: Options, how: { manua
 
 async function readBoard($: EngineInterface, teams: string[]): Promise<BoardRead> {
   {
-    const ran = await $.process.run(['ix-board', '--json', 'agents', ...teams], {
-      timeoutMs: 180_000,
-    })
+    const ran = await spawn($, ['ix-board', '--json', 'agents', ...teams], 180_000, 'board')
     if (ran.isStdoutTruncated) throw new Error('ix-board output was cut at 4 MiB')
     let parsed: BoardOutput
     try {
@@ -428,15 +433,31 @@ const isCurrent = (f: Freshness, now: number): boolean =>
 // ---------------------------------------------------------------- register
 
 /**
- * The Factory view's `r`: reads its sources now, whenever each was last read. `ix-board agents` reads
- * Linear, so its gate still asks it at most once in 60 seconds.
+ * The Factory view's `r`: reads its sources now, whenever each was last read. `ix-board agents` is read only while its
+ * chip is open, and its gate still asks it at most once in 60 seconds, which the sessions share.
  */
 export async function refreshAll($: EngineInterface, options: Options): Promise<void> {
-  await Promise.all([pollPrometheus($, options), pollHerdr($), pollDoctor($), pollBoard($, options, { manual: true })])
+  const isBoardOpen = (await read($, detail)) === 'board'
+  await Promise.all([pollPrometheus($, options), pollHerdr($), pollDoctor($), ...(isBoardOpen ? [pollBoard($, options, { manual: true })] : [])])
+}
+
+/**
+ * What the Factory pane reads for what is open in it (hooks/visible.ts). The agents of the teams are drawn only under
+ * the open ix-board chip, so `ix-board agents` is read only while it is open. The widget shows no agents and no teams.
+ */
+export async function factorySources($: EngineInterface, isWidget: boolean): Promise<SourceId[]> {
+  if (isWidget) return ['prometheus', 'herdr', 'relay']
+  return ['selection', 'prometheus', 'herdr', 'relay', ...((await read($, detail)) === 'board' ? (['board'] as const) : [])]
 }
 
 async function toggleDetail($: EngineInterface, which: Detail): Promise<void> {
+  const was = await read($, detail)
   await update($, detail, d => (d === which ? 'none' : which))
+  // The agents are read at the next drawing once their chip opens, unless what is held is still current.
+  if (which === 'board' && was !== 'board') {
+    markStale('board')
+    $.ui.invalidate('ui.render')
+  }
 }
 
 /** Registers the command; called once at session start. register.tsx opens the pane, and hooks/visible.ts reads while it is drawn. */
