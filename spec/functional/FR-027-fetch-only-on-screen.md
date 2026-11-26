@@ -33,7 +33,7 @@ The mod SHALL read a source only while something on screen draws its data.
 - The mod SHALL start no read from a timer or from session start other than through a drawing, except the identity lookup of an interactive session at start.
 - A session that is not interactive SHALL run no identity lookup and no read.
 - A typed `/factory show` or choice command, and a choice made in the Work view's header, reads the focus source once, through the same 30 minute gate, although no view draws it ([FR-014](./FR-014-user-choice.md)).
-- Each read of the focus source reads `agent-msg focuses list` once, and `show` once where a definition is chosen ([FR-020](./FR-020-named-focus-resolution.md)).
+- A read of the focus source names its choices after the lead reports are in, through the gates of [FR-020](./FR-020-named-focus-resolution.md).
 
 ### A terminal nobody can see
 

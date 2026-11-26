@@ -143,12 +143,12 @@ async function classic() {
     s.capture('2c-show')
     check('classic: /factory show says the hosts value came from the user', shown !== null)
     check('classic: /factory show prints the line that says why these focuses are shown', BANNER.test(shown ?? ''), (shown ?? '').slice(-600))
-    // No relay holds a definition of this name: it is refused, whole, and the choice stays.
+    // No lead reports a focus of this name: it is refused, whole, and the choice stays.
     s.type('/factory focus No Such Focus')
     s.key('Enter')
-    const refused = await s.waitFor(t => /The focus is unchanged/.test(t) && /No Such Focus/.test(t))
+    const refused = await s.waitFor(t => /The focus is unchanged/.test(t))
     s.capture('2d-focus-refused')
-    check('classic: /factory focus with a name relay does not have is refused and says so', refused !== null, s.capture().slice(-600))
+    check('classic: /factory focus with a name no lead reports is refused and says so', refused !== null, s.capture().slice(-600))
     s.type('/factory focus all')
     s.key('Enter')
     await s.waitFor(t => /Focus: all/.test(t))

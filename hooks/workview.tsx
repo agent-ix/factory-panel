@@ -9,7 +9,7 @@ import { CARD_BG, ago, agoShort, errorText, failureText, pausedText, runJson } f
 import { LEAD_REUSE_MS, RELAY_TIMEOUT_MS, listLeads, readLead, twice } from './leads'
 import type { LeadRead, WorkReport } from './leads'
 import { focusTeams, statusOf, teamOf } from './band/modules'
-import { CREATE_HINT, NO_DEFINITIONS, focusNotice, isFocusId } from './namedfocus'
+import { NOT_A_FOCUS, focusNotice, labelOf, parseRef } from './focuschoice'
 import { markStale, track } from './schedule'
 import { ALL, getSelection, scopeKeyOf, scopeOf, selectionReady, writeChoice } from './selection'
 import type { Picked } from './selection'
@@ -164,7 +164,7 @@ export function pollTickets($: EngineInterface): Promise<boolean> {
       markStale('tickets')
       return true
     }
-    const isFiltered = isFocusId(getSelection().focus.value)
+    const isFiltered = parseRef(getSelection().focus.value) !== null
     const named = new Set(isFiltered ? [] : boards.flatMap(b => b.issues.map(i => i.identifier)))
     const askable = (ids: string[]) => ids.filter(id => TICKET_ID.test(id) && !named.has(id)).sort()
     // Where there are more than can be asked for, those in hand come first.
@@ -439,29 +439,29 @@ export function registerWork(on: On, _options: Options): void {
       </Box>
     )
 
-    const lookups = (focusNow.meta.errors ?? []).filter(e => e.source === 'agent-msg focuses').map(e => `${e.source}: ${e.text}`)
-    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`), ...lookups]
+    const warnings = [...[meta.error, feed.error].flatMap(e => (e === null ? [] : e.split(' · '))), ...notes.errors.map(e => `ix-board: ${e}`)]
     const reporting = view.leads.length > 0 || meta.at !== null
     const isHeld = focusNow.meta.heldFor === scopeKeyOf(scope)
     const notice = isHeld ? focusNotice(focusNow.meta.chosen) : null
-    // A stored value that names no definition was said when the files were read.
-    const ignored = scope.focus === ALL ? sel.notes.filter(n => n.includes('is not a focus definition ID')) : []
-    const filterNotes = [...ignored, ...(notice === null ? [] : [notice]), ...(filter.kind === 'unread' ? [filter.why] : filter.kind === 'named' ? filter.notes : [])]
-    const definitions = focusNow.meta.definitions
-    const hasNone = definitions !== undefined && definitions.length === 0
+    // A stored value that is no focus was said when the files were read.
+    const ignored = scope.focus === ALL ? sel.notes.filter(n => n.includes(NOT_A_FOCUS)) : []
+    const filterNotes = [...ignored, ...(notice === null ? [] : [notice]), ...(filter.kind === 'unread' ? [filter.why] : [])]
     const teams = focusTeams(scope) ?? []
     const isOn = (value: boolean) => (value ? '✓ ' : '  ')
     const known = [...teams, ...meta.teams].filter((t, i, list) => list.findIndex(o => o.toLowerCase() === t.toLowerCase()) === i).sort((a, b) => a.localeCompare(b))
-    // An ID relay has no definition of is all.
-    const focus = isHeld && focusNow.meta.chosen?.state === 'unknown' && focusNow.meta.chosen.id === scope.focus ? ALL : scope.focus
-    // The chosen definition by its name; its ID where no read has named it.
-    const focusName = focus === ALL ? ALL : (definitions?.find(d => d.id === focus)?.name ?? (focusNow.meta.chosen?.id === focus ? focusNow.meta.chosen.name : null) ?? focus)
-    const usable = (definitions ?? []).filter(d => d.name !== null)
-    const labelOf = (d: (typeof usable)[number]) => (usable.filter(o => o.name === d.name).length > 1 && d.team !== null ? `${d.name} (${d.team})` : d.name!)
-    const options_ = [{ id: ALL, label: ALL }, ...usable.map(d => ({ id: d.id, label: labelOf(d) }))]
-    const noneLines = [
-      <Text key="no-definitions" dimColor size="caption">{NO_DEFINITIONS}</Text>,
-      <Text key="create-definition" dimColor size="caption">{`create one: ${CREATE_HINT}`}</Text>,
+    // A choice that is no focus is all.
+    const chosen = isHeld && focusNow.meta.chosen?.value === scope.focus ? focusNow.meta.chosen : undefined
+    const focus = chosen !== undefined && !chosen.known ? ALL : scope.focus
+    const offered = focusNow.meta.options
+    // The chosen focus is listed although no lead of these teams reports it.
+    const extra = focus === ALL || (offered ?? []).some(o => o.value === focus) ? [] : [{ value: focus, kind: parseRef(focus)?.kind ?? 'project', name: chosen?.name ?? null }]
+    const listed = [...(offered ?? []), ...extra]
+    const nameOf = (value: string) => labelOf(value, listed.find(o => o.value === value)?.name)
+    const focusName = focus === ALL ? ALL : nameOf(focus)
+    const choices = [
+      { value: ALL, label: ALL },
+      // An initiative and a project of one name are told apart.
+      ...listed.map(o => ({ value: o.value, label: listed.filter(p => nameOf(p.value) === nameOf(o.value)).length > 1 ? `${nameOf(o.value)} (${o.kind})` : nameOf(o.value) })),
     ]
     const pickTeam = (t: string) => () => void choose($, c => ({ ...c, teams: toggledTeams(teams, t) }))
     const options =
@@ -474,11 +474,11 @@ export function registerWork(on: On, _options: Options): void {
         </Box>
       ) : picker.open === 'focus' ? (
         <Box key="focus-picker" flexDirection="column" paddingLeft={2}>
-          {options_.map(o => (
-            <Button key={`focus-option-${o.id}`} plain label={`${isOn(o.id === focus)}${o.label}`} onPress={() => void choose($, c => ({ ...c, focus: o.id })).then(() => update($, workPicker, p => ({ ...p, open: null })))} />
+          {choices.map(o => (
+            <Button key={`focus-option-${o.value}`} plain label={`${isOn(o.value === focus)}${o.label}`} onPress={() => void choose($, c => ({ ...c, focus: o.value })).then(() => update($, workPicker, p => ({ ...p, open: null })))} />
           ))}
-          {definitions === undefined && <Text dimColor size="caption">the focus definitions are not read yet</Text>}
-          {(definitions ?? []).filter(d => d.name === null).map(d => <Text key={`bad-${d.id}`} dimColor size="caption">{`${d.id} unavailable: ${d.reason}`}</Text>)}
+          {offered === undefined && <Text dimColor size="caption">not read yet</Text>}
+          {offered?.length === 0 && <Text dimColor size="caption">no lead reports an initiative or project</Text>}
         </Box>
       ) : null
 
@@ -492,10 +492,9 @@ export function registerWork(on: On, _options: Options): void {
           </Box>
           <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void Promise.all([pollWork($, true), pollEvents($), pollTickets($)])} />
         </Box>
-        {(options !== null || picker.error !== null || filterNotes.length > 0 || hasNone || reporting) && (
+        {(options !== null || picker.error !== null || filterNotes.length > 0 || reporting) && (
           <Box flexDirection="column">
             {options}
-            {hasNone && noneLines}
             {picker.error !== null && <Text color="warning" size="caption">{picker.error}</Text>}
             {filterNotes.map((t, i) => <Text key={`filter-${i}`} color="warning" size="caption">{t}</Text>)}
             {reporting && <Text dimColor size="caption">{`${plural(view.leads.length, 'lead')}${notRead}`}</Text>}

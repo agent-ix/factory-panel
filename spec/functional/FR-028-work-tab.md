@@ -59,13 +59,11 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - Pressing `Focus` SHALL list the choices of [FR-020](./FR-020-named-focus-resolution.md), the chosen one marked, and pressing one SHALL choose it and close the list.
 - A choice SHALL be saved in the user's choice file as `/factory teams` and `/factory focus` save it, and a choice that cannot be saved SHALL be said.
 - The leads listed SHALL be those of the selected teams, whatever the focus.
-- Under a named focus a lead's tickets SHALL be only those of the focus. A ticket is of the focus where the definition names it, where a focus status answer over the definition's members lists it, or where `ix-board issues` places it in a project or milestone of the definition.
-- A ticket whose place is not known (its project not said, the ticket not read or unknown to Linear, or a member of the focus without a known id) SHALL NOT be dropped: it SHALL be listed under its lead behind `▸ N tickets with unknown project`. A ticket SHALL be left out of a focus only where every project of the focus is known.
-- Where a focus definition has exclusions, the view SHALL say they are not applied.
+- Under a chosen focus a lead's tickets SHALL be only those of the focus. A ticket is of the focus where a focus status answer over it lists the ticket, or where `ix-board issues` places it in the chosen project or in a project of the chosen initiative.
+- A ticket whose place is not known (its project not said, the ticket not read or unknown to Linear, or an initiative whose projects are not all known) SHALL NOT be dropped: it SHALL be listed under its lead behind `▸ N tickets with unknown project`. A ticket SHALL be left out of a focus only where every project of the focus is known.
 - A lead that was read and has no ticket in the focus and none of unknown place SHALL be folded into one line, `▸ N leads with nothing in this focus`, which shows and hides their addresses and how many tickets each has outside it. A lead whose report could not be read SHALL stay listed as without a focus.
-- Where the focus selects nothing, the view SHALL say `this focus selects nothing`.
+- Where the chosen focus is not known, the view SHALL show every ticket and say so.
 - Until the chosen focus is read, the view SHALL show every ticket and say `the focus is not read yet: every ticket is shown`.
-- Where the chosen focus cannot be applied ([FR-020](./FR-020-named-focus-resolution.md)), the view SHALL show every ticket and say why.
 
 ### Recent
 
@@ -73,7 +71,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - It SHALL list merges only until the `a` key shows every kind, and the `a` key SHALL toggle back. Every kind is the merged, closed and opened entries of the focus status's `activity[]`, and the `review` and `spec` events of the relay with the gate events.
 - Under every kind, 5 of the 10 rows SHALL be held for the newest role events, however much newer `activity[]` there is, and the other 5 for the newest `activity[]` entries. Rows one of the two does not fill SHALL go to the other. The rows chosen SHALL be listed together, newest first.
 - A row of an `activity[]` entry SHALL show its mark (`✓` merged, `●` closed, `○` opened), its age, the repository and PR number, the ticket id and the title.
-- Under a named focus, the `activity[]` entries SHALL be those of the focus statuses over its members, and only the role events of the selected teams on tickets of the focus SHALL be listed. Under every kind, the view SHALL say how many events of tickets with unknown project are not listed. A merge is not attributed to a team.
+- Under a chosen focus, the `activity[]` entries SHALL be those of the focus statuses over the focus, and only the role events of the selected teams on tickets of the focus SHALL be listed. Under every kind, the view SHALL say how many events of tickets with unknown project are not listed. A merge is not attributed to a team.
 - Where the focus reports name no tracker work, so that no focus status is read, Recent SHALL say that there is none to read merges from, and where the read of every focus status failed, that it could not be read.
 - Where the focus status has no `activity` key (an ix-board older than 0.9.0) it SHALL say `needs ix-board ≥0.9.0`, and the tickets SHALL show without a PR badge. Under every kind the relay's events SHALL be listed with that line, and with the line that says the focus status is awaited before one is read.
 
@@ -90,7 +88,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 ### Data and drawing
 
 - The states and PRs of the tickets and the activity SHALL come from the gated `ix-board --json focus status` answers the Focus view reads, and the Work view SHALL read an answer wrapped in a `result` key as the object inside.
-- The reported tickets that no focus status names, and under a named focus every reported ticket, for the project that places it, SHALL be read with one `ix-board --json issues <ids>`, once the leads and the focus statuses have been read, of at most 100 identifiers of the form `KEY-123`, those of tickets in hand first, within the limit of ix-board processes of [NFR-004](../non-functional/NFR-004-selection-never-blocks.md). `focus status --issue` is not used for it: it gives states and PRs of started and lately closed tickets only, and fails as a whole for one unknown identifier.
+- The reported tickets that no focus status names, and under a chosen focus every reported ticket, for the project that places it, SHALL be read with one `ix-board --json issues <ids>`, once the leads and the focus statuses have been read, of at most 100 identifiers of the form `KEY-123`, those of tickets in hand first, within the limit of ix-board processes of [NFR-004](../non-functional/NFR-004-selection-never-blocks.md). `focus status --issue` is not used for it: it gives states and PRs of started and lately closed tickets only, and fails as a whole for one unknown identifier.
 - That answer SHALL be shared by the sessions through the gate file of [FR-025](./FR-025-per-project-last-good.md), by the teams read and whether a focus is named. It SHALL be read again after 30 minutes, or after 5 minutes where a reported ticket was not asked for.
 - Where the attachments of a ticket are cut short, nothing SHALL be said of its PRs.
 - The Work view SHALL make no other Linear or ix-board call.
@@ -100,7 +98,7 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 - While the view is on screen ([FR-027](./FR-027-fetch-only-on-screen.md)) the leads and their work reports SHALL be read once a minute and the events every 30 seconds, one read of each at a time, so that a transition is listed within 60 seconds of its report. The events read SHALL NOT wait on the leads' reports. The `r` key SHALL read both at once.
 - Failed relay reads, one for each lead not read, and failed ix-board reads SHALL be one warning icon with their count on the footer, as on the Focus view ([FR-024](./FR-024-warning-icon-in-footer.md)).
 - Colour SHALL mark state only: the status and activity marks are coloured, ticket text is not. A row SHALL fit 60 columns, with ages like `4m` and no blank row inside the lead block.
-- The widget SHALL say `N leads · M tickets · K merged 24h`, with M and K as the work cell counts them ([FR-009](./FR-009-band-cells.md)): `≥M` where fewer leads give a current report than are listed, `+L old` for the L tickets only old reports name, and `≥K` where merges may be missing. It SHALL add the leads `not read` and `old`, and the age of an old ix-board answer. Under a named focus N SHALL leave out the leads with nothing in it, M SHALL count its tickets, `≥M · +U unknown project` where U in hand have an unknown project, and a focus not read yet SHALL be said.
+- The widget SHALL say `N leads · M tickets · K merged 24h`, with M and K as the work cell counts them ([FR-009](./FR-009-band-cells.md)): `≥M` where fewer leads give a current report than are listed, `+L old` for the L tickets only old reports name, and `≥K` where merges may be missing. It SHALL add the leads `not read` and `old`, and the age of an old ix-board answer. Under a chosen focus N SHALL leave out the leads with nothing in it, M SHALL count its tickets, `≥M · +U unknown project` where U in hand have an unknown project, and a focus not read yet SHALL be said.
 - Before the first read of the leads has ended, the widget SHALL say they are being read, and where that read failed and no lead is drawn, that they could not be read. It SHALL then give no count.
 
 ## Acceptance Criteria
@@ -137,13 +135,13 @@ The mod SHALL draw a Work view that shows which code leads are working, what eac
 | FR-028-AC-28 | A ticket Linear has no record of reads `not in Linear`, also where ix-board exits 3 with its answer and no message, and one whose read failed `state not read`. | Test |
 | FR-028-AC-29 | With no focus naming tracker work, Recent says there is no focus status to read merges from, and neither that it is waiting nor that nothing merged. | Test |
 | FR-028-AC-30 | Of more than 100 tickets no focus names, those in hand are asked for first, and one left out reads `state not read`. | Test |
-| FR-028-AC-31 | Under a named focus a lead lists only the tickets the focus lists or whose project is of it, and with focus `all` every ticket; a lead of a team that is not selected is not listed for holding a ticket of the focus. | Test |
+| FR-028-AC-31 | Under a chosen focus a lead lists only the tickets the focus lists or whose project is of it, and with focus `all` every ticket; a lead of a team that is not selected is not listed for holding a ticket of the focus. | Test |
 | FR-028-AC-32 | A ticket whose place is unknown is listed behind `▸ N tickets with unknown project`, and a ticket is left out only where every member of the focus is known. | Test |
 | FR-028-AC-33 | A lead with nothing in the focus is counted in one line that shows and hides its address. | Test |
-| FR-028-AC-34 | Under a named focus Recent lists only the role events of its tickets and says how many of unknown project it leaves out, and the widget counts its leads and tickets with those of unknown project apart. | Test |
-| FR-028-AC-35 | A lead whose report cannot be read stays listed under a named focus. | Test |
-| FR-028-AC-36 | A focus that selects nothing is said to, and every lead that was read is folded. | Test |
-| FR-028-AC-37 | Where the chosen focus cannot be read, every ticket is listed and the view says why. | Test |
+| FR-028-AC-34 | Under a chosen focus Recent lists only the role events of its tickets and says how many of unknown project it leaves out, and the widget counts its leads and tickets with those of unknown project apart. | Test |
+| FR-028-AC-35 | A lead whose report cannot be read stays listed under a chosen focus. | Test |
+| FR-028-AC-36 | A stored focus nothing knows is said, and every ticket is listed. | Test |
+| FR-028-AC-37 | Until the chosen focus is read, nothing is filtered out and the view says the focus is not read yet. | Test |
 | FR-028-AC-38 | The header's choices list the teams and the focus names, save what is pressed and show it. | Test |
 
 ## Dependencies

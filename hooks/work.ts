@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { FocusMeta, FocusView, WorkActivity, WorkAgent, WorkBoard, WorkFeed, WorkIssue, WorkLead, WorkPr, WorkRoleEvent } from '../types'
-import { NOTE_EMPTY, NOTE_EXCLUSIONS, isFocusId } from './namedfocus'
+import { parseRef } from './focuschoice'
 import { isUuid } from './progress'
 
 // The model of the Work tab: what each lead has in hand, from the relay's work reports, joined with what
@@ -222,7 +222,7 @@ export type Place = 'in' | 'out' | 'unknown'
 export type FocusFilter =
   | { kind: 'all' }
   | { kind: 'unread'; why: string }
-  | { kind: 'named'; place: (id: string) => Place; notes: string[] }
+  | { kind: 'named'; place: (id: string) => Place }
 
 export const ALL_TICKETS: FocusFilter = { kind: 'all' }
 
@@ -230,46 +230,35 @@ const placeOf = (filter: FocusFilter, id: string): Place => (filter.kind === 'na
 
 const lower = (s: string): string => s.toLowerCase()
 
-/** The place the definition gives a ticket no answer over its members lists, by the ticket's project and milestone. */
+/** The place the focus gives a ticket no answer over it lists, by the ticket's project. */
 function placeIn(f: FocusView, issue: WorkIssue | undefined): Place {
-  if (f.selectors.every(s => s.kind === 'ticket')) return 'out'
   if (issue === undefined || issue.project === undefined) return 'unknown'
-  // A ticket in no project is in no project, initiative or milestone.
+  // A ticket in no project is in no project or initiative.
   if (issue.project === null) return 'out'
   const rows = [...f.initiatives.flatMap(i => i.projects), ...f.loose]
-  const of = (kind: FocusView['selectors'][number]['kind']) => f.selectors.filter(s => s.kind === kind)
-  const ids = new Set([...rows.flatMap(p => p.id ?? []), ...of('project').flatMap(s => (isUuid(s.ref) ? s.ref : []))].map(lower))
+  const own = f.selectors.filter(s => s.kind === 'project').map(s => s.ref)
+  const ids = new Set([...rows.flatMap(p => p.id ?? []), ...own].map(lower))
   if (ids.has(lower(issue.project))) return 'in'
-  const milestones = of('milestone')
-  if (milestones.some(s => issue.milestone != null && lower(s.ref) === lower(issue.milestone))) return 'in'
   // Out only where every project of the focus is known.
-  const isWhole =
-    f.initiatives.length >= of('initiative').length &&
-    f.initiatives.every(i => i.failed === null && i.projects.every(p => p.id !== null)) &&
-    of('project').every(s => isUuid(s.ref) || rows.some(p => p.id !== null && (p.ref === s.ref || p.name === s.ref || p.id === s.ref))) &&
-    milestones.every(s => isUuid(s.ref) && issue.milestone !== undefined)
+  const isWhole = own.length > 0 || (f.initiatives.length > 0 && f.initiatives.every(i => i.failed === null && i.projects.every(p => p.id !== null)))
   return isWhole ? 'out' : 'unknown'
 }
 
 /**
  * The filter of a focus choice, from the focuses held. `key` is what a read for this choice and these teams is asked
- * for. A ticket is of the definition where it names it, an answer of ix-board over its members lists it, or its project
- * or milestone is one of them; exclusions are not applied. Where relay has no definition to apply, the filter is none.
+ * for. A ticket is of the focus where an answer of ix-board over it lists the ticket, or the ticket's project is it or
+ * one of its initiative's. A choice that is no focus filters nothing.
  */
 export function focusFilter(choice: string, key: string, meta: Partial<FocusMeta>, focuses: readonly FocusView[], boards: readonly WorkBoard[]): FocusFilter {
-  if (!isFocusId(choice)) return ALL_TICKETS
+  if (parseRef(choice) === null) return ALL_TICKETS
   const unread: FocusFilter = { kind: 'unread', why: 'the focus is not read yet: every ticket is shown' }
   if (meta.heldFor !== key || meta.chosen === undefined) return unread
-  // Unknown, unavailable or never read: said by the focus's notice, and everything is shown.
-  if (meta.chosen.state === 'unknown' || meta.chosen.state === 'unavailable' || meta.chosen.state === 'unread') return ALL_TICKETS
-  const f = focuses.find(v => v.via === 'definition' && v.address === choice)
+  if (!meta.chosen.known) return ALL_TICKETS
+  const f = focuses.find(v => v.via === 'chosen' && v.address === choice)
   if (f === undefined) return unread
   const listed = new Set(boards.filter(b => b.ticketsOnly !== true).flatMap(b => b.issues.map(i => lower(i.identifier))))
-  const named = new Set(f.selectors.filter(s => s.kind === 'ticket').map(s => lower(s.ref)))
   const singles = new Map(boards.filter(b => b.ticketsOnly === true).flatMap(b => b.issues.map(i => [i.identifier, i] as const)))
-  const place = (id: string): Place => (named.has(lower(id)) || listed.has(lower(id)) ? 'in' : placeIn(f, singles.get(id)))
-  const notes = [...(f.notes.includes(NOTE_EMPTY) ? [NOTE_EMPTY] : []), ...(f.notes.includes(NOTE_EXCLUSIONS) ? ['the focus’s exclusions are not applied'] : [])]
-  return { kind: 'named', place, notes }
+  return { kind: 'named', place: id => (listed.has(lower(id)) ? 'in' : placeIn(f, singles.get(id))) }
 }
 
 /** The leads with only the tickets of the focus. */

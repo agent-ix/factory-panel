@@ -7,7 +7,7 @@ import { runFactory } from '../hooks/router'
 import { ticketLine, toggledTeams } from '../hooks/workview'
 import type { FocusView } from '../types'
 import { VIEW_IDS } from '../hooks/views'
-import { CLASSIC, FP, defRow, drawBand, fake$, listJson, options, out, report, showJson, startSession, world, focId } from './world'
+import { CLASSIC, FP, drawBand, fake$, options, out, report, startSession, world, pid } from './world'
 import type { World } from './world'
 import { ix } from './board-kit'
 
@@ -810,34 +810,37 @@ test('where no focus names tracker work, Recent says there is no focus status to
 const OTHER = 'hub:ENG:code'
 const CHOICES = `${FP}/choices/draco_QSL_code.json`
 const inProject = (identifier: string, project: string | null) => ({ ...single(identifier, 'Specced', []), project_id: project })
-const saidTickets: Record<string, string | null> = { 'QSL-7': 'p1', 'QSL-8': 'p9', 'QSL-10': null }
+const saidTickets: Record<string, string | null> = { 'QSL-7': pid(1), 'QSL-8': pid(9), 'QSL-10': null }
 
 /**
  * A world whose lead holds a ticket the focus status lists, one placed in the focus by its project, one of another
  * project, one in none and one Linear has no record of; the idle lead holds only another project's; an ENG lead holds a
- * ticket of the focus. The focus `Ledger` is a definition over the project Alpha.
+ * ticket of the focus. The focus is the Linear project `Ledger`; the idle lead reports `Payments`, and the ENG lead
+ * `Elsewhere`.
  */
-const LEDGER = focId('1')
-const PAYMENTS = focId('2')
-const ELSEWHERE = focId('3')
+const P_LEDGER = pid(1)
+const P_PAYMENTS = pid(2)
+const P_ELSEWHERE = pid(3)
+const LEDGER = `project:${P_LEDGER}`
 
 async function filtering($: $t, on: Parameters<TestBody>[1], choices: Record<string, unknown> = { focus: LEDGER }, arrange: (w: World) => void = () => undefined): Promise<World> {
   const w = world(on, true)
-  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: ['QSL-1240', 'QSL-7', 'QSL-8', 'QSL-9', 'QSL-10'].map((id, i) => agent(`a${i}`, id, 'coder', 'running', 1 + i)) })
-  w.leads.set(IDLE, { ...report(IDLE, 'other work', ['running']), agents: [agent('b', 'QSL-8', 'coder', 'running', 3)] })
-  w.leads.set(OTHER, { ...report(OTHER, 'payments', ['running']), agents: [agent('c', 'QSL-1240', 'coder', 'running', 2)] })
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: [P_LEDGER] }), agents: ['QSL-1240', 'QSL-7', 'QSL-8', 'QSL-9', 'QSL-10'].map((id, i) => agent(`a${i}`, id, 'coder', 'running', 1 + i)) })
+  w.leads.set(IDLE, { ...report(IDLE, 'other work', ['running'], { projects: [P_PAYMENTS] }), agents: [agent('b', 'QSL-8', 'coder', 'running', 3)] })
+  w.leads.set(OTHER, { ...report(OTHER, 'payments', ['running'], { projects: [P_ELSEWHERE] }), agents: [agent('c', 'QSL-1240', 'coder', 'running', 2)] })
   const prior = w.stub.value
   w.stub.value = (argv, init) => {
     const line = argv.join(' ')
     if (line.startsWith('agent-msg work events')) return out(events([LEAD, 'QSL-7', 'reviewer', 'running', 4], [LEAD, 'QSL-8', 'reviewer', 'running', 3], [LEAD, 'QSL-9', 'reviewer', 'running', 2]))
-    if (line === 'agent-msg focuses list --json') return out(listJson(defRow(LEDGER, 'Ledger', 'QSL'), defRow(PAYMENTS, 'Payments', 'QSL'), defRow(ELSEWHERE, 'Elsewhere', 'ENG')))
-    if (line === `agent-msg focuses show ${LEDGER} --json`) return out(showJson('Ledger', 'QSL', { projects: ['Alpha'] }, {}, { id: LEDGER }))
-    if (line === `agent-msg focuses show ${PAYMENTS} --json`) return out(showJson('Payments', 'QSL', {}, {}, { id: PAYMENTS, empty: true }))
     return prior?.(argv, init)
   }
+  const ledger = () => out(rich().replaceAll('"p1"', JSON.stringify(P_LEDGER)).replaceAll('"Alpha"', '"Ledger"'))
+  const empty = (id: string, name: string) => () => out(JSON.stringify({ ready_queue: [], blocker_layers: [], projects: [{ id, identifier: id, name, membership: 'full_project', open_by_state: [], progress: { done: 0, total: 0 }, milestones: [], in_progress: [] }] }))
+  const chunks: Record<string, string> = { [P_PAYMENTS]: 'Payments', [P_ELSEWHERE]: 'Elsewhere' }
   ix(w, {
-    projects: { Alpha: () => out(rich()) },
-    issues: ids => out(JSON.stringify({ complete: false, missing: ids.filter(id => id === 'QSL-9'), issues: ids.filter(id => id !== 'QSL-9').map(id => inProject(id, id in saidTickets ? saidTickets[id]! : 'p1')) })),
+    other: args => (args[0] === 'project-chunk' && args[1]! in chunks ? out(JSON.stringify({ name: chunks[args[1]!] })) : out('', 1, 'not stubbed')),
+    projects: { [P_LEDGER]: ledger, [P_PAYMENTS]: empty(P_PAYMENTS, 'Payments'), [P_ELSEWHERE]: empty(P_ELSEWHERE, 'Elsewhere') },
+    issues: ids => out(JSON.stringify({ complete: false, missing: ids.filter(id => id === 'QSL-9'), issues: ids.filter(id => id !== 'QSL-9').map(id => inProject(id, id in saidTickets ? saidTickets[id]! : P_LEDGER)) })),
   })
   w.files.set(CHOICES, JSON.stringify(choices))
   arrange(w)
@@ -913,24 +916,14 @@ test('a lead whose report cannot be read stays listed under a focus', async ($, 
   await d.unmount()
 })
 
-test('a focus that selects nothing says so and folds every lead that was read', async ($, on) => {
+test('a stored focus nothing knows is said and every ticket is listed', async ($, on) => {
   trace("FR-028-AC-36")
-  await filtering($, on, { focus: PAYMENTS })
+  await filtering($, on, { focus: `project:${pid(77)}` })
   const d = await draw($)
-  expect(d.lines).toContain('this focus selects nothing')
-  expect(button(d, 'outside')).toBe('▸ 2 leads with nothing in this focus')
-  await d.unmount()
-})
-
-test('where the focus cannot be read every ticket is shown and the tab says why', async ($, on) => {
-  trace("FR-028-AC-37")
-  await filtering($, on, { focus: LEDGER }, w => {
-    const prior = w.stub.value
-    w.stub.value = (argv, init) => (argv.join(' ').startsWith('agent-msg focuses') ? out('', 1, 'redis down') : prior?.(argv, init))
-  })
-  const d = await draw($)
-  expect(d.lines).toContain(`focus ${LEDGER} could not be read (redis down): showing all`)
+  expect(d.lines).toContain('focus project 00000000 is not known: showing all')
+  expect(button(d, 'focus-choice')).toBe('Focus: all ▾')
   expect(rowsFor(d)).toContain('QSL-8')
+  expect(button(d, 'outside')).toBeUndefined()
   await d.unmount()
 })
 
@@ -945,8 +938,8 @@ test('the header chooses teams and focus, and each choice is saved and leaves th
   expect(saved()).toEqual({ teams: ['QSL', 'ENG'] })
   expect(button(d, 'teams-choice')).toBe('Teams: QSL, ENG ▾')
   await d.press('focus-choice')
-  // Every definition relay lists, by name.
-  expect(d.buttons.filter(b => b.key.startsWith('focus-option-')).map(b => b.label)).toEqual(['✓ all', '  Ledger', '  Payments', '  Elsewhere'])
+  // What the leads of the selected teams report, by name.
+  expect(d.buttons.filter(b => b.key.startsWith('focus-option-')).map(b => b.label)).toEqual(['✓ all', '  Elsewhere', '  Ledger', '  Payments'])
   await d.press(`focus-option-${LEDGER}`)
   expect(saved()).toEqual({ teams: ['QSL', 'ENG'], focus: LEDGER })
   expect(button(d, 'focus-choice')).toBe('Focus: Ledger ▾')
@@ -967,30 +960,24 @@ test('pressing a team adds or removes it, and none left is every team', () => {
   expect(toggledTeams(['QSL', 'ENG'], 'all')).toEqual(['all'])
 })
 
-test('a ticket is out of a focus only where all its members are known', () => {
-  trace("FR-028-AC-32")
-  const PID = '00000000-0000-4000-8000-000000000001'
-  const MID = '00000000-0000-4000-8000-000000000002'
-  const view = (selectors: FocusView['selectors'], over: Partial<FocusView> = {}): FocusView => ({ address: LEDGER, machine: '', kind: '', summary: '', status: 'unknown', scope: { initiatives: 0, projects: 0, tickets: 0 }, focusReportedAt: null, fetchedAt: null, initiatives: [], loose: [], header: null, warnings: [], title: 'F', via: 'definition', notes: [], selectors, ...over })
-  const ticket = (identifier: string, project: string | null | undefined, milestone: string | null = null) => ({ identifier, title: 't', state: '', prs: null, ...(project === undefined ? {} : { project, milestone }) })
-  const singles = { issues: [ticket('A-1', PID), ticket('A-2', 'elsewhere'), ticket('A-3', null), ticket('A-4', undefined), ticket('A-5', 'elsewhere', MID)], activity: null, at: 1, ticketsOnly: true as const }
+test('a ticket is out of a focus only where all its projects are known, and an unread focus filters nothing', () => {
+  trace("FR-028-AC-32", "FR-028-AC-37")
+  const PID = pid(1)
+  const view = (selectors: FocusView['selectors'], over: Partial<FocusView> = {}): FocusView => ({ address: LEDGER, machine: '', kind: '', summary: '', status: 'unknown', scope: { initiatives: 0, projects: 0, tickets: 0 }, focusReportedAt: null, fetchedAt: null, initiatives: [], loose: [], header: null, warnings: [], title: 'F', via: 'chosen', notes: [], selectors, ...over })
+  const ticket = (identifier: string, project: string | null | undefined) => ({ identifier, title: 't', state: '', prs: null, ...(project === undefined ? {} : { project, milestone: null }) })
+  const singles = { issues: [ticket('A-1', PID), ticket('A-2', pid(5)), ticket('A-3', null), ticket('A-4', undefined)], activity: null, at: 1, ticketsOnly: true as const }
+  const chosen = { value: LEDGER, name: 'F', known: true }
   const places = (f: FocusView) => {
-    const filter = focusFilter(LEDGER, 'k', { heldFor: 'k', chosen: { id: LEDGER, name: 'F', state: 'active' } }, [f], [singles])
+    const filter = focusFilter(LEDGER, 'k', { heldFor: 'k', chosen }, [f], [singles])
     if (filter.kind !== 'named') throw new Error(filter.kind)
-    return ['A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6'].map(filter.place)
+    return ['A-1', 'A-2', 'A-3', 'A-4', 'A-5'].map(filter.place)
   }
-  expect(places(view([{ kind: 'project', ref: PID }]))).toEqual(['in', 'out', 'out', 'unknown', 'out', 'unknown'])
-  // A project named but never answered has no id: what is not in the others may be in it.
-  expect(places(view([{ kind: 'project', ref: PID }, { kind: 'project', ref: 'Beta' }]))).toEqual(['in', 'unknown', 'out', 'unknown', 'unknown', 'unknown'])
-  // So for an initiative not expanded.
-  expect(places(view([{ kind: 'initiative', ref: 'I' }]))).toEqual(['unknown', 'unknown', 'out', 'unknown', 'unknown', 'unknown'])
-  expect(places(view([{ kind: 'milestone', ref: MID }]))).toEqual(['out', 'out', 'out', 'unknown', 'in', 'unknown'])
-  expect(places(view([{ kind: 'ticket', ref: 'a-6' }]))).toEqual(['out', 'out', 'out', 'out', 'out', 'in'])
-  // A definition that selects nothing holds nothing.
-  expect(places(view([]))).toEqual(['out', 'out', 'out', 'out', 'out', 'out'])
-  expect(focusFilter(LEDGER, 'k', { heldFor: 'other' }, [view([])], []).kind).toBe('unread')
-  // Where relay has no definition to apply, nothing is filtered.
-  expect(focusFilter(LEDGER, 'k', { heldFor: 'k', chosen: { id: LEDGER, name: null, state: 'unknown' } }, [], []).kind).toBe('all')
+  expect(places(view([{ kind: 'project', ref: PID }]))).toEqual(['in', 'out', 'out', 'unknown', 'unknown'])
+  // An initiative not expanded: what is in no project is out, and the rest is not known.
+  expect(places(view([{ kind: 'initiative', ref: PID }]))).toEqual(['unknown', 'unknown', 'out', 'unknown', 'unknown'])
+  expect(focusFilter(LEDGER, 'k', { heldFor: 'other', chosen }, [view([])], [])).toEqual({ kind: 'unread', why: 'the focus is not read yet: every ticket is shown' })
+  // A choice that is no focus filters nothing.
+  expect(focusFilter(LEDGER, 'k', { heldFor: 'k', chosen: { ...chosen, known: false } }, [], []).kind).toBe('all')
   expect(focusFilter('all', 'k', {}, [], []).kind).toBe('all')
 })
 

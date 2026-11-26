@@ -13,7 +13,7 @@ The views behind the cells are:
 | View | Shows |
 | --- | --- |
 | Factory | Each machine's up or down, CPU, memory and temperature, agents by status, 24-hour spend, and the herdr, ix-relay and ix-board state |
-| Focus | One card per named focus: its initiatives with their projects nested under them, progress, Ready and Blocked, and one warning icon |
+| Focus | One card per lead focus, or the one chosen: its initiatives with their projects nested under them, progress, Ready and Blocked, and one warning icon |
 | Work | Each code lead with its tickets, those its agents report and those its focus names, one row each of id, title, `[pr]`, `[review×N]`, `[spec]` and `[gate]` badges and the age of the last report (`FOO-123 title  [pr][review]   12h`); a ticket Linear has no record of, or that could not be read, says so in place of its title. A lead with no ticket shows its focus, finished tickets (every agent done or canceled, not in the focus) are folded behind `▸ N finished`, a report over 2 hours old is marked old, and the leads that have reported no work (`agent-msg work`) are counted in one line that opens to their addresses. The title and PRs of a reported ticket that no focus status names come from one `ix-board --json issues` read. Below them the recent merges (`a` shows every kind: closed and opened entries, and the reviews, specs and gates that started or finished, read from the relay every 30 seconds; half of the ten rows are held for these, so busy ticket activity does not hide them). Under a focus, the rows are the tickets it names, lists or holds by project; a lead with none is folded into `▸ N leads with nothing in this focus`, tickets whose project is unknown are kept behind `▸ N tickets with unknown project`, a lead that cannot be read stays listed, and Recent, the widget and the band cell follow the same filter. A lead that cannot be read shows `▲` with `not read`, or `old` with the age of the report drawn. Needs ix-board 0.9.0 for PRs and merges; without it the tickets show without a PR badge |
 | Escalations | What the leads escalated, open first, with context, options and recommendation |
 | Message (`/factory relay`) | A message to every lead or one lead, and the recent broadcasts |
@@ -38,12 +38,12 @@ What is shown is decided one feature at a time, from the first of these that sel
 2. A declaration an agent wrote for this session, usually because a skill told it to.
 3. The automatic view from the relay.
 
-The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `work`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus (`all` or a focus definition ID) and the teams list.
+The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focus`, `queue`, `lead`, `work`, `attention`, `relay`, `team`), the hosts scope (`all` or `local`), the focus (`all` or an initiative or project the leads report) and the teams list.
 
 | Command | Effect |
 | --- | --- |
 | `/factory use queue,lanes` | Show these cells, in this order |
-| `/factory focus Release Train` | Show only the tickets of that focus, within your teams; `all` (the default) clears it. The name is resolved as described under Name resolution below |
+| `/factory focus Release Train` | Show only the tickets of that initiative or project, within your teams; `all` (the default) clears it. Takes the Linear name or ID, see Focus below |
 | `/factory teams QSL,ENG` | The teams whose leads and lanes show, `all` for every team (the default is your own). A team that matches nothing is kept and the band says so |
 | `/factory hosts all` | `all` shows every machine (and puts the host list first), `local` only this one |
 | `/factory show` | Prints each feature, its value and whether it came from you, a declaration or the default, with the session key |
@@ -55,13 +55,11 @@ Your choices are kept in `~/.ix/factory-panel/choices/<key>.json`. The key is th
 
 A skill selects cells for its agent by telling it to write `~/.ix/factory-panel/features/<key>.json` for its own key. The file is a JSON object with the optional keys `modules`, `hosts`, `focus` and `teams`. Writing it replaces everything an earlier write selected, and the mod re-reads it on every refresh. `/factory help` prints a snippet to paste into a skill. A file that is not a JSON object, or a value of the wrong kind, is ignored with one note naming the file and the reason. The mod never writes a declaration.
 
-The first line of the Focus pane, and a line of `/factory show`, says why these focuses are shown: `your choice: <name>`, `could not tell who this session is, showing every focus`, `focuses of every team`, `focuses of <teams>` or `no focus reported by <teams>`. A chosen focus that is archived, unavailable, unread or unknown to relay adds a line saying so. `/factory show` and a choice command read the focuses themselves when no view has, through the same gates, and wait up to 5 seconds. Until a read has ended they say `focus data: not read yet` and claim neither that no focus is reported nor that none matches; afterwards they say how old the data is.
+The first line of the Focus pane, and a line of `/factory show`, says why these focuses are shown: `your choice: <name>`, `could not tell who this session is, showing every focus`, `focuses of every team`, `focuses of <teams>` or `no focus reported by <teams>`. A chosen focus that is not known adds a line saying so. `/factory show` and a choice command read the focuses themselves when no view has, through the same gates, and wait up to 5 seconds. Until a read has ended they say `focus data: not read yet` and claim neither that no focus is reported nor that none matches; afterwards they say how old the data is.
 
-### Focus definitions
+### Focus
 
-A focus is `all` or one named focus definition of ix-relay (`agent-msg focuses`). `/factory focus <name or ID>` asks relay for the exact name or ID and stores the ID; the views show the name. An unknown name, or one that definitions of two teams share, is refused with the definitions listed, and your choice stays as it was. Nothing else is matched: not lead addresses, focus summaries or parts of names. The mod only runs `agent-msg focuses list` and `show`. Where relay has no definition, the Work tab says so; one is created with `agent-msg focuses create --file <file.json>`.
-
-The definition is read again on every refresh. Progress is computed over its `include` members. Exclusions are not applied, and the views say so. An archived definition stays chosen and is labeled. A stored value that is not a definition ID, an ID relay does not know and an unavailable definition each show everything of your teams, with a line saying why. A failed or slow (5 seconds) `agent-msg focuses` is shown as an error; what was read before is kept and labeled as last read.
+A focus is `all`, or one Linear initiative or project that the leads of your teams report in their work scope (`agent-msg work scope`). The Work tab lists exactly those, by their Linear names. `/factory focus` takes the exact name or the Linear ID; anything else is refused with the choices listed. The choice is kept as `initiative:<ID>` or `project:<ID>`; a stored value of another form, or an ID nothing knows, shows everything and says so. An initiative's projects and their progress come from ix-board.
 
 ### When a source fails
 

@@ -22,7 +22,7 @@ export type Cell = { id: ModuleId; pane: string; parts: Part[]; alert?: string }
 /** What the selection narrows the band to. `teams` empty means every team. */
 export type Scope = {
   hosts: 'all' | 'local'
-  /** `all` or a focus definition ID. */
+  /** `all`, `initiative:<Linear ID>` or `project:<Linear ID>`. */
   focus: string
   teams: readonly string[]
   /** The session's own team; null when the relay did not say. */
@@ -46,7 +46,7 @@ export type Snapshot = {
   teamViews: readonly TeamView[]
   /** True once the focus reports and once ix-board's agents have been read: only then can a team be said to match nothing. */
   focusesLoaded: boolean
-  /** what is wrong with the chosen focus definition */
+  /** what is wrong with the chosen focus */
   focusNotice?: string | null
   boardLoaded: boolean
   prometheusError: string | null
@@ -83,12 +83,12 @@ export const teamOf = (address: string): string => address.split(':')[1] ?? ''
 /** The teams whose leads are read and listed; null is every team. */
 export const focusTeams = (scope: Scope): string[] | null => (scope.teams.length > 0 ? [...scope.teams] : null)
 
-/** The focus entries this scope shows: the chosen definition's where it is held, else the leads' of the selected teams. */
+/** The focus entries this scope shows: the chosen focus's where it is held, else the leads' of the selected teams. */
 export const scopeFocuses = (all: readonly FocusView[], scope: Scope): FocusView[] => {
-  const chosen = all.filter(f => f.via === 'definition' && f.address === scope.focus)
+  const chosen = all.filter(f => f.via === 'chosen' && f.address === scope.focus)
   if (chosen.length > 0) return chosen
   const teams = focusTeams(scope)
-  const shown = all.filter(f => f.via !== 'definition' && (teams === null || teams.some(t => same(t, teamOf(f.address)))))
+  const shown = all.filter(f => f.via !== 'chosen' && (teams === null || teams.some(t => same(t, teamOf(f.address)))))
   // Together under each team, in the order the teams are listed.
   if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
   return shown
@@ -99,7 +99,7 @@ export const NO_FOCUS_BY = 'no focus reported by'
 
 /** The one line that says why these focuses are shown; null while the session is still being identified. */
 export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
-  const chosen = focuses.find(f => f.via === 'definition' && f.address === scope.focus)
+  const chosen = focuses.find(f => f.via === 'chosen' && f.address === scope.focus)
   if (chosen !== undefined) return `your choice: ${chosen.title ?? chosen.address}`
   const teams = focusTeams(scope)
   if (teams === null) {
@@ -210,7 +210,7 @@ const MARKS: Record<string, { mark: string; tone: Tone }> = {
 
 const lead = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
-  if (f === undefined || f.via === 'definition') return null
+  if (f === undefined || f.via === 'chosen') return null
   const agent = s.board.agents.find(a => a.agent === f.address)
   const status = agent?.status ?? f.status
   const { mark, tone } = MARKS[status] ?? { mark: '○', tone: 'inactive' as Tone }

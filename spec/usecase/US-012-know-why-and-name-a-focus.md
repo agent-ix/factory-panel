@@ -13,12 +13,12 @@ relationships:
 ## Story
 
 **As a** user of the mod
-**I want** the Focus pane to say why these focuses are shown, and `/factory focus <name>` to find a named focus
+**I want** the Focus pane to say why these focuses are shown, and `/factory focus <name>` to choose an initiative or project the leads report
 **So that** I am never unsure whether I am looking at my own focus, a team's, or everything, and I can follow a focus that was defined once and named.
 
 ## Context
 
-The scope of the Focus pane comes from four possible causes: the user's choice, the session's own focus, the team list, or a fallback when the relay says too little. Which one applied was not visible. Separately, ix-relay now stores named focus definitions (`agent-msg focuses`, `crates/relay-core/src/named_focus/model.rs`) whose members are initiatives, projects, milestones and tickets. The mod reads them and never writes them. A relay may hold no definition at all, so the views must then say so and show everything of the selected teams.
+The scope of the Focus pane comes from four possible causes: the user's choice, the session's own focus, the team list, or a fallback when the relay says too little. Which one applied was not visible. A focus is a Linear initiative or project the leads already report in their work scope; the mod adds no grouping of its own.
 
 ## Acceptance Examples (Illustrative)
 
@@ -28,8 +28,8 @@ The scope of the Focus pane comes from four possible causes: the user's choice, 
 - **When** the Focus pane draws
 - **Then** its first line reads `your choice: Release Train`
 
-### US-012-EX-2: A named focus
+### US-012-EX-2: A reported project
 
-- **Given** a named focus `Beta` exists for this team
-- **When** the user types `/factory focus Beta`
-- **Then** the pane shows progress over that focus's initiatives, projects, milestones and tickets
+- **Given** a lead of the team reports the project FSL Alpha in its work scope
+- **When** the user types `/factory focus FSL Alpha`
+- **Then** the pane shows that project's progress and the Work tab only its tickets

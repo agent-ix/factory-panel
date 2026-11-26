@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- The focus is `all` or one ix-relay named focus definition, stored by its ID and shown by its name. `/factory focus` takes an exact name or ID and refuses anything else, listing the definitions. Lead address and summary matching are gone; a stored name now reads as `all` and says so.
-- Teams and focus are two settings. Teams say which leads are listed (your own by default, one or more, or `all`); the focus, one named focus or `all` (the default), narrows their tickets and never widens the teams. Both are at the top of the Work tab, clickable, and `/factory teams` and `/factory focus` set the same values.
+- A focus is `all` or a Linear initiative or project the leads report, listed by Linear name, stored by Linear ID. Matching by named focus definition, lead address and lead summary is gone; a stored name reads as `all` and says so.
+- Teams and focus are two settings. Teams say which leads are listed (your own by default, one or more, or `all`); the focus, one initiative or project, or `all` (the default), narrows their tickets and never widens the teams. Both are at the top of the Work tab, clickable, and `/factory teams` and `/factory focus` set the same values.
 - Under a focus the Work tab lists the tickets of the focus, folds the leads with nothing in it, keeps tickets of unknown project behind a line of their own and keeps unread leads listed; Recent, the widget and the band's work cell follow.
-- The `own` and `team` focus values are gone: a stored or declared one means `all`. The Focus tab and band pick lead focus entries by the teams, or show the chosen definition, and their banner reads `focuses of <teams>` or `your choice: <name>`.
+- The `own` and `team` focus values are gone: a stored or declared one means `all`. The Focus tab and band pick lead focus entries by the teams, or show the chosen focus, and their banner reads `focuses of <teams>` or `your choice: <name>`.
 - A Work tab ticket row reads id, title, badges, age. The role and status words (`coder running`, `reviewer done`, `focus`) and the Linear state are gone, the ages stand in one column and the title takes the freed width. A ticket with no title because Linear has no record of it, or it could not be read, still says so.
 
 ## 0.9.0

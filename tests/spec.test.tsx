@@ -3,7 +3,7 @@ import { trace } from './trace'
 
 import { digitFor } from '../hooks/band/modules'
 import { runFactory, helpText } from '../hooks/router'
-import { CLASSIC, FP, FULLSCREEN, bandCells, drawBand, fake$, options, focId, relayFocuses, settle, startSession, world } from './world'
+import { CLASSIC, FP, FULLSCREEN, bandCells, drawBand, fake$, options, settle, startSession, world, pid, reportsProject } from './world'
 import type { World } from './world'
 
 /** Writes the declaration a skill's agent would write for the session draco:QSL:code. */
@@ -106,7 +106,7 @@ test('an unknown /factory argument says so and prints the help', async ($, on) =
 test('the old per-view commands are aliases, and /focuses team sets the focus scope', async ($, on) => {
   trace("FR-003-AC-4", "FR-003-AC-6")
   const w = world(on)
-  relayFocuses(w, { id: focId('b'), name: 'Beta' })
+  reportsProject(w, pid(11), 'Beta')
   await startSession($)
   expect(w.registered).toEqual(expect.arrayContaining(['factory', 'focuses', 'escalations', 'relay', 'team']))
   expect(w.registered).not.toContain('band')
@@ -120,19 +120,22 @@ test('the old per-view commands are aliases, and /focuses team sets the focus sc
   await $.command.run({ command: 'focuses', args: 'Beta' })
   await settle()
   expect(w.opens).toEqual([])
-  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: focId('b') })
+  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: `project:${pid(11)}` })
 })
 
 test('/factory focus with no argument opens the Focus view, and /factory focus <name> sets the scope and opens no view', async ($, on) => {
   trace("FR-003-AC-5")
   const w = world(on)
-  relayFocuses(w, { id: focId('b'), name: 'Beta' })
+  reportsProject(w, pid(11), 'Beta')
   await runFactory(fake$(w) as never, options(), 'focus', false)
   expect(w.opens.map(x => x.id)).toEqual(['focus'])
   w.opens.length = 0
-  await runFactory(fake$(w) as never, options(), 'focus Beta', false)
+  await startSession($)
+  w.opens.length = 0
+  await $.command.run({ command: 'factory', args: 'focus Beta' } as never)
+  await settle()
   expect(w.opens).toEqual([])
-  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: focId('b') })
+  expect(JSON.parse(w.files.get(`${FP}/choices/draco_QSL_code.json`)!)).toEqual({ focus: `project:${pid(11)}` })
 })
 
 // ---------------------------------------------------------------- FR-001 ambient view

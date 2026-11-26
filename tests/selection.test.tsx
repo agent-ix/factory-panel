@@ -7,7 +7,7 @@ import type { Scope } from '../hooks/band/modules'
 import { helpText, runFactory, showText } from '../hooks/router'
 import { FALLBACK_MODULES, decide, getSelection, keyOf, modulesToDraw, parseFile, parseIdentity, refreshSelection } from '../hooks/selection'
 import type { FocusView } from '../types'
-import { CLASSIC, FULLSCREEN, FP, HOME, bandCells, bandLine, drawBand, fake$, focId, options, relayFocuses, report, settle, startSession, whoamiLine, world } from './world'
+import { CLASSIC, FULLSCREEN, FP, HOME, bandCells, bandLine, drawBand, fake$, options, report, settle, startSession, whoamiLine, world, pid, reportsProject } from './world'
 import type { World } from './world'
 
 // Tests for the feature selection requirements: relay identity (FR-005), the fallback and the
@@ -15,8 +15,10 @@ import type { World } from './world'
 // user's choice (FR-014), the files (FR-015) and that none of it blocks (NFR-004).
 
 const KEY = 'draco_QSL_code'
-const BETA = focId('b')
-const RT = focId('a')
+const P_BETA = pid(11)
+const P_RT = pid(12)
+const BETA = `project:${P_BETA}`
+const RT = `project:${P_RT}`
 const feature = (w: World, picked: unknown, key = KEY) => void w.files.set(`${FP}/features/${key}.json`, typeof picked === 'string' ? picked : JSON.stringify(picked))
 const choice = (w: World, picked: unknown, key = KEY) => void w.files.set(`${FP}/choices/${key}.json`, typeof picked === 'string' ? picked : JSON.stringify(picked))
 /** Reads the files as one refresh would, through the stand-in for `$`. */
@@ -459,9 +461,9 @@ test('several selected teams group the lead entries under each, and all teams sh
   await ui.unmount()
 })
 
-test('a chosen definition is shown instead of the lead entries, whatever the teams', () => {
+test('a chosen focus is shown instead of the lead entries, whatever the teams', () => {
   trace("FR-013-AC-4")
-  const definition = focusView(BETA, '', { via: 'definition', title: 'Beta' })
+  const definition = focusView(BETA, '', { via: 'chosen', title: 'Beta' })
   expect(scopeFocuses([...leads, definition], scope({ focus: BETA })).map(f => f.address)).toEqual([BETA])
   // With no choice, or a choice nothing is held of, the leads of the selected teams are shown.
   expect(scopeFocuses([...leads, definition], scope()).map(f => f.address)).toEqual(['host1:QSL:code'])
@@ -469,9 +471,9 @@ test('a chosen definition is shown instead of the lead entries, whatever the tea
 
 test('a focus with nothing held for it blanks neither the entries nor the band', () => {
   trace("FR-013-AC-5")
-  expect(scopeFocuses(leads, scope({ focus: focId('f') })).map(f => f.address)).toEqual(['host1:QSL:code'])
-  expect(buildCells(['focus'], { ...snapshotOf(), focuses: leads, scope: scope({ focus: focId('f') }) })).not.toEqual([])
-  expect(scopeNotes({ ...snapshotOf(), focuses: leads, focusNotice: 'focus x is not a relay focus definition: showing all' })).toContain('focus x is not a relay focus definition: showing all')
+  expect(scopeFocuses(leads, scope({ focus: `project:${pid(99)}` })).map(f => f.address)).toEqual(['host1:QSL:code'])
+  expect(buildCells(['focus'], { ...snapshotOf(), focuses: leads, scope: scope({ focus: `project:${pid(99)}` }) })).not.toEqual([])
+  expect(scopeNotes({ ...snapshotOf(), focuses: leads, focusNotice: 'focus x is not known: showing all' })).toContain('focus x is not known: showing all')
 })
 
 test('a focus of own or team, stored or declared, is all, and teams naming all is every team', async () => {
@@ -485,15 +487,18 @@ test('a focus of own or team, stored or declared, is all, and teams naming all i
   }
 })
 
-test('/factory teams all and /factory focus all clear each choice and leave the other', async () => {
+test('/factory teams all and /factory focus all clear each choice and leave the other', async ($, on) => {
   trace("FR-014-AC-19")
-  const w = world(() => undefined as never)
-  relayFocuses(w, { id: BETA, name: 'Beta' })
-  await run(w, 'focus Beta')
-  await run(w, 'teams QSL,ENG')
-  expect(await run(w, 'teams all')).toMatch(/teams +every team +\[user\]/)
+  const w = world(on)
+  reportsProject(w, P_BETA, 'Beta')
+  await startSession($)
+  await settle()
+  const command = async (args: string) => ((await $.command.run({ command: 'factory', args } as never)) as { text: string }).text
+  await command('focus Beta')
+  await command('teams QSL,ENG')
+  expect(await command('teams all')).toMatch(/teams +every team +\[user\]/)
   expect(written(w, 'choices')).toEqual({ focus: BETA, teams: ['all'] })
-  expect(await run(w, 'focus own')).toMatch(/focus +all +\[user\]/)
+  expect(await command('focus own')).toMatch(/focus +all +\[user\]/)
   expect(written(w, 'choices')).toEqual({ focus: 'all', teams: ['all'] })
 })
 
@@ -543,25 +548,19 @@ test('/factory use replaces the modules, a later use replaces them again, and a 
   expect((await refresh(w)).modules).toEqual({ value: ['focus'], source: 'user' })
 })
 
-test('focus, teams and hosts each change the named scope and no other', async () => {
+test('focus, teams and hosts each change the named scope and no other', async ($, on) => {
   trace("FR-014-AC-2")
-  const w = world(() => undefined as never)
-  relayFocuses(w, { id: RT, name: 'Release Train' })
-  await run(w, 'focus Release Train')
+  const w = world(on)
+  reportsProject(w, P_RT, 'Release Train')
+  await startSession($)
+  await settle()
+  const command = (args: string) => $.command.run({ command: 'factory', args } as never)
+  await command('focus Release Train')
   expect(written(w, 'choices')).toEqual({ focus: RT })
-  await run(w, 'teams QSL')
+  await command('teams QSL')
   expect(written(w, 'choices')).toEqual({ focus: RT, teams: ['QSL'] })
-  await run(w, 'hosts all')
+  await command('hosts all')
   expect(written(w, 'choices')).toEqual({ focus: RT, teams: ['QSL'], hosts: 'all' })
-})
-
-test('/factory focus with a name that has spaces sets the whole name', async () => {
-  trace("FR-014-AC-3")
-  const w = world(() => undefined as never)
-  relayFocuses(w, { id: RT, name: 'Release Train' })
-  await run(w, 'focus Release Train')
-  expect(written(w, 'choices')).toEqual({ focus: RT })
-  expect(getSelection().focus).toEqual({ value: RT, source: 'user' })
 })
 
 test('/factory hosts with a bad value names all and local and leaves the scope unchanged', async () => {

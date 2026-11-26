@@ -48,7 +48,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 | Mouse interaction in the classic layout | The terminal does not capture the mouse there; every action has a keyboard path. |
 | Per-user theming of the views | The shared style layer in `docs/STYLE.md` is deliberate and uniform. |
 | A named-focus field in ix-board | A focus is named by its lead's summary; ix-board owns its data model. |
-| Writing named focuses, fixing ix-board data or errors, per-ticket drill-down | ix-relay owns named focus writes, ix-board owns its own failures; the mod only reads named focuses and shows progress per selector. |
+| Writing anything to relay or Linear about focuses, fixing ix-board data or errors, per-ticket drill-down | Linear owns initiatives and projects, ix-board owns its own failures; the mod only reads and shows progress per selector. |
 | A new relay protocol | The mod reads `agent-msg whoami` and `agent-msg work` as they are. |
 | Roles as plugin configuration, including dynamic roles | Skills select features; the mod chooses nothing by role and only draws the role evaluations ix-board computes. Dynamic role configuration is a possible later step. |
 | Running in non-interactive (`-p`) sessions | There is no surface to draw on and nobody to ask. |
@@ -120,7 +120,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-017 | Last good progress | [FR-017](functional/FR-017-last-good-progress.md) |
 | FR-018 | Source errors visible and not fatal | [FR-018](functional/FR-018-errors-visible-not-fatal.md) |
 | FR-019 | Focus mode banner | [FR-019](functional/FR-019-focus-mode-banner.md) |
-| FR-020 | Named focus resolution | [FR-020](functional/FR-020-named-focus-resolution.md) |
+| FR-020 | Focus choice | [FR-020](functional/FR-020-named-focus-resolution.md) |
 | FR-021 | Initiative expansion | [FR-021](functional/FR-021-initiative-expansion.md) |
 | FR-022 | Initiative roll-up and honest totals | [FR-022](functional/FR-022-initiative-rollup-and-honest-totals.md) |
 | FR-023 | Nested initiative display | [FR-023](functional/FR-023-nested-initiative-display.md) |

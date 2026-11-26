@@ -155,30 +155,27 @@ export type FocusView = {
   loose: FocusProject[]
   header: FocusHeader | null
   warnings: FocusWarning[]
-  /** The name shown in place of the address: a named focus definition's name. */
+  /** The name shown in place of the address: the chosen focus's. */
   title: string | null
-  /** `definition` for the chosen focus definition; null for a lead's own focus. */
-  via: 'definition' | null
-  /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, earlier outcome. */
+  /** `chosen` for the chosen initiative or project; null for a lead's own focus. */
+  via: 'chosen' | null
+  /** Lines the card adds: no selectors, earlier outcome. */
   notes: string[]
-  /** What the focus is made of: a definition's members, or a lead's reported scope. */
+  /** What the focus is made of: the chosen initiative or project, or a lead's reported scope. */
   selectors: { kind: 'initiative' | 'project' | 'milestone' | 'ticket'; ref: string; project?: string; label?: string }[]
 }
 
-/** A focus definition `agent-msg focuses list` prints; `name` is null, with `reason`, for one that cannot be used. */
-export type FocusDefinition = { id: string; name: string | null; team: string | null; reason: string | null }
+/** An initiative or project leads report, with its Linear name where one is known; `value` is what the choice stores. */
+export type FocusOption = { value: string; kind: 'initiative' | 'project'; id: string; name: string | null }
 
-/**
- * What the last read found of the chosen definition: `unknown` where relay has none of that ID, `unavailable` where
- * it cannot be used, `unread` where relay could not be asked and `stale` where it could not be asked again.
- */
-export type ChosenFocus = { id: string; name: string | null; state: 'active' | 'archived' | 'unknown' | 'unavailable' | 'unread' | 'stale'; reason?: string }
+/** The chosen focus: `known` where a lead reports it or Linear names it. */
+export type ChosenFocus = { value: string; name: string | null; known: boolean }
 
 /** A source's error, shown on the pane and in `/factory show`. */
 export type SourceError = { source: string; text: string }
 
 /** `scope` is the focus and teams the last finished read was made for, `heldFor` those the focuses held were found for. */
-export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string; heldFor?: string; chosen?: ChosenFocus; /** absent until a list of definitions has been read */ definitions?: FocusDefinition[] }
+export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string; heldFor?: string; chosen?: ChosenFocus; /** the focuses the leads report; absent until their names have been read */ options?: FocusOption[] }
 
 // ---------------------------------------------------------------- Escalations and Relay panes
 

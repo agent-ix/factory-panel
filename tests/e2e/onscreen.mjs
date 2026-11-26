@@ -93,7 +93,6 @@ const ANSWERS = {
     ['escalations', 'e1  waiting  ENG-1  session/aa/bb  11-24 16:29'],
     ['escalation show', 'status: waiting\ncontext:\n  A stand-in escalation.'],
     ['log', '11-24 09:45 operator -> all: a stand-in broadcast'],
-    ['focuses', JSON.stringify({ definitions: [] })],
   ],
   'ix-board': [
     ['--json agents', JSON.stringify({ agents: [{ team: 'QSL', agent: LEAD, herdr_status: 'working', machine: 'draco' }] })],
@@ -325,7 +324,7 @@ const has = (counts, sources) => sources.every(source => (counts[source] ?? 0) >
 const json = JSON.stringify
 
 const TABS = /Factory\s+Focus\s+Work\s+Escalations\s+\S+\s+Team/
-const BAND_SOURCES = ['prometheus query', 'agent-msg work', 'agent-msg focuses', 'ix-board agents', 'ix-board focus']
+const BAND_SOURCES = ['prometheus query', 'agent-msg work', 'ix-board agents', 'ix-board focus']
 const TEAM_SOURCES = ['prometheus range', 'prometheus query', 'ix-board retro delta', 'ix-board retro eval', 'ix-board fleet']
 /** The band's work cell: the two tickets of the stand-in lead, of one lead of the two listed, and their one open PR. */
 const WORK_CELL = /≥2 tickets \(1\/2 leads\) · ≥1 PR open/
@@ -449,7 +448,7 @@ async function herdrTab(s, layout) {
   check(`herdr ${layout}: herdr's Claude integration reported the session`, s.reported() !== undefined)
   if (layout === 'fullscreen') check(`herdr ${layout}: the Factory tab can be clicked`, s.click(/(│ )Factory\s+Focus/))
   await sleep(5000)
-  const reads = layout === 'fullscreen' ? ['prometheus query', 'agent-msg doctor'] : BAND_SOURCES.filter(x => x !== 'agent-msg work' && x !== 'agent-msg focuses' && !x.startsWith('ix-board'))
+  const reads = layout === 'fullscreen' ? ['prometheus query', 'agent-msg doctor'] : BAND_SOURCES.filter(x => x !== 'agent-msg work' && !x.startsWith('ix-board'))
   const shown = (await s.phase(s.mark('tab on view'))).counts
   check(`herdr ${layout}: on view it reads`, has(shown, reads), json(shown))
   const away = s.mark('behind another tab')

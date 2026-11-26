@@ -27,7 +27,7 @@ The mod SHALL keep the progress of a focus per selector, so that one failing sel
 ## Behavior
 
 - A selector SHALL be one initiative, one project, one milestone or one ticket of the shown focus.
-- The selectors of a named focus SHALL be its `include` members.
+- The selector of a chosen focus SHALL be its one initiative or project.
 - The selectors of a lead's focus SHALL be the initiatives, projects and tickets of its `agent-msg work` report scope.
 - The mod SHALL ask ix-board for the progress of a selector as [FR-026](./FR-026-per-project-calls.md) states, with an initiative expanded to its projects first as [FR-021](./FR-021-initiative-expansion.md) states.
 - The mod SHALL classify a spawn failure as a source error.

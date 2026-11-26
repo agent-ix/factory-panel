@@ -162,9 +162,6 @@ export function answerRun(w: World, argv: readonly string[], init: Init): Run | 
     return found === undefined ? out('', 1, 'no report') : out(JSON.stringify(found))
   }
   if (line === 'agent-msg doctor --json') return w.relayFails.value ? out('', 1, 'redis down') : out(JSON.stringify({ ok: true, checks: [] }))
-  // Unless a test says otherwise, relay has no focus definition.
-  if (line === 'agent-msg focuses list --json') return out(JSON.stringify({ definitions: [] }))
-  if (line.startsWith('agent-msg focuses show ')) return out('', 1, JSON.stringify({ code: 'not_found', message: `no definition "${argv[3]}"` }))
   if (line.startsWith('ix-board --json agents')) return out(JSON.stringify({ agents: w.boardAgents }))
   // Unless a test says otherwise, ix-board knows none of the single tickets asked for.
   if (line.startsWith('ix-board --json issues ')) return out(JSON.stringify({ complete: true, missing: [], issues: [] }))
@@ -233,7 +230,7 @@ export async function bandLine(ui: Awaited<ReturnType<typeof drawBand>>): Promis
   return lines.length === 0 ? undefined : lines.map(l => l.text).join('')
 }
 
-// ---------------------------------------------------------------- ix-board and agent-msg focuses
+// ---------------------------------------------------------------- ix-board
 
 /** A project id for tests: a UUID made from a number, so ids are real in shape and distinct. */
 export const pid = (n: number | string): string => {
@@ -322,46 +319,18 @@ export const roadmapJson = (initiatives: RoadmapSpec[]) =>
 /** The error ix-board prints for the dangling milestone (SWM-295), as captured for project a31003a8 and initiative 674ffba8. */
 export const BAD_MILESTONE = 'issue QSL-3236 references unavailable milestone 871dbc77-cb19-474d-bd13-4db7145e8ec8 in project a31003a8-790b-482e-b28d-78f1d26a1cbf'
 
-/** A row of `agent-msg focuses list --json` that decodes. */
-export const defRow = (focusId: string, name: string, team: string, state = 'active') => ({ focus_id: focusId, team, name, state, latest_revision: 1, owner_id: 'o1', owner_epoch: 1, owner_state: 'live' })
-/** A row of `list --json` that cannot be used: only its id, `available` false, a code and a reason. */
-export const stubRow = (focusId: string, reason = 'the stored selection is not readable') => ({ focus_id: focusId, available: false, code: 'unavailable_definition', reason })
-export const listJson = (...definitions: unknown[]) => JSON.stringify({ definitions })
-
-type Members = { initiatives?: string[]; projects?: string[]; milestones?: [string, string][]; tickets?: string[] }
-const memberSet = (m: Members = {}) => ({
-  initiatives: (m.initiatives ?? []).map(ref => ({ ref, label: `label ${ref}` })),
-  projects: (m.projects ?? []).map(ref => ({ ref, label: `label ${ref}` })),
-  milestones: (m.milestones ?? []).map(([ref, project]) => ({ ref, project, label: `label ${ref}` })),
-  tickets: (m.tickets ?? []).map(ref => ({ ref, label: `label ${ref}` })),
-})
-/** `agent-msg focuses show <id> --json`: the definition under `definition`, and `empty_selection`. */
-export const showJson = (name: string, team: string, include: Members, exclude: Members = {}, over: { empty?: boolean; definition?: null; id?: string; state?: string } = {}) =>
-  JSON.stringify({
-    focus_id: over.id ?? 'foc-0123456789abcdef0123456789abcdef',
-    state: over.state ?? 'active',
-    latest_revision: 1,
-    empty_selection: over.empty ?? false,
-    definition: over.definition === null ? null : { team, name, description: '', include: memberSet(include), exclude: memberSet(exclude) },
-  })
-
-/** A focus ID as relay spells it, from one hexadecimal character. */
-export const focId = (c: string) => `foc-${c.repeat(32)}`
-
-type Held = { id: string; name: string; team?: string; include?: Members }
-/** Stands in for relay's definitions: `list` lists them, and `show` resolves an ID or exact name as relay does. */
-export function relayFocuses(w: World, ...defs: Held[]): void {
+/** A lead of the session's team that reports one project, which ix-board's `project-chunk` names. */
+export function reportsProject(w: World, id: string, name: string, lead = 'draco:QSL:code'): void {
+  w.leads.set(lead, report(lead, `working on ${name}`, ['running'], { projects: [id] }))
   const prior = w.stub.value
-  const refused = (code: string, message: string) => out('', 1, JSON.stringify({ code, message }))
-  w.stub.value = (argv, init) => {
-    if (argv[0] !== 'agent-msg' || argv[1] !== 'focuses') return prior?.(argv, init)
-    if (argv[2] === 'list') return out(listJson(...defs.map(d => defRow(d.id, d.name, d.team ?? 'QSL'))))
-    const found = defs.filter(d => d.id === argv[3] || d.name === argv[3])
-    if (found.length === 0) return refused('not_found', `no definition "${argv[3]}"`)
-    if (found.length > 1) return refused('invalid_argument', `invalid argument focus: the name "${argv[3]}" belongs to definitions of several teams; use the focus ID`)
-    const d = found[0]!
-    return out(showJson(d.name, d.team ?? 'QSL', d.include ?? { projects: ['p1'] }, {}, { id: d.id }))
-  }
+  w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${id}` ? out(JSON.stringify({ name })) : prior?.(argv, init))
+}
+
+/** A lead of the session's team that reports one project, which ix-board's `project-chunk` names. */
+export function reportsProject(w: World, id: string, name: string, lead = 'draco:QSL:code'): void {
+  w.leads.set(lead, report(lead, `working on ${name}`, ['running'], { projects: [id] }))
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${id}` ? out(JSON.stringify({ name })) : prior?.(argv, init))
 }
 
 export const NEVER = (): Promise<never> => new Promise<never>(() => undefined)

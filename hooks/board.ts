@@ -273,6 +273,44 @@ function expandHeld(s: Selector, memory: Initiatives, entry: BadEntry): Expansio
 
 const initiativeName = (s: Selector): string => s.label ?? `initiative ${short(s.ref)}`
 
+/** The Linear names `ix-board roadmap` gives its initiatives and projects, by focus value; none where it cannot be read. Shared with the progress reads. */
+export async function roadmapNames($: EngineInterface): Promise<Map<string, string>> {
+  const read = await gatedBoard($, ROADMAP_KEY, async (): Promise<RoadmapRead> => {
+    const ran = await limited(() => $.process.run(['ix-board', '--json', 'roadmap'], { timeoutMs: CALL_TIMEOUT_MS }))
+    if (ran.exitCode !== 0) {
+      const stderr = lastLine(ran.stderr)
+      if (AUTH.test(stderr) || RATE.test(stderr)) throw new Error(stderr)
+      return { error: stderr || lastLine(ran.stdout) || `ix-board exited ${ran.exitCode}` }
+    }
+    try {
+      return { list: roadmapInitiatives(JSON.parse(ran.stdout)) }
+    } catch {
+      return { error: 'ix-board printed text that is not JSON' }
+    }
+  })
+  const names = new Map<string, string>()
+  for (const i of read.data?.list ?? []) {
+    if (text(i.id)) names.set(`initiative:${i.id.toLowerCase()}`, String(i.name))
+    for (const p of i.projects ?? []) if (text(p.id) && text(p.name)) names.set(`project:${p.id.toLowerCase()}`, p.name)
+  }
+  return names
+}
+
+/** The name `ix-board project-chunk` gives a project; null where it gives none. */
+export async function projectName($: EngineInterface, id: string): Promise<string | null> {
+  const read = await gatedBoard($, `project-name:${id}`, async (): Promise<{ name: string | null }> => {
+    const ran = await limited(() => $.process.run(['ix-board', '--json', 'project-chunk', id], { timeoutMs: CALL_TIMEOUT_MS }))
+    if (ran.exitCode !== 0) return { name: null }
+    try {
+      const chunk = JSON.parse(ran.stdout) as { name?: unknown }
+      return { name: text(chunk.name) ? chunk.name : null }
+    } catch {
+      return { name: null }
+    }
+  })
+  return read.data?.name ?? null
+}
+
 // ---------------------------------------------------------------- the refresh
 
 const argv = (args: string[]): string[] => ['ix-board', '--json', ...args]

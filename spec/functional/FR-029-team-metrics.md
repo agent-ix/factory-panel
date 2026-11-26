@@ -45,7 +45,7 @@ The Team view SHALL show velocity and effort, review quality, flow and capacity 
 
 - The selected teams SHALL be the same for the tiles, the retro health, the role evaluations, the widget and the band's team cell.
 - Where the teams are chosen, by the user's teams choice or else a session declaration ([FR-012](./FR-012-selection-precedence.md)), the selected teams SHALL be those, whatever the focus is: `all` or a name. A `teams` choice of `all` selects no team in particular.
-- Where no teams are chosen, the selected teams SHALL be the session's own team, for the focus `all` and a named focus alike; the teams of a named focus's definition SHALL NOT select any.
+- Where no teams are chosen, the selected teams SHALL be the session's own team, for the focus `all` and a chosen focus alike; a focus SHALL NOT select any.
 - Where no teams are chosen and `agent-msg whoami` fails, no team is selected.
 - The leads the Work and Focus views read follow the focus, not this rule.
 - A team with a key that is not among the selected teams SHALL NOT be drawn. The selected teams SHALL be drawn in the order of the selection.
