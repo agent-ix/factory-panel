@@ -76,14 +76,25 @@ export function pollRelay($: EngineInterface): Promise<boolean> {
 async function readRelay($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   const failed: string[] = []
-  // The whole log once, then only what came since: the pane keeps the newest SHOWN broadcasts.
-  const minutes = logReadAt === null ? null : Math.ceil((now - logReadAt) / 60_000) + 1
-  const logArgs = minutes === null || minutes >= 14 * 24 * 60 ? ['--since', FULL_SINCE, '--max', String(FULL_MAX)] : ['--since', `${minutes}m`, '--max', String(SINCE_MAX)]
-  const [logText, leads] = await Promise.all([
-    runText($, ['agent-msg', 'log', ...logArgs], 30_000, 'announcements').catch(error => {
+  const readLog = (args: string[]): Promise<string | null> =>
+    runText($, ['agent-msg', 'log', ...args], 30_000, 'announcements').catch(error => {
       failed.push(`log: ${errorText(error)}`)
       return null
-    }),
+    })
+  const FULL = ['--since', FULL_SINCE, '--max', String(FULL_MAX)]
+  // The whole log once, then only what came since: the pane keeps the newest SHOWN broadcasts.
+  const minutes = logReadAt === null ? null : Math.ceil((now - logReadAt) / 60_000) + 1
+  const isFirst = minutes === null || minutes >= 14 * 24 * 60
+  const readBroadcasts = async (): Promise<{ text: string; isFull: boolean } | null> => {
+    const text = await readLog(isFirst ? FULL : ['--since', `${minutes}m`, '--max', String(SINCE_MAX)])
+    if (text === null || isFirst) return text === null ? null : { text, isFull: true }
+    // An answer cut at its limit may have left broadcasts out between the last read and what it holds: read it all.
+    if (messageCount(text) < SINCE_MAX) return { text, isFull: false }
+    const whole = await readLog(FULL)
+    return whole === null ? null : { text: whole, isFull: true }
+  }
+  const [log, leads] = await Promise.all([
+    readBroadcasts(),
     // The lead list the Focus and Work views read too, shared for a minute.
     listLeads($).catch(error => {
       failed.push(`who: ${errorText(error)}`)
@@ -91,15 +102,17 @@ async function readRelay($: EngineInterface): Promise<boolean> {
     }),
   ])
   // What was read is kept; what failed keeps its last value and the footer says why.
-  if (logText !== null) {
-    const isFull = minutes === null
-    await update($, announcements, held => joined(parseAnnouncements(logText), isFull ? [] : held))
+  if (log !== null) {
+    await update($, announcements, held => joined(parseAnnouncements(log.text), log.isFull ? [] : held))
     logReadAt = now
   }
   if (leads !== null) await update($, relayLeads, () => [...new Set(leads)].sort())
   await update($, relayMeta, m => ({ ...m, at: failed.length === 0 ? now : m.at, error: failed[0] ?? null }))
   return failed.length === 0
 }
+
+/** How many messages of any kind a log answer holds: its lines that start with a date and time. */
+const messageCount = (text: string): number => text.split('\n').filter(line => /^\d\d-\d\d \d\d:\d\d /.test(line)).length
 
 // ---------------------------------------------------------------- actions
 

@@ -17,6 +17,8 @@ export const BOARD_INTERVAL_MS = 30 * 60 * 1000
 const CLAIM_MS = 4 * 60 * 1000
 /** A manual refresh still waits this long after the last read. */
 const MANUAL_MIN_MS = 60 * 1000
+/** How much before its interval a read shared for a short interval is asked again (a read without a Linear call). */
+const SHORT_SLACK_MS = 5 * 1000
 
 /** An outcome a source error cut short is held this long, not the whole interval, and not asked again meanwhile. */
 export const UNKEPT_TTL_MS = 5 * 60 * 1000
@@ -60,35 +62,43 @@ export type Gated<T> = {
   error: string | null
 }
 
-/** The cache file, and the one an older version wrote, read once when the new one does not exist. */
+/**
+ * The gate files. Linear's reads share `linear-gate.json`; an older version wrote it under ~/.cache, read once when the
+ * new one does not exist. A read that makes no Linear call (`ix-board agents`) is shared through a file of its own, so
+ * its writes every minute neither rewrite Linear's entries nor race with Linear's rate limit.
+ */
 const GATE_FILE = 'linear-gate.json'
-let gatePath: string | null = null
-let oldPath: string | null = null
+export const LOCAL_GATE_FILE = 'agents-gate.json'
+type GateName = typeof GATE_FILE | typeof LOCAL_GATE_FILE
+let home: string | null = null
 let oldCache: GateFile | undefined
 /** Reads under way in this process, by key: a second asker shares the first's. */
 const inFlight = new Map<string, Promise<Gated<unknown>>>()
 
-async function pathOf($: EngineInterface): Promise<string> {
-  if (gatePath) return gatePath
+async function homeOf($: EngineInterface): Promise<string> {
+  if (home !== null) return home
   const ran = await spawn($, ['printenv', 'HOME'], 5_000)
-  const home = ran.stdout.trim()
-  oldPath = `${home}/.cache/factory-panel/${GATE_FILE}`
-  gatePath = `${home}/.ix/factory-panel/${GATE_FILE}`
-  return gatePath
+  home = ran.stdout.trim()
+  return home
 }
 
-async function load($: EngineInterface): Promise<GateFile> {
+async function pathOf($: EngineInterface, file: GateName): Promise<string> {
+  return `${await homeOf($)}/.ix/factory-panel/${file}`
+}
+
+async function load($: EngineInterface, file: GateName): Promise<GateFile> {
   const parse = (text: string): GateFile => {
     const parsed = JSON.parse(text) as Partial<GateFile>
     return { backoffUntil: parsed.backoffUntil ?? null, entries: parsed.entries ?? {} }
   }
   try {
-    return parse(await $.fs.read(await pathOf($)))
+    return parse(await $.fs.read(await pathOf($, file)))
   } catch {
+    if (file !== GATE_FILE) return { backoffUntil: null, entries: {} }
     // With no new file the old cache is the initial one: read once, kept, and never written.
     if (oldCache === undefined) {
       try {
-        oldCache = parse(await $.fs.read(oldPath ?? ''))
+        oldCache = parse(await $.fs.read(`${await homeOf($)}/.cache/factory-panel/${GATE_FILE}`))
       } catch {
         oldCache = { backoffUntil: null, entries: {} }
       }
@@ -98,8 +108,8 @@ async function load($: EngineInterface): Promise<GateFile> {
 }
 
 /**
- * The gate file is read, changed and written by every read in this process; two at once would lose each
- * other's claim. So its claims and writes run one after the other.
+ * The gate files are read, changed and written by every read in this process; two at once would lose each
+ * other's claim. So their claims and writes run one after the other.
  */
 let lock: Promise<unknown> = Promise.resolve()
 function exclusive<T>(run: () => Promise<T>): Promise<T> {
@@ -115,11 +125,11 @@ function pruned(entries: Record<string, Entry>, now: number): Record<string, Ent
 }
 
 /** Re-reads the file before writing, so another session's entries in between survive, and drops the unused ones. */
-async function save($: EngineInterface, change: (g: GateFile) => void): Promise<void> {
-  const g = await load($)
+async function save($: EngineInterface, file: GateName, change: (g: GateFile) => void): Promise<void> {
+  const g = await load($, file)
   change(g)
   g.entries = pruned(g.entries, await $.clock.now())
-  await writeWhole($, await pathOf($), JSON.stringify(g))
+  await writeWhole($, await pathOf($, file), JSON.stringify(g))
 }
 
 /** Linear's own wait, from ix-board's "Linear rate limited; retry in 3600.005s". */
@@ -200,8 +210,12 @@ async function gate<T>(
   const interval = opts.intervalMs ?? BOARD_INTERVAL_MS
   // A failure is held for UNKEPT_TTL_MS, or the whole interval where that is shorter.
   const unkeptTtl = Math.min(UNKEPT_TTL_MS, interval)
+  const file: GateName = isLinear ? GATE_FILE : LOCAL_GATE_FILE
+  // A read shared for a short interval is stamped when it started, and is due a little before its interval is up: a
+  // read that takes seconds, and a timer that fires early, would otherwise find every other ask still fresh.
+  const slack = isLinear ? 0 : SHORT_SLACK_MS
   const now = await $.clock.now()
-  const g = await load($)
+  const g = await load($, file)
   const had = g.entries[key] ?? { at: null, claimAt: null, data: null }
   // A read that failed outright keeps saying so while it is held.
   const cached = (error: string | null = had.unkept === true ? (had.error ?? null) : null, backoffUntil = isLinear ? g.backoffUntil : null): Gated<T> => ({
@@ -224,26 +238,26 @@ async function gate<T>(
     if (now - had.triedAt < (opts.manual ? MANUAL_MIN_MS : had.holdMs)) return (meter.gate(name, 'held'), cached())
   }
   // A manual refresh asks again at once when the last one was only held after a failure.
-  else if (!isOutdated && had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return (meter.gate(name, had.unkept === true ? 'held' : 'hit'), cached())
+  else if (!isOutdated && had.at !== null && now - had.at < wait - (opts.manual ? 0 : slack) && !(opts.manual && had.unkept === true)) return (meter.gate(name, had.unkept === true ? 'held' : 'hit'), cached())
   if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return (meter.gate(name, 'claimed-elsewhere'), cached())
 
   const claim = now + Math.random() / 10
   // With the gate file unwritable no claim can be made or checked; this session fetches on its own.
   const taken = await exclusive(async () => {
-    const claimed = await save($, f => {
+    const claimed = await save($, file, f => {
       f.entries[key] = { ...had, claimAt: claim }
     }).then(
       () => true,
       () => false,
     )
-    return !claimed || (await load($)).entries[key]?.claimAt === claim
+    return !claimed || (await load($, file)).entries[key]?.claimAt === claim
   })
   if (!taken) return (meter.gate(name, 'claimed-elsewhere'), cached())
   meter.gate(name, 'fetched')
   try {
     const data = await fetch()
     if (isLinear) await sampleLinear($, name)
-    const at = await $.clock.now()
+    const at = isLinear ? await $.clock.now() : now
     // A failed save must not throw the fetched data away: this session still shows it.
     // A result that is not to be kept is shown, held for UNKEPT_TTL_MS, and asked again after it.
     const keep = opts.keep?.(data) ?? true
@@ -252,7 +266,7 @@ async function gate<T>(
     const streak = keep ? 0 : (had.streak ?? 0) + (isRepeat ? 1 : 0)
     const holdMs = isRepeat ? Math.min(UNKEPT_TTL_MS * 2 ** (streak - 1), REPEAT_HOLD_MAX_MS) : undefined
     await exclusive(() =>
-      save($, f => {
+      save($, file, f => {
         f.entries[key] = keep
           ? { at, claimAt: null, data }
           : { at: at - (interval - (holdMs ?? unkeptTtl)), claimAt: null, data, unkept: true, ...(streak > 0 ? { streak } : {}), ...(holdMs === undefined ? {} : { holdMs, triedAt: at }) }
@@ -265,7 +279,7 @@ async function gate<T>(
     const retry = isLinear ? retryAfterMs(text) : null
     const until = retry !== null ? now + retry : null
     await exclusive(() =>
-      save($, f => {
+      save($, file, f => {
         // A read that failed outright is held a few minutes like any source error; Linear's own wait holds every read.
         if (until === null) f.entries[key] = { data: had.data, at: now - (interval - unkeptTtl), claimAt: null, unkept: true, error: text, ...(had.streak === undefined ? {} : { streak: had.streak }) }
         else {

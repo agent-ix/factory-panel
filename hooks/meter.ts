@@ -157,6 +157,11 @@ export async function isMetering($: EngineInterface): Promise<boolean> {
 }
 
 export const FILE_EVERY_MS = 5 * 60 * 1000
+/**
+ * The Linear spend is ix-board's counters for the whole machine, sampled by this session after its own gated reads:
+ * reads another session or process made in between are counted with them, and a new quota window counts as nothing.
+ */
+export const LINEAR_NOTE = 'linearRequests and linearComplexity are approximate: ix-board\'s machine-wide quota counters, sampled after this session\'s gated Linear reads, include any other Linear calls made in between'
 let lastFileAt: number | null = null
 
 /** Writes the meter file when metering is on and the last write is 5 minutes old; never throws. */
@@ -166,7 +171,7 @@ export async function maybeWriteFile($: EngineInterface, path: (session: string)
     const now = await $.clock.now()
     if (lastFileAt !== null && now - lastFileAt < FILE_EVERY_MS) return
     lastFileAt = now
-    await write(await path(await $.session.id()), `${JSON.stringify({ at: now, rows: snapshot() }, null, 2)}\n`)
+    await write(await path(await $.session.id()), `${JSON.stringify({ at: now, note: LINEAR_NOTE, rows: snapshot() }, null, 2)}\n`)
   } catch {
     // The meter is a side channel: its failures are not the mod's.
   }

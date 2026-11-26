@@ -71,9 +71,9 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 
 - The band SHALL read the sources of every module it is selected to show, including a module that has nothing to say and draws no cell, and the selection.
 - The focus and the work reports share their reads of the leads, so a lead's report just read for one is not read again for the other ([FR-030](./FR-030-lead-report-reads.md)).
-- The Message pane SHALL read `agent-msg log` for 14 days, at most 2000 messages, once in a session, and afterwards only the minutes since its last read that answered and one more, at most 500 messages, keeping the 30 newest broadcasts.
+- The Message pane SHALL read `agent-msg log` for 14 days, at most 2000 messages, once in a session, and afterwards only the minutes since its last read that answered and one more, at most 500 messages, keeping the 30 newest broadcasts. An answer of 500 messages SHALL be followed at once by the full read, whose broadcasts replace those held.
 - The Message, Focus and Work views SHALL share one `agent-msg who` for 60 seconds; the refresh key of the Focus or Work view reads it anew.
-- The Escalations pane SHALL read the detail of a row once, and again when its status moves, at most 4 `escalation show` at once; a row of another view whose detail is not held is read when it is shown or selected.
+- The Escalations pane SHALL read the detail of a row once, and again when its status moves, at most 4 `escalation show` at once; a row of another view whose detail is not held is read when it is shown or selected. Until its detail is read an open row SHALL be drawn as being read, and SHALL be neither resolved nor counted as having no recommendation.
 
 ### How often
 
@@ -96,7 +96,7 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 - While `agent-msg whoami` has not said who the session is, the mod SHALL ask it again with the same doubling, from `refreshSeconds` to 5 minutes; a command SHALL ask at once.
 - A changed focus or teams value SHALL make the focus, `ix-board agents`, work report, `ix-board issues`, project name, focus choice and `ix-board retro delta` reads due at the next drawing.
 - The Linear-backed reads of `ix-board` stay held by their own 30 minute gate ([FR-025](./FR-025-per-project-last-good.md)); this requirement only decides when the mod asks.
-- `ix-board agents` reads herdr and makes no Linear call: the sessions of a machine SHALL share one read of it for 60 seconds through the gate file, and Linear's rate limit SHALL neither hold it nor be set by it.
+- `ix-board agents` reads herdr and makes no Linear call: the sessions of a machine SHALL share one read of it for 60 seconds through `~/.ix/factory-panel/agents-gate.json`, a file of its own beside the Linear gate, and Linear's rate limit SHALL neither hold it nor be set by it. A read is stamped when it starts and is asked again 5 seconds before its 60 seconds are up, so a read that takes seconds does not make the next ask find it fresh.
 - The mod SHALL make no Prometheus read before the metrics address is known ([FR-007](./FR-007-endpoint-discovery.md)), and SHALL NOT count a drawing before then as a failed read.
 - The mod SHALL raise no toast or notification from a read.
 
@@ -107,7 +107,7 @@ The mod SHALL count what it reads, so that how much it reads can be stated and c
 - The mod SHALL count, in memory and by source: reads, host processes started, HTTP calls, bytes answered, failures, slow answers, reads skipped (the view not shown, the pane off view, no metrics address) and the outcomes of the shared gate (hit, fetched, claimed elsewhere, backoff, held), and SHALL keep the durations of the last 64 reads, calls or processes of each for p50, p95 and the longest.
 - Every host process the mod starts SHALL be started through one function, and every Prometheus call through one other, so that none is missed.
 - `/factory show fetch` SHALL print those counts as a table with a total of processes, HTTP calls and bytes, and SHALL start no read and no process.
-- Where `FACTORY_PANEL_METER` is set to anything but empty or `0`, the mod SHALL write the counts to `~/.ix/factory-panel/meter-<session>.json` at most every 5 minutes, and after each Linear read the shared gate really ran SHALL record the Linear requests and query complexity `ix-board --json cache status` (`quota.requests_used`, `quota.complexity_used`) shows were spent since the last such sample, counting a drop as nothing spent. Where it is not set the mod SHALL write no meter file and SHALL ask ix-board for no counters.
+- Where `FACTORY_PANEL_METER` is set to anything but empty or `0`, the mod SHALL write the counts to `~/.ix/factory-panel/meter-<session>.json` at most every 5 minutes, and after each Linear read the shared gate really ran SHALL record the Linear requests and query complexity `ix-board --json cache status` (`quota.requests_used`, `quota.complexity_used`) shows were spent since the last such sample, counting a drop as nothing spent. That spend is approximate: the counters are the whole machine's, so Linear calls another session or process makes in between are counted too, and the file says so. Where it is not set the mod SHALL write no meter file and SHALL ask ix-board for no counters.
 - Counting SHALL NOT change when or what a source is read.
 - The budgets below are upper bounds of what the mod reads on a scripted timeline of a fake clock in 5 second steps. A change to what is read lowers its bound and records the number it had before.
 
@@ -170,12 +170,12 @@ The mod SHALL count what it reads, so that how much it reads can be stated and c
 | FR-027-AC-30 | `/factory show fetch` reports as many processes and HTTP calls as were run and made, and each source's process count is that of its commands. | Test |
 | FR-027-AC-31 | Without `FACTORY_PANEL_METER` no meter file is written and no counters are asked of ix-board; with it the file is written at most every 5 minutes and the Linear requests spent by the gated reads after the first are recorded. | Test |
 | FR-027-AC-32 | The Factory pane with its ix-board chip closed runs no `ix-board agents`; opening the chip reads it within 20 seconds, and closing it stops the reads. | Test |
-| FR-027-AC-33 | With the chip open for an hour while Linear's rate limit holds, `ix-board agents` runs at least 50 and at most 61 times, no gate outcome is a backoff and no Linear spend is sampled; an answer another session read 30 seconds ago is used without a read. | Test |
-| FR-027-AC-34 | With 100 escalations of which 10 are open, the Escalations pane runs at most 10 `escalation show` in 10 minutes and at most 4 at once. | Test |
+| FR-027-AC-33 | With the chip open for an hour while Linear's rate limit holds, `ix-board agents` runs at least 50 and at most 61 times, no gate outcome is a backoff and no Linear spend is sampled; an answer another session read 30 seconds ago is used without a read; an `ix-board agents` that takes 8 seconds still runs at least 55 times in the hour, and only `agents-gate.json` is written for it. | Test |
+| FR-027-AC-34 | With 100 escalations of which 10 are open, the Escalations pane runs exactly 10 `escalation show` in 10 minutes, at most 4 at once, and Resolve all offers the 10 recommendations; an open row whose detail is not yet read is drawn as being read, and neither Resolve all nor its own resolve sends it or counts it as having no recommendation. | Test |
 | FR-027-AC-35 | A band of the attention cell alone runs `agent-msg escalations` and no `escalation show`. | Test |
 | FR-027-AC-36 | A chosen focus that Linear names, with 10 more leads listed, is drawn in 30 minutes without a `work show`. | Test |
 | FR-027-AC-37 | The Focus pane with 11 leads runs at most 77 `work show` in an hour, and the refresh key reads every lead at once. | Test |
-| FR-027-AC-38 | The Message pane reads 14 days of the log once in an hour and otherwise at most 60 times the minutes since; with the Focus pane beside it `agent-msg who` runs at most 61 times in the hour. | Test |
+| FR-027-AC-38 | The Message pane reads 14 days of the log once in an hour and otherwise at most 60 times the minutes since; with the Focus pane beside it `agent-msg who` runs at most 61 times in the hour; a later read that reaches its 500 messages is followed at once by a full read. | Test |
 | FR-027-AC-39 | The Team pane reads its series at most 13 times in an hour. | Test |
 | FR-027-AC-40 | A Prometheus that answers every query in 3 seconds is read at least 30 times in 10 minutes with `refreshSeconds` 15, with no failure and at most one slow answer. | Test |
 | FR-027-AC-41 | The Focus pane on view in herdr runs at most 11 view checks in 20 minutes while its focus is read at least 9 times. | Test |

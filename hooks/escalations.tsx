@@ -502,6 +502,12 @@ async function resolveEscalation($: EngineInterface, id: string): Promise<void> 
 /** One press: resolves with the escalation's own recommendation. */
 async function resolveRecommended($: EngineInterface, id: string): Promise<void> {
   const x = (await read($, escalations)).find(e => e.id === id)
+  // A row listed before its detail is read has no recommendation yet: nothing is sent, and the detail is read.
+  if (x !== undefined && !x.hasDetail) {
+    markStale('escalationDetail')
+    await notice($, `${id}: its detail is still being read.`)
+    return
+  }
   if (!x?.recommendation) {
     await notice($, `${id} has no recommendation; open it to write a decision.`)
     return
@@ -528,9 +534,11 @@ export const bulkStep = (busy: boolean, confirm: string, key: string): 'wait' | 
 function bulkSet(all: readonly Escalation[], hidden: readonly string[], filter: EscalationFilter) {
   const open = filter === 'open' ? viewOf(all, hidden, 'open') : []
   const rows = open.filter(x => x.recommendation)
+  // A row whose detail is still being read may have a recommendation: it is neither sent nor counted as without one.
+  const loading = open.filter(x => !x.hasDetail).length
   // The arm key lists the exact ids, so a changed set is a new first press, not a confirm.
   const key = `resolve-all:${rows.map(x => x.id).sort().join(',')}`
-  return { open, rows, skipped: open.length - rows.length, key }
+  return { open, rows, loading, skipped: open.length - rows.length - loading, key }
 }
 
 /**
@@ -541,7 +549,12 @@ function bulkSet(all: readonly Escalation[], hidden: readonly string[], filter: 
  */
 async function resolveAll($: EngineInterface): Promise<void> {
   const [all, hidden, filter] = await Promise.all([read($, escalations), read($, escalationHidden), read($, escalationFilter)])
-  const { open, rows, skipped, key } = bulkSet(all, hidden, filter)
+  const { open, rows, loading, skipped, key } = bulkSet(all, hidden, filter)
+  if (loading > 0) {
+    markStale('escalationDetail')
+    await notice($, `Wait: the detail of ${loading} open ${loading === 1 ? 'escalation is' : 'escalations are'} still being read.`)
+    return
+  }
   if (rows.length === 0) {
     await notice($, open.length === 0 ? 'Nothing is open.' : `Nothing to resolve: none of the ${open.length} open has a recommendation.`)
     return
@@ -844,6 +857,11 @@ export function registerEscalations(on: On, _options: Options): void {
               {line}
             </Text>
           ))}
+          {!x.hasDetail && (
+            <Text key={`loading-${x.id}`} dimColor size="footnote">
+              reading its detail…
+            </Text>
+          )}
           {answer && (
             <Text key={`answer-${x.id}`} size="footnote" wrap="truncate-end">
               {clampLines(`${isOpen(x) ? '→' : '✓'} ${answer}`, width - 4, 1)[0]}

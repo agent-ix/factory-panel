@@ -319,6 +319,8 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     }
     const isNamed = chosenName !== null
     const reports = isNamed ? [] : await gather()
+    // No lead was asked, so a failure of an earlier read of them says nothing of what is drawn now.
+    if (isNamed) sourceClear('agent-msg work')
 
     // The focuses that can be chosen are those the reports name.
     const refs = reportedRefs(reports.map(r => r.report.scope))

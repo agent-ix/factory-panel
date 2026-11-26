@@ -19,6 +19,7 @@ The mod SHALL keep every file it reads or writes for its own state under `~/.ix/
 ## Behavior
 
 - The mod SHALL write the Linear gate cache to `~/.ix/factory-panel/linear-gate.json`.
+- The mod SHALL write the gate of `ix-board agents`, which makes no Linear call and has no older file, to `~/.ix/factory-panel/agents-gate.json`, apart from the Linear gate.
 - Where `~/.ix/factory-panel/linear-gate.json` does not exist and `~/.cache/factory-panel/linear-gate.json` does, the mod SHALL read the old file once as the initial cache.
 - The mod SHALL write the Linear gate cache by writing a temporary file and renaming it over the cache.
 - Where that rename fails, the mod SHALL leave the cache as it was.

@@ -168,7 +168,7 @@ test('ix-board agents is shared for a minute, not held by the 30 minute Linear g
 test('a second session takes the agents another session read within the minute', { options: { teams: 'QSL' } }, async ($, on) => {
   trace('FR-027-AC-33')
   const { w } = watched(on)
-  const fresh = (at: number) => w.files.set(`${FP}/linear-gate.json`, JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at, claimAt: null, data: { agents: [], notes: [] } } } }))
+  const fresh = (at: number) => w.files.set(`${FP}/agents-gate.json`, JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at, claimAt: null, data: { agents: [], notes: [] } } } }))
   fresh(w.clock!.now())
   await startSession($)
   const ui = await openPane($, 'factory')
@@ -206,9 +206,12 @@ test('the Escalations pane reads the detail of the rows it shows, four at a time
   const ui = await openPane($, 'escalations')
   await run(w, 10 * MIN)
   // Before: one `escalation show` for each of the 100 rows on the first poll, all at once.
-  expect((await meterRow($, 'escalationDetail')).spawns).toBeLessThanOrEqual(10)
-  expect(ran(w, l => l.startsWith('agent-msg escalation show '))).toBeLessThanOrEqual(10)
+  expect((await meterRow($, 'escalationDetail')).spawns).toBe(10)
+  expect(ran(w, l => l.startsWith('agent-msg escalation show '))).toBe(10)
   expect(state.max).toBeLessThanOrEqual(4)
+  // Each open row's recommendation reached the pane: Resolve all would send all 10.
+  await ui.press({ key: 'resolve-all' })
+  expect((await ui.find({ type: 'Text', text: /^Resolve \d+ escalations/ }))?.text).toBe('Resolve 10 escalations with each one’s recommendation. Press again to send.')
   await ui.unmount()
 })
 
@@ -359,5 +362,64 @@ test('a pane behind another herdr tab makes no read but the view check, and coun
   expect(fetched.length).toBe(0)
   expect(ran(w, l => l === 'agent-msg doctor --json' || l.startsWith('ix-board'))).toBe(0)
   expect((await meterRow($, 'prometheus')).skips).toMatch(/[1-9]\d* off-view/)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- after review
+
+test('an ix-board agents that takes 8 seconds is still read once a minute', { options: { teams: 'QSL' } }, async ($, on) => {
+  trace('FR-027-AC-33')
+  const { w } = watched(on)
+  answer(w, l => l.startsWith('ix-board --json agents'), () => w.clock!.sleep(8 * SEC).then(() => out(JSON.stringify({ agents: [] }))))
+  await startSession($)
+  const ui = await openPane($, 'factory')
+  await ui.press({ key: 'board' })
+  await run(w, HOUR)
+  // Stamped when it ended, every other ask found the last read fresh: 30 an hour, data up to 2 minutes old.
+  const agents = (await meterRow($, 'board')).spawns
+  expect(agents).toBeGreaterThanOrEqual(55)
+  expect(agents).toBeLessThanOrEqual(60 + 1)
+  // Its gate is a file of its own: the Linear gate is not written for it.
+  expect(w.files.has(`${FP}/agents-gate.json`)).toBe(true)
+  expect(w.files.has(`${FP}/linear-gate.json`)).toBe(false)
+  await ui.unmount()
+})
+
+test('an open escalation whose detail is still being read is neither resolved nor counted as having no recommendation', async ($, on) => {
+  trace('FR-027-AC-34')
+  const { w } = watched(on)
+  answer(w, l => l === 'agent-msg escalations', () => out(`e1  waiting  -  ${LEAD}  11-20 16:29`))
+  // The detail does not answer within the test.
+  answer(w, l => l.startsWith('agent-msg escalation show '), () => new Promise<never>(() => undefined))
+  await startSession($)
+  const ui = await openPane($, 'escalations')
+  await run(w, 30 * SEC)
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'reading its detail…')).toBe(true)
+  await ui.press({ key: 'resolve-all' })
+  expect((await ui.find({ type: 'Text', text: /still being read/ }))?.text).toBe('Wait: the detail of 1 open escalation is still being read.')
+  await ui.press({ key: 'quick-e1' }).catch(() => undefined)
+  expect(ran(w, l => l.startsWith('agent-msg resolve'))).toBe(0)
+  await ui.unmount()
+})
+
+test('a later read of the log that reaches its limit is followed by a full read', async ($, on) => {
+  trace('FR-027-AC-38')
+  const { w } = watched(on)
+  let busy = false
+  const broadcast = (text: string) => `11-26 10:00 ${LEAD} -> all: ${text}`
+  answer(
+    w,
+    l => l.startsWith('agent-msg log'),
+    l => (l.includes('--since 14d') ? out([broadcast('the whole log')].join('\n')) : out(busy && !(busy = false) ? Array.from({ length: 500 }, (_, i) => `11-26 10:01 ${LEAD} -> draco:QSL:l1: note ${i}`).join('\n') : '')),
+  )
+  await startSession($)
+  const ui = await openPane($, 'relay')
+  await run(w, 3 * MIN)
+  expect(ran(w, l => l.startsWith('agent-msg log --since 14d'))).toBe(1)
+  // A busy bus: 500 messages in the minutes asked for once, so broadcasts before them may be missing.
+  busy = true
+  await run(w, 65 * SEC)
+  expect(ran(w, l => l.startsWith('agent-msg log --since 14d'))).toBe(2)
+  expect((await ui.findAll({ type: 'Text' })).some(t => /the whole log/.test(t.text ?? ''))).toBe(true)
   await ui.unmount()
 })
