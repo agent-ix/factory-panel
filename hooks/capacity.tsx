@@ -12,7 +12,7 @@ import { gauge } from './ui/glyphs'
 // Lanes and CPU are the ix-relay watcher's series, finished work is the ix-board fleet ledger of this machine. Every
 // read is read-only: `fleet saturation` and the `fleet capacity` commands are never run from here.
 
-const capacity = atom({ plugin: 'factory-panel', key: 'capacity' } as const, null as CapacityView | null, { shape: 'capacity-3' })
+const capacity = atom({ plugin: 'factory-panel', key: 'capacity' } as const, null as CapacityView | null, { shape: 'capacity-4' })
 /** The hosts whose stuck and waiting lanes are listed, and `?` where what is missing is. */
 const hostsOpen = atom({ plugin: 'factory-panel', key: 'hostsOpen' } as const, [] as string[])
 
@@ -154,6 +154,7 @@ export function pollCapacity($: EngineInterface, options: Options): Promise<bool
     const names = new Set([...samples(states), ...samples(values), ...samples(deficits)].flatMap(s => hostOf(s) ?? []).concat(rows.map(r => r.host.toLowerCase())))
 
     const why: string[] = []
+    const doneWhy: string[] = []
     const lacks = (got: Got<Sample[]>, series: string) => {
       if ('missing' in got) why.push(`${series}: ${got.missing}`)
       else if (got.data.length === 0) why.push(`Prometheus has no ${series} sample`)
@@ -161,7 +162,7 @@ export function pollCapacity($: EngineInterface, options: Options): Promise<bool
     lacks(states, STATE)
     lacks(values, BUSY)
     if ('missing' in deficits) why.push(`${DEFICIT}: ${deficits.missing}`)
-    if ('missing' in ledger) why.push(`done/h: ${ledger.missing}`)
+    if ('missing' in ledger) doneWhy.push(`done/h: ${ledger.missing}`)
 
     const hosts: HostRow[] = [...names].sort().map(host => {
       const own = lanes.filter(l => l.host === host && l.labels.state !== 'ended')
@@ -178,7 +179,7 @@ export function pollCapacity($: EngineInterface, options: Options): Promise<bool
       const cpu = cpuOf(samples(values), ageOf, host)
       if (!known && samples(states).length > 0) why.push(`${host}: no current lane state`)
       if (cpu === null && samples(values).length > 0) why.push(`${host}: no current CPU sample`)
-      if (output.why !== null) why.push(`${host} done/h: ${output.why}`)
+      if (output.why !== null) doneWhy.push(`${host} done/h: ${output.why}`)
       // Churning: lanes work now, and the share of the best output was 0 at every sample of two hours that were sampled.
       const peak = of(samples(most), host)
       const isChurning = (working ?? 0) > 0 && output.done === 0 && of(samples(earlier), host).length > 0 && peak.length > 0 && peak.every(s => Number(s.value[1]) === 0)
@@ -196,7 +197,7 @@ export function pollCapacity($: EngineInterface, options: Options): Promise<bool
         isChurning,
       }
     })
-    await update($, capacity, () => ({ hosts, why, at: now }))
+    await update($, capacity, () => ({ hosts, why, doneWhy, at: now }))
 
     if (!('missing' in ledger)) sourceOk('ix-board fleet ledger', now)
     else if (ledger.failed) sourceFailed('ix-board fleet ledger', ledger.missing)
@@ -213,12 +214,17 @@ const doneText = (at: HostRow): string => (at.done === null ? '—' : `${amount(
 const extras = (at: HostRow): string =>
   [at.needs === null ? null : `needs work ${at.needs}`, at.waiting === 0 ? null : `${at.waiting} waiting`, at.isChurning ? 'churning' : null].filter(x => x !== null).join(' · ')
 
-/** The table: a row for each host; a host with stuck or waiting lanes opens to them, and `○` says what is missing. */
+/**
+ * The table: a row for each host, a column only where some host has a figure of it. A host with stuck or waiting lanes
+ * opens to them. `○` says what is missing, done/h included, and is not drawn where done/h is all that is.
+ */
 export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>) {
   const [view, open] = await Promise.all([read($, capacity), read($, hostsOpen)])
   const press = (key: string) => () => void update($, hostsOpen, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
-  const why = view === null ? [] : view.why
   const hosts = view?.hosts ?? []
+  const isMissing = view !== null && (view.why.length > 0 || view.hosts.length === 0)
+  const why = view === null ? [] : [...view.why, ...view.doneWhy]
+  const hasDone = hosts.some(at => at.done !== null)
   const hasLanes = hosts.some(at => at.working !== null)
   const hasCpu = hosts.some(at => at.cpu !== null)
   const nameCells = Math.max(6, ...hosts.map(at => at.host.length + 3))
@@ -239,9 +245,9 @@ export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pi
       <Box flexDirection="row" gap={1} alignItems="center">
         <Text weight="semibold">Hosts</Text>
         {view === null && <Text dimColor size="caption">reading…</Text>}
-        {(why.length > 0 || (view !== null && hosts.length === 0)) && <Button key="hosts-why" plain label="○" onPress={press('?')} />}
+        {isMissing && <Button key="hosts-why" plain label="○" onPress={press('?')} />}
       </Box>
-      {open.includes('?') && why.map(w => <Text key={w} dimColor size="caption">{w}</Text>)}
+      {isMissing && open.includes('?') && why.map(w => <Text key={w} dimColor size="caption">{w}</Text>)}
       {hosts.length > 0 && (
         <Box flexDirection="row">
           {head('h-host', nameCells, '  host')}
@@ -249,7 +255,7 @@ export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pi
           {hasLanes && head('h-stuck', 7, 'stuck')}
           {hasLanes && head('h-idle', 6, 'idle')}
           {hasCpu && head('h-cpu', 8, 'CPU')}
-          {head('h-done', 14, 'done/h')}
+          {hasDone && head('h-done', 14, 'done/h')}
         </Box>
       )}
       {hosts.map(at => {
@@ -264,7 +270,7 @@ export async function drawCapacity($: EngineInterface, { Box, Text, Button }: Pi
               {hasLanes && cell('stuck', 7, count(at.stuck), (at.stuck ?? 0) > 0 ? 'warning' : undefined)}
               {hasLanes && cell('idle', 6, count(at.idle))}
               {hasCpu && cell('cpu', 8, at.cpu === null ? '—' : `${gauge(at.cpu)} ${Math.floor(at.cpu * 100 + 1e-9)}%`)}
-              {cell('done', 14, doneText(at))}
+              {hasDone && cell('done', 14, doneText(at))}
               {extras(at) !== '' && <Text color="warning" size="caption">{extras(at)}</Text>}
             </Box>
             {isOpen && at.lanes.map(l => <Text key={l.lane} dimColor size="caption">{`     ${l.lane}  ${l.kind}: ${l.reason}`}</Text>)}

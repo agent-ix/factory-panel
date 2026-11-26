@@ -766,7 +766,7 @@ test('a whoami that never returns leaves the band painted from the fallback, is 
 })
 
 test('a missing and a malformed declaration and a malformed choice file each still draw the band', async ($, on) => {
-  trace("NFR-004-M-9")
+  trace("NFR-004-M-8")
   const w = world(on)
   fullWorld(w)
   for (const [declaration, chosen] of [[undefined, undefined], ['{ nope', undefined], [undefined, '[1,2'], ['{ nope', '"x"']] as const) {

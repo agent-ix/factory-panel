@@ -44,8 +44,8 @@ The Team view SHALL show a table of the fleet's hosts: `host`, `working`, `stuck
 ### Missing
 
 - A figure that is not known SHALL read `—`, never 0.
-- A column that no host has a figure of (`working`, `stuck`, `idle`, `CPU`) SHALL be left out.
-- Why something is missing SHALL be said only when the one `○` beside the heading is pressed.
+- A column that no host has a figure of (`working`, `stuck`, `idle`, `CPU`, `done/h`) SHALL be left out.
+- Why something is missing SHALL be said only when the one `○` beside the heading is pressed, why a done/h is lacking included. Where done/h is all that is missing there SHALL be no `○`.
 - A failing command SHALL mark its source failed. A missing command or view SHALL NOT.
 - Before the first read the section SHALL say it is reading.
 
@@ -60,7 +60,7 @@ The Team view SHALL show a table of the fleet's hosts: `host`, `working`, `stuck
 | FR-032-AC-5 | done/h is the row's output with its best, and `—` with no row, a null output, differing rows or an old sample, never 0. | Test |
 | FR-032-AC-6 | A shortfall above 0 reads `needs work N`, and one of 0 or from an old sample says nothing. | Test |
 | FR-032-AC-7 | `churning` is said only with lanes working, a done/h of 0 and samples of 0 across the last 2 hours. | Test |
-| FR-032-AC-8 | What is missing is said only behind the one `○`, columns of nothing are left out, a failing command marks its source failed and a missing command or view does not, and before the first read the section says it is reading. | Test |
+| FR-032-AC-8 | What is missing is said only behind the one `○`, which is not drawn where only done/h is missing, columns of nothing, done/h among them, are left out, a failing command marks its source failed and a missing command or view does not, and before the first read the section says it is reading. | Test |
 | FR-032-AC-9 | The pane runs only the ledger query, once a minute and on `r`, and the widget reads nothing of the hosts. | Test |
 | FR-032-AC-10 | In a real session the Team view shows the live hosts. | Demonstration |
 

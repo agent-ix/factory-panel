@@ -201,7 +201,7 @@ export async function focusWasRead($: EngineInterface): Promise<boolean> {
  */
 export async function choiceApplied($: EngineInterface): Promise<Selection> {
   const sel = await refreshSelection($)
-  markStale('focus', 'board', 'work', 'tickets', 'retro', 'roles')
+  markStale('focus', 'board', 'work', 'tickets', 'retro')
   // Where none can be made, what is held is drawn.
   await readForCommand($, true).catch(() => undefined)
   $.ui.invalidate('ui.render')

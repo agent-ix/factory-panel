@@ -360,7 +360,7 @@ test('a lead another session is reading is left to it until its claim is old', a
 })
 
 test('no more than eight reads of other machines are claimed at once over all sessions', async ($, on) => {
-  trace("FR-030-AC-14", "NFR-004-M-10")
+  trace("FR-030-AC-14", "NFR-004-M-9")
   const w = leadsWorld(on, [FAR])
   const claims = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`luna:QSL:lead-${i}`, { at: null, error: null, triedAt: null, claimAt: NOW }]))
   seed(w, claims(8))
@@ -374,7 +374,7 @@ test('no more than eight reads of other machines are claimed at once over all se
 })
 
 test('with seven reads claimed the eighth is made', async ($, on) => {
-  trace("FR-030-AC-14", "NFR-004-M-10")
+  trace("FR-030-AC-14", "NFR-004-M-9")
   const w = leadsWorld(on, [FAR])
   seed(w, Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`luna:QSL:lead-${i}`, { at: null, error: null, triedAt: null, claimAt: NOW }])))
   await startSession($)

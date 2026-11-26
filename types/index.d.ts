@@ -243,24 +243,6 @@ export type RetroView = { team: string; classes: RetroClass[] | null; latest: st
 
 export type RetroMeta = { at: number | null; error: string | null }
 
-/** One rule of a role evaluation; `reason` and `rubric` say why one is not scored. */
-export type RoleRule = { id: string; status: string; query: string; value: number | null; comparator: string; target: number | null; reason: string | null; rubric: string | null }
-
-/**
- * One role of an evaluation: the rules passed of those scored, and `trend`, the change from the window before over the
- * `matched` rules scored in both; `matched` is null where the answer does not say.
- */
-export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; matched: number | null; rules: RoleRule[]; objectives: RoleObjective[] }
-
-/** One objective metric of a role; a null `value` has no measurement, and `reason` says why. */
-export type RoleObjective = { id: string; query: string; value: number | null; unit: string; reason: string | null }
-
-/** What the mod keeps of `ix-board retro eval --json`: the window (ms since the epoch) and its roles. */
-export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
-
-/** A team's Roles section: its latest evaluation, and what to say about it or its absence. */
-export type RolesView = { team: string; report: RoleReport | null; note: string | null; isError: boolean }
-
 /** A lane of a host that is stuck, or waiting on something that is no fault, and why. */
 export type LaneNote = { lane: string; kind: 'stuck' | 'waiting'; reason: string }
 
@@ -268,7 +250,7 @@ export type LaneNote = { lane: string; kind: 'stuck' | 'waiting'; reason: string
 export type HostRow = { host: string; working: number | null; stuck: number | null; idle: number | null; waiting: number; lanes: LaneNote[]; cpu: number | null; done: number | null; best: number | null; needs: number | null; isChurning: boolean }
 
 /** The fleet as read at `at`, with what is missing and why. */
-export type CapacityView = { hosts: HostRow[]; why: string[]; at: number }
+export type CapacityView = { hosts: HostRow[]; why: string[]; /** why a host has no done/h */ doneWhy: string[]; at: number }
 
 // ---------------------------------------------------------------- Work pane
 
@@ -370,8 +352,6 @@ declare module 'claude-code' {
       retroOpen: string[]
       teamOpen: string[]
       retroWarn: boolean
-      roles: Shaped<RolesView[]>
-      rolesOpen: string[]
       capacity: Shaped<CapacityView | null>
       hostsOpen: string[]
       workLeads: Shaped<WorkLead[]>

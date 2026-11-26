@@ -39,7 +39,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 - Where a source error cut a refresh short, the mod SHALL NOT call ix-board for that focus again for 5 minutes.
 - Where ix-board is not called during those 5 minutes, the mod SHALL mark the outcome as earlier.
 - The mod SHALL ask ix-board again at the first poll after those 5 minutes.
-- Where a gated read fails outright with no rate limit, the mod SHALL hold it for 5 minutes and keep showing its error meanwhile, except a role evaluation that failed after 10 seconds or more, held 30 minutes ([FR-031](./FR-031-role-evaluations.md)).
+- Where a gated read fails outright with no rate limit, the mod SHALL hold it for 5 minutes and keep showing its error meanwhile.
 - A manual refresh SHALL ask ix-board once 60 seconds have passed since the last read, and at once where that read is held for a source error, unless a rate limit holds as [FR-026](./FR-026-per-project-calls.md) states.
 - Where the source error is one [FR-026](./FR-026-per-project-calls.md) infers from refusals, not one ix-board's own words name, the mod SHALL double that time for each such refresh in a row, to 10, 20 and at most 30 minutes, until a refresh is kept for the full interval.
 - Where that doubled time holds an outcome, a manual refresh SHALL ask once 60 seconds have passed.

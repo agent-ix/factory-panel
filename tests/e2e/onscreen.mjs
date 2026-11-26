@@ -2,7 +2,7 @@
 // FR-027-AC-16 and AC-28: drives real `claude` sessions against stand-ins for every command and the
 // metrics service, and logs each read the mod makes while its views are on and off screen, checking
 // that what was read is drawn (the Work tab with its role events and silent leads, the Team tab with
-// its retro health, roles and hosts, and the band's work cell):
+// its retro health and hosts, and the band's work cell):
 //   fullscreen  panel open, Work, Team, another tab, covered by the transcript view, closed
 //   classic     band only, popup open, popup closed, band collapsed
 //   tmux        a session nobody is attached to, attached, detached again
@@ -79,7 +79,6 @@ const EVENT = { id: '1-0', at_ms: NOW_MS - 60000, binding: { address: LEAD }, ch
 /** A ticket the focus status does not name. */
 const SINGLE = { identifier: 'QSL-3', title: 'Stand-in single ticket', state: 'unstarted', state_name: 'Specced', attachments_complete: true, pull_requests: [] }
 const DELTA = { latest: new Date(NOW_MS).toISOString(), metrics: [{ id: 'standin_metric', class: 'flow', status: 'ok', regressing: false }] }
-const EVAL = { schema_version: 1, window: { start_ms: NOW_MS - 86400000, end_ms: NOW_MS }, roles: [{ role: 'standin-coder', score: { passed: 1, evaluated: 2, pass_rate: 0.5 }, trend: 0, trend_matched_rules: 2, rules: [{ id: 'STAND-R1', status: 'fail', query: 'standin.query', value: 3, comparator: '<=', target: 1 }], objective_metrics: [] }] }
 const LEDGER = { view: 'host_output_share_of_recorded_level', since_ms: null, rows: [{ host: 'standin-host', share_percent: 80, output_per_hour: 4, step_no: 1, recorded_output_per_hour: 5, output_basis: 'commits', at_ms: NOW_MS, unavailable_reason: null, source_basis: {} }] }
 const ANSWERS = {
   herdr: [['api snapshot', JSON.stringify({ result: { snapshot: { version: '0', agents: [], workspaces: [] } } })]],
@@ -101,7 +100,6 @@ const ANSWERS = {
     ['--json project-chunk', JSON.stringify({})],
     ['--json issues', JSON.stringify({ complete: true, missing: [], issues: [SINGLE] })],
     ['--json retro delta', JSON.stringify(DELTA)],
-    ['--json retro eval', JSON.stringify(EVAL)],
     ['--json fleet ledger query', JSON.stringify(LEDGER)],
   ],
 }
@@ -326,7 +324,7 @@ const json = JSON.stringify
 
 const TABS = /Factory\s+Focus\s+Work\s+Escalations\s+\S+\s+Team/
 const BAND_SOURCES = ['prometheus query', 'agent-msg work', 'ix-board agents', 'ix-board focus']
-const TEAM_SOURCES = ['prometheus range', 'prometheus query', 'ix-board retro delta', 'ix-board retro eval', 'ix-board fleet']
+const TEAM_SOURCES = ['prometheus range', 'prometheus query', 'ix-board retro delta', 'ix-board fleet']
 /** The band's work cell: the two tickets of the stand-in lead, of one lead of the two listed, and their one open PR. */
 const WORK_CELL = /≥2 tickets \(1\/2 leads\) · ≥1 PR open/
 
@@ -361,11 +359,11 @@ async function fullscreen(s) {
   check('fullscreen: the Team tab reads its sources', has(team, ['prometheus range', 'prometheus query', 'ix-board fleet']), json(team))
   // The retro reads keep their answer for minutes: the one made while the panes opened may still stand.
   const everRead = new Set(readFileSync(s.log, 'utf8').split('\n').filter(l => l !== '' && !l.startsWith('#')).map(sourceOf))
-  check('fullscreen: the retro health and the role evaluation were read', ['ix-board retro delta', 'ix-board retro eval'].every(source => everRead.has(source)), [...everRead].join(', '))
+  check('fullscreen: the retro health was read, and no role evaluation', everRead.has('ix-board retro delta') && !everRead.has('ix-board retro eval'), [...everRead].join(', '))
   check('fullscreen: and no source of another tab', only(team, ['ix config', 'agent-msg whoami', ...TEAM_SOURCES]), Object.keys(team).join(', '))
   const drawn = s.screen()
   s.save('team')
-  check('fullscreen: the retro health, the role and the hosts are on screen', /Health  retro/.test(drawn) && /Roles · QSL/.test(drawn) && /standin-coder/.test(drawn) && /Hosts/.test(drawn) && /standin-host/.test(drawn) && /◔ 40%/.test(drawn) && /4 \(best 5\)/.test(drawn), drawn)
+  check('fullscreen: the retro health and the hosts are on screen', /Health  retro/.test(drawn) && !/Roles/.test(drawn) && /Hosts/.test(drawn) && /standin-host/.test(drawn) && /◔ 40%/.test(drawn) && /4 \(best 5\)/.test(drawn), drawn)
   check('fullscreen: nothing missing is spelled out', !/no series published|unavailable/.test(drawn), drawn)
 
   const switched = s.mark('switched to the Message tab')

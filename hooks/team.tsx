@@ -7,15 +7,14 @@ import { ACCENT, daySpark, spark } from './ui/glyphs'
 import type { Options, RangeSeries } from './shared'
 import { track } from './schedule'
 import { drawCapacity, pollCapacity } from './capacity'
-import { headlineViews, viewsOf } from './band/modules'
-import { drawRoles, retroTeams } from './roles'
-import { home, selectionReady } from './selection'
+import { headlineViews, selectedTeams, viewsOf } from './band/modules'
+import { getSelection, home, scopeOf, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
 // The Team pane: for each team a few lines of figures from the ix_team_* series behind Grafana's "Team flow and effort"
 // dashboard, each with its own name and history: tickets closed and PRs merged, what is in progress and blocked, what is
 // ready, and how long review takes, with the rest behind `more`. Under the teams, each team's retro health in one line,
-// its role evaluations (hooks/roles.tsx) and the fleet's hosts (hooks/capacity.tsx). A figure or line with no data is
+// and the fleet's hosts (hooks/capacity.tsx). A figure or line with no data is
 // left out, and one `○` beside the team's name says what is missing and why when pressed.
 
 const PANE = 'team'
@@ -222,6 +221,9 @@ async function readTeam($: EngineInterface, options: Options): Promise<boolean> 
 }
 
 // ---------------------------------------------------------------- retro health
+
+/** The selected teams, whose rows and retro health the Team view draws. */
+const retroTeams = (): readonly string[] => selectedTeams(scopeOf(getSelection()))
 
 const RETRO_TIMEOUT_MS = 10_000
 
@@ -520,7 +522,6 @@ export function registerTeam(on: On, options: Options): void {
           {health.map(healthLine)}
           {health.length === 0 && <Text dimColor>{rmeta.at === null && rmeta.error === null ? '○ Health  reading' : '○ Health  no team'}</Text>}
         </Box>
-        {await drawRoles($, els)}
         {await drawCapacity($, els)}
 
         {rmeta.error !== null && warnOpen && rmeta.error.split(' · ').map(x => <Text key={x} color="warning" size="caption">{`ix-board retro: ${x}`}</Text>)}

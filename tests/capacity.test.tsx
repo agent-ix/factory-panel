@@ -137,6 +137,7 @@ test('a CPU sample that is old, doubled or not a ratio reads a dash, and the ○
   ] }, rowsOf([]))
   const d = await draw($, w)
   const cpu = async (host: string) => (await d.cells(host))[0]
+  expect(await d.section()).not.toContain('done/h')
   expect(await cpu('aged')).toBe('—')
   expect(await cpu('edge')).toBe('◑ 50%')
   expect(await cpu('moved')).toBe('○ 20%')
@@ -144,6 +145,7 @@ test('a CPU sample that is old, doubled or not a ratio reads a dash, and the ○
   expect(await cpu('wild')).toBe('—')
   expect(await cpu('nil')).toBe('○ 0%')
   const said = await d.why()
+  expect(await d.section()).not.toContain('done/h')
   for (const host of ['aged', 'twice', 'wild']) expect(said).toContain(`${host}: no current CPU sample`)
   await d.ui.unmount()
 })
@@ -174,7 +176,7 @@ test('blocked and stuck lanes are stuck, listed with their reason by a press, an
   }, rowsOf([]))
   const d = await draw($, w)
   expect(await d.labels()).toContain('▸ draco')
-  expect((await d.cells('draco')).filter(c => !/[▸▾]/.test(c))).toEqual(['1', '3', '0', '—', '1 waiting'])
+  expect((await d.cells('draco')).filter(c => !/[▸▾]/.test(c))).toEqual(['1', '3', '0', '1 waiting'])
   expect((await d.lines()).join('\n')).not.toContain('hub:A:')
   await d.ui.press({ key: 'host-draco' })
   expect((await d.lines()).filter(l => l.includes('hub:A:')).map(l => l.trim())).toEqual([
@@ -192,20 +194,18 @@ test('blocked and stuck lanes are stuck, listed with their reason by a press, an
 test('done/h is the output of the host’s ledger row with the best recorded, and a dash until there is one', async ($, on) => {
   trace("FR-032-AC-5")
   const hosts = ['best', 'part', 'zero', 'nobest', 'old', 'null', 'split', 'twin', 'norow']
-  const w = await setup($, on, { lanes: hosts.map(h => [h, `hub:${h}:a`, 'idle']) }, rowsOf([
+  const w = await setup($, on, { lanes: hosts.map(h => [h, `hub:${h}:a`, 'idle']), busy: hosts.map(host => ({ host, ratio: 0.1 })) }, rowsOf([
     row('best', { output_per_hour: 6 }), row('part', { output_per_hour: 2.25 }), row('zero', { output_per_hour: 0 }),
     row('nobest', { recorded_output_per_hour: null }), row('old', {}, 11),
     row('null', { output_per_hour: null, unavailable_reason: 'coverage_below_90_percent' }),
     row('split'), row('split', { output_per_hour: 4 }), row('twin'), row('twin'),
   ]))
   const d = await draw($, w)
-  const done = async (host: string) => (await d.cells(host))[3]
+  const done = async (host: string) => (await d.cells(host))[4]
+  expect(await d.section()).toContain('done/h')
+  // Nothing but done/h is missing here, so there is no ○.
+  expect(await d.ui.find({ key: 'hosts-why' })).toBeUndefined()
   expect(await Promise.all(hosts.map(done))).toEqual(['6 (best 6)', '2.3 (best 6)', '0 (best 6)', '3', '—', '—', '—', '3 (best 6)', '—'])
-  const said = await d.why()
-  expect(said).toContain('old done/h: its ledger sample is old')
-  expect(said).toContain('null done/h: coverage_below_90_percent')
-  expect(said).toContain('split done/h: 2 differing ledger rows')
-  expect(said).toContain('norow done/h: no best recorded in this machine’s ledger')
   await d.ui.unmount()
 })
 
@@ -257,19 +257,20 @@ for (const [what, ledger, reason, isFailure] of [
   ['answers no rows', () => out('{"view":"x"}'), 'the answer is not rows of hosts', true],
   ['is cut short', () => ({ ...rowsOf([])(), isStdoutTruncated: true }), 'the answer was cut at 4 MiB', true],
 ] as [string, () => Run, string, boolean][]) {
-  test(`an ix-board that ${what} is said once behind the ○, with the other columns drawn`, async ($, on) => {
+  test(`an ix-board that ${what} leaves out the done/h column, with no ○ and the other columns drawn`, async ($, on) => {
     trace("FR-032-AC-8")
     const w = await setup($, on, FULL, ledger)
     const d = await draw($, w)
-    expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%', '—', 'needs work 3'])
+    expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%', 'needs work 3'])
+    expect(await d.section()).not.toContain('done/h')
     expect((await d.lines()).join('\n')).not.toContain(reason)
-    expect((await d.why()).filter(l => l.includes(reason))).toEqual([`done/h: ${reason}`])
+    expect(await d.ui.find({ key: 'hosts-why' })).toBeUndefined()
     expect(await failed($)).toEqual(isFailure ? [expect.stringContaining(reason)] : [])
     await d.ui.unmount()
   })
 }
 
-test('a failing Prometheus query leaves out its columns and is said behind the ○', async ($, on) => {
+test('a failing Prometheus query leaves out its columns and is said behind the ○, with why a done/h is lacking', async ($, on) => {
   trace("FR-032-AC-8")
   const w = await setup($, on, { ...FULL, failing: /lane_state|host_busy/ })
   const d = await draw($, w)

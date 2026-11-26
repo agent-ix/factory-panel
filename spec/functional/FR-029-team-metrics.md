@@ -54,7 +54,7 @@ The Team view SHALL show, for each selected team ([Selected teams](#selected-tea
 
 ### Selected teams
 
-- The selected teams SHALL be the same for the rows, the retro health, the role evaluations, the widget and the band's team cell.
+- The selected teams SHALL be the same for the rows, the retro health, the widget and the band's team cell.
 - Where the teams are chosen, by the user's teams choice or else a session declaration ([FR-012](./FR-012-selection-precedence.md)), the selected teams SHALL be those, whatever the focus is: `all` or a name. A `teams` choice of `all` selects no team in particular.
 - Where no teams are chosen, the selected teams SHALL be the session's own team, for the focus `all` and a chosen focus alike; a focus SHALL NOT select any.
 - Where no teams are chosen and `agent-msg whoami` fails, no team is selected.

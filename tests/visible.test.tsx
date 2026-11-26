@@ -13,7 +13,7 @@ const MIN = 60 * SEC
 const LEAD = 'draco:QSL:code'
 
 /** Every read the mod makes, by the source behind it. */
-type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; events: number; retro: number; evals: number; capacity: number; whoami: number }
+type Reads = { prometheus: number; herdr: number; doctor: number; board: number; focus: number; escalations: number; announcements: number; team: number; events: number; retro: number; capacity: number; whoami: number }
 
 const VIEWS = ['factory', 'focus', 'work', 'escalations', 'relay', 'team'] as const
 type View = (typeof VIEWS)[number]
@@ -45,7 +45,6 @@ function watched(on: Parameters<TestBody>[1]) {
     team: fetched.filter(u => u.endsWith('/api/v1/query_range')).length,
     events: count(l => l.startsWith('agent-msg work events')),
     retro: count(l => l.startsWith('ix-board --json retro delta')),
-    evals: count(l => l.startsWith('ix-board --json retro eval')),
     // The capacity's ledger query and its series.
     capacity: count(l => l.startsWith('ix-board --json fleet')) + fleet.length,
     whoami: count(l => l === 'agent-msg whoami'),
@@ -74,7 +73,7 @@ test('with nothing on screen no source is read, however long the session runs', 
   const { w, reads } = watched(on)
   await startSession($)
   await pass(w, 20 * MIN)
-  expect(since({ ...reads(), prometheus: 0, herdr: 0, doctor: 0, board: 0, focus: 0, escalations: 0, announcements: 0, team: 0, events: 0, retro: 0, evals: 0, capacity: 0 }, reads())).toEqual([])
+  expect(since({ ...reads(), prometheus: 0, herdr: 0, doctor: 0, board: 0, focus: 0, escalations: 0, announcements: 0, team: 0, events: 0, retro: 0, capacity: 0 }, reads())).toEqual([])
   expect(w.ran.filter(l => l.startsWith('agent-msg who') && l !== 'agent-msg whoami')).toEqual([])
   expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual([])
 })
@@ -93,7 +92,7 @@ const DRAWS: Record<View, string[]> = {
   work: ['focus', 'events'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['team', 'retro', 'evals', 'capacity'],
+  team: ['team', 'retro', 'capacity'],
 }
 
 for (const view of VIEWS) {
@@ -122,7 +121,7 @@ test('the Factory widget reads the machines, herdr and the relay, and no agents'
   await ui.unmount()
 })
 
-test('the Team widget reads its series and the retro delta, and no role evaluation or capacity', { options: { teams: 'QSL' } }, async ($, on) => {
+test('the Team widget reads its series and the retro delta, and no capacity', { options: { teams: 'QSL' } }, async ($, on) => {
   trace("FR-027-AC-3")
   const { w, reads } = watched(on)
   await startSession($)
