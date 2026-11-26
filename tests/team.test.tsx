@@ -105,13 +105,14 @@ async function draw($: $t, w: World, wait = 1000, opened = true, keyless = true)
 const after = (lines: string[], label: string) => lines[lines.indexOf(label) + 1]
 const retroCalls = (w: World) => w.ran.filter(l => l.startsWith('ix-board --json retro delta'))
 
-test('a team draws four rows, Shipping, Flowing, Fed and Review, with the rest behind more', async ($, on) => {
+test('a team draws its figures by their own names, line by line and under no group label, with the rest behind more', async ($, on) => {
   trace("FR-029-AC-1")
   const w = await setup($, on)
   const closed = await draw($, w, 1000, false)
   const at = (t: string) => closed.lines.indexOf(t)
-  expect(['Shipping', 'Flowing', 'Fed', 'Review'].map(at)).toEqual([...['Shipping', 'Flowing', 'Fed', 'Review'].map(at)].sort((a, b) => a - b))
-  expect(at('Shipping')).toBeGreaterThan(at('fsl'))
+  const order = ['closed', 'in progress', 'blocked', 'ready', 'PR cycle'].map(at)
+  expect(order.every((i, n) => i > (n === 0 ? at('fsl') : order[n - 1]!))).toBe(true)
+  for (const label of ['Shipping', 'Flowing', 'Fed', 'Review']) expect(closed.lines).not.toContain(label)
   expect(after(closed.lines, 'closed')).toBe('7')
   expect(after(closed.lines, 'in progress')).toBe('4')
   expect(after(closed.lines, 'blocked')).toBe('2')
@@ -130,19 +131,45 @@ test('a team draws four rows, Shipping, Flowing, Fed and Review, with the rest b
   await closed.ui.unmount()
 })
 
-test('a figure with no value is left out, never 0 or a dash, and its row’s ○ says why', async ($, on) => {
+test('a figure with no value is left out, and the team’s one ○ says what is missing and why', async ($, on) => {
   trace("FR-029-AC-2", "FR-029-AC-37")
   const w = await setup($, on)
   const d = await draw($, w, 1000, false)
-  for (const label of ['first review', 'oldest in stage', 'merged', '—']) expect(d.lines).not.toContain(label)
+  for (const label of ['first review', 'oldest', 'merged', '—']) expect(d.lines).not.toContain(label)
   expect(d.lines.join('\n')).not.toContain('no series published')
-  expect((await buttonsOf(d.ui)).filter(b => b.key.startsWith('why-fsl-')).map(b => b.key)).toEqual(['why-fsl-shipping', 'why-fsl-flowing', 'why-fsl-review'])
-  await d.ui.press({ key: 'why-fsl-review' })
-  expect(await textsOf(d.ui)).toContain('  first review: no series published')
-  await d.ui.press({ key: 'why-fsl-shipping' })
-  expect(await textsOf(d.ui)).toContain('  merged: no series published')
-  await d.ui.press({ key: 'why-fsl-review' })
-  expect(await textsOf(d.ui)).not.toContain('  first review: no series published')
+  expect((await buttonsOf(d.ui)).filter(b => b.label === '○' && b.key !== 'hosts-why').map(b => b.key)).toEqual(['why-QSL', 'why-fsl'])
+  expect(d.lines.slice(d.lines.indexOf('fsl'), d.lines.indexOf('fsl') + 3)).toEqual(['fsl', 'no team key', 'closed'])
+  await d.ui.press({ key: 'why-fsl' })
+  expect((await textsOf(d.ui)).filter(l => /^  [^:]+: /.test(l))).toEqual([
+    '  merged: no series published',
+    '  oldest: no series published',
+    '  first review: no series published',
+    '  leaf remaining: no series published',
+    '  ready unmerged PRs: no series published',
+    '  findings low: no series published',
+  ])
+  await d.ui.press({ key: 'why-fsl' })
+  expect((await textsOf(d.ui)).join('\n')).not.toContain('no series published')
+  await d.ui.unmount()
+})
+
+test('a team with every figure has no ○, and one with none is its name and the ○', async ($, on) => {
+  trace("FR-029-AC-2")
+  const names = ['wip_active', 'blocked_issues', 'stage_oldest_age_seconds', 'ready_issues', 'new_pr_first_review_median_seconds_24h', 'pr_cycle_median_seconds_24h', 'scope_leaf_remaining', 'prs_ready_unmerged', 'review_findings_confirmed_high_24h', 'review_findings_confirmed_medium_24h', 'review_findings_confirmed_low_24h', 'pr_changes_requested_share']
+  const full = { id: 'full', key: 'QSL' }
+  const none = { id: 'none', key: 'SWM' }
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL', 'SWM'] }), published: [
+    ...names.map(n => series(n, [259200], full)),
+    ...daily('closures_day', { 0: 1 }, full),
+    ...daily('merged_prs_day', { 0: 2 }, full),
+    scoped('completion', none),
+  ] })
+  const d = await draw($, w, 1000, false)
+  expect((await buttonsOf(d.ui)).filter(b => b.key.startsWith('why-')).map(b => b.key)).toEqual(['why-SWM'])
+  expect(after(d.lines, 'oldest')).toBe('3d')
+  const bare = under(d.lines, 'SWM')
+  expect(bare[0]).toMatch(/^[◔○]$/)
+  expect((await buttonsOf(d.ui)).map(b => b.key).filter(k => k.startsWith('more-'))).toEqual(['more-QSL'])
   await d.ui.unmount()
 })
 
@@ -356,11 +383,12 @@ test('an exporter id with no key is one closed row that opens to its rows and cl
   await d.ui.unmount()
 })
 
-test('a selected team with no series is one ○ with its name, which says why', async ($, on) => {
+test('a selected team with no series is its name and the ○, which says why', async ($, on) => {
   trace("FR-029-AC-33")
   const w = await setup($, on, { published: [series('ready_issues', [7])] })
   const d = await draw($, w, 1000, false, false)
-  expect(d.buttons).toContain('○ QSL')
+  expect(d.lines).toContain('QSL')
+  expect((await buttonsOf(d.ui)).find(b => b.key === 'why-QSL')?.label).toBe('○')
   expect(d.lines.join('\n')).not.toContain('team_key')
   await d.ui.press({ key: 'why-QSL' })
   const said = await textsOf(d.ui)
@@ -480,7 +508,7 @@ test('exporter ids with one team key make one team: counts as lower bounds, dura
   const d = await draw($, w)
   expect(d.lines.filter(l => l === 'QSL')).toHaveLength(1)
   expect(after(d.lines, 'ready')).toBe('≥3')
-  expect(after(d.lines, 'oldest in stage')).toBe('2.0h')
+  expect(after(d.lines, 'oldest')).toBe('2.0h')
   await d.ui.unmount()
 })
 
@@ -499,9 +527,9 @@ for (const [title, ages, stages, expected] of [
     ] })
     const d = await draw($, w)
     if (expected === null) {
-      expect(d.lines).not.toContain('oldest in stage')
-      expect(d.lines.some(l => /^  oldest in stage: (age not measured|no series published)$/.test(l))).toBe(true)
-    } else expect(after(d.lines, 'oldest in stage')).toBe(expected)
+      expect(d.lines).not.toContain('oldest')
+      expect(d.lines.some(l => /^  oldest: (age not measured|no series published)$/.test(l))).toBe(true)
+    } else expect(after(d.lines, 'oldest')).toBe(expected)
     await d.ui.unmount()
   })
 }
@@ -630,8 +658,8 @@ test('more says how much of a figure’s population was measured where that is n
   ] })
   const d = await draw($, w)
   expect(after(d.lines, 'in progress')).toBe('≥3')
-  expect(after(d.lines, 'oldest in stage')).toBe('≥1.0h')
-  expect(d.lines.filter(l => l.endsWith('% covered'))).toEqual(['  in progress: 96% covered', '  oldest in stage: 50% covered', '  changes requested: 75% covered'])
+  expect(after(d.lines, 'oldest')).toBe('≥1.0h')
+  expect(d.lines.filter(l => l.endsWith('% covered'))).toEqual(['  in progress: 96% covered', '  oldest: 50% covered', '  changes requested: 75% covered'])
   await d.ui.unmount()
 })
 

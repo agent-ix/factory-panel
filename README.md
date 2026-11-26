@@ -17,7 +17,7 @@ The views behind the cells are:
 | Work | Each code lead with its tickets, those its agents report and those its focus names, one row each of id, title, `[pr]`, `[review×N]`, `[spec]` and `[gate]` badges and the age of the last report (`FOO-123 title  [pr][review]   12h`); a ticket Linear has no record of, or that could not be read, says so in place of its title. A lead with no ticket shows its focus, finished tickets (every agent done or canceled, not in the focus) are folded behind `▸ N finished`, a report over 2 hours old is marked old, and the leads that have reported no work (`agent-msg work`) are counted in one line that opens to their addresses. The title and PRs of a reported ticket that no focus status names come from one `ix-board --json issues` read. Below them the recent merges (`a` shows every kind: closed and opened entries, and the reviews, specs and gates that started or finished, read from the relay every 30 seconds; half of the ten rows are held for these, so busy ticket activity does not hide them). Under a focus, the rows are the tickets it names, lists or holds by project; a lead with none is folded into `▸ N leads with nothing in this focus`, tickets whose project is unknown are kept behind `▸ N tickets with unknown project`, a lead that cannot be read stays listed, and Recent, the widget and the band cell follow the same filter. A lead that cannot be read shows `▲` with `not read`, or `old` with the age of the report drawn. Needs ix-board 0.9.0 for PRs and merges; without it the tickets show without a PR badge |
 | Escalations | What the leads escalated, open first, with context, options and recommendation |
 | Message (`/factory relay`) | A message to every lead or one lead, and the recent broadcasts |
-| Team | For each Linear team four rows with sparklines: Shipping (tickets closed and PRs merged), Flowing (in progress, blocked, oldest in a stage), Fed (ready) and Review (first-review and PR-cycle medians), with the rest behind `more`; one retro health line; the roles; and a Hosts table (working, stuck, idle, CPU, done/h) |
+| Team | For each Linear team its figures with sparklines: closed and merged; in progress, blocked and oldest; ready; first review and PR cycle, with the rest behind `more`; one retro health line; the roles; and a Hosts table (working, stuck, idle, CPU, done/h) |
 
 ## How to use it
 
@@ -63,7 +63,7 @@ A focus is `all`, or one Linear initiative or project that the leads of your tea
 
 ### Team tab
 
-Each team has four rows: `Shipping` (tickets closed and PRs merged today, with the last seven days), `Flowing` (in progress, blocked, oldest in a stage), `Fed` (ready issues) and `Review` (first-review and PR-cycle medians), each figure with a sparkline. `more` holds leaf work remaining, ready unmerged PRs, findings by severity and changes requested. A figure that is not known is left out, and the row's `○` says why when pressed.
+Each team shows its figures with sparklines, a line each for: `closed` and `merged` (today, with the last seven days); `in progress`, `blocked` and `oldest` (the oldest age in a stage); `ready` issues; `first review` and `PR cycle` medians. `more` holds leaf work remaining, ready unmerged PRs, findings by severity and changes requested. A figure that is not known is left out, and one `○` beside the team’s name says what is missing and why when pressed.
 
 `Health` is one line a team, `◔ Health  retro 1d old ▸` or `○ Health  no retro ▸`; pressed, it says what the retro checks, what regresses, when it last ran and the command that runs it.
 

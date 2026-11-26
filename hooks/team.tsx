@@ -12,11 +12,11 @@ import { drawRoles, retroTeams } from './roles'
 import { home, selectionReady } from './selection'
 import { sourceFailed, sourceOk } from './sources'
 
-// The Team pane: for each team four short rows from the ix_team_* series behind Grafana's "Team flow and effort"
-// dashboard, each figure with its history: what shipped (tickets closed and PRs merged, today and the last seven days),
-// what flows, what is ready, and how long review takes, with the rest behind `more`. Under the teams, each team's retro
-// health in one line, its role evaluations (hooks/roles.tsx) and the fleet's hosts (hooks/capacity.tsx). What is
-// missing is one `○` that says why when pressed.
+// The Team pane: for each team a few lines of figures from the ix_team_* series behind Grafana's "Team flow and effort"
+// dashboard, each with its own name and history: tickets closed and PRs merged, what is in progress and blocked, what is
+// ready, and how long review takes, with the rest behind `more`. Under the teams, each team's retro health in one line,
+// its role evaluations (hooks/roles.tsx) and the fleet's hosts (hooks/capacity.tsx). A figure or line with no data is
+// left out, and one `○` beside the team's name says what is missing and why when pressed.
 
 const PANE = 'team'
 const TITLE = 'Team'
@@ -25,7 +25,7 @@ const HISTORY_SECS = 6 * 3600
 const STEP_SECS = 300
 
 const teams = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-6' })
-/** What is opened under the teams: `why-<team>-<row>`, `more-<team>` and `unkeyed-<id>`. */
+/** What is opened under the teams: `why-<team>`, `more-<team>` and `unkeyed-<id>`. */
 const teamOpen = atom({ plugin: 'factory-panel', key: 'teamOpen' } as const, [] as string[])
 /** Teams whose health line is opened. */
 const retroOpen = atom({ plugin: 'factory-panel', key: 'retroOpen' } as const, [] as string[])
@@ -50,7 +50,7 @@ type Spec = Omit<TeamMetric, 'value' | 'history' | 'coverage' | 'atLeast' | 'rea
 const SPECS: Spec[] = [
   { key: 'wip', label: 'in progress', unit: 'count', series: 'ix_team_wip_active', combine: 'largest' },
   { key: 'blocked', label: 'blocked', unit: 'count', series: 'ix_team_blocked_issues', combine: 'largest' },
-  { key: 'oldest', label: 'oldest in stage', unit: 'seconds', series: 'ix_team_stage_oldest_age_seconds', combine: 'max' },
+  { key: 'oldest', label: 'oldest', unit: 'seconds', series: 'ix_team_stage_oldest_age_seconds', combine: 'max' },
   { key: 'ready', label: 'ready', unit: 'count', series: 'ix_team_ready_issues', combine: 'largest' },
   { key: 'firstReview', label: 'first review', unit: 'seconds', series: 'ix_team_new_pr_first_review_median_seconds_24h', combine: 'max' },
   { key: 'cycle', label: 'PR cycle', unit: 'seconds', series: 'ix_team_pr_cycle_median_seconds_24h', combine: 'max' },
@@ -62,12 +62,8 @@ const SPECS: Spec[] = [
   { key: 'changes', label: 'changes requested', unit: 'share', series: 'ix_team_pr_changes_requested_share', combine: 'max' },
 ]
 
-/** The rows of a team, and what `more` holds. */
-const ROWS: { id: string; title: string; keys: string[] }[] = [
-  { id: 'flowing', title: 'Flowing', keys: ['wip', 'blocked', 'oldest'] },
-  { id: 'fed', title: 'Fed', keys: ['ready'] },
-  { id: 'review', title: 'Review', keys: ['firstReview', 'cycle'] },
-]
+/** The lines of a team's figures under the daily counts, and what `more` holds. */
+const LINES: string[][] = [['wip', 'blocked', 'oldest'], ['ready'], ['firstReview', 'cycle']]
 const MORE = ['remaining', 'unmerged', 'high', 'medium', 'low', 'changes']
 /** Points of a sparkline of the last six hours. */
 const SPARK_CELLS = 12
@@ -315,6 +311,7 @@ const format = (m: TeamMetric): string => {
 const plain = (m: TeamMetric, value: number): string => {
   if (m.unit === 'seconds') {
     const h = value / 3600
+    if (h >= 48) return `${Math.round(h / 24)}d`
     return h >= 1 ? `${h.toFixed(h >= 10 ? 0 : 1)}h` : `${Math.round(value / 60)}m`
   }
   if (m.unit === 'share') return `${Math.round(value * 100)}%`
@@ -392,10 +389,15 @@ export function registerTeam(on: On, options: Options): void {
 
     const press = (key: string) => () => void update($, teamOpen, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
     const lines = (key: string, words: readonly string[]) => (opened.includes(key) ? words.map(w => <Text key={`${key}-${w}`} dimColor size="caption">{`  ${w}`}</Text>) : null)
-    /** A section with nothing: its name and `○`, which says why. */
-    const nothing = (key: string, title: string, why: readonly string[]) => (
-      <Box key={key} flexDirection="column">
-        <Button key={key} plain label={`○ ${title}`} onPress={press(key)} />
+    /** A name with, where something is missing, the one `○` that says what and why. */
+    const heading = (key: string, name: string, why: readonly string[], before: unknown = null, note = '') => (
+      <Box key={`head-${name}`} flexDirection="column">
+        <Box flexDirection="row" gap={1} alignItems="center">
+          {before as never}
+          <Text weight="semibold">{name}</Text>
+          {note !== '' && <Text dimColor size="caption">{note}</Text>}
+          {why.length > 0 && <Button key={key} plain label="○" onPress={press(key)} />}
+        </Box>
         {lines(key, why)}
       </Box>
     )
@@ -411,70 +413,59 @@ export function registerTeam(on: On, options: Options): void {
     const metricFigure = (t: TeamView, m: TeamMetric) => figure(`${t.team}-${m.key}`, m.label, format(m), m.history.length > 1 ? spark(thin(m.history)) : '')
     const absent = (m: TeamMetric) => `${m.label}: ${m.reason}`
 
-    /** One row: its figures, then `○` for those it lacks. */
-    const row = (team: string, id: string, title: string, figures: readonly unknown[], why: readonly string[]) => {
-      const key = `why-${team}-${id}`
-      return (
-        <Box key={`${team}-${id}`} flexDirection="column">
-          <Box flexDirection="row" gap={2} flexWrap="wrap">
-            <Box width={9} flexShrink={0}>
-              <Text dimColor>{title}</Text>
-            </Box>
-            {figures as never}
-            {why.length > 0 && <Button key={key} plain label="○" onPress={press(key)} />}
-          </Box>
-          {lines(key, why)}
+    /** The daily counts that have a day to draw. */
+    const dailyFigures = (t: TeamView) =>
+      DAILY.flatMap(day => {
+        const { counts, atLeast } = t.days[day.key]
+        const today = counts[DAYS - 1] ?? null
+        return counts.every(v => v === null) ? [] : [figure(`${t.team}-${day.key}`, day.label, today === null ? null : `${atLeast ? '≥' : ''}${today}`, daySpark(counts))]
+      })
+
+    /** Everything the team lacks, `more` included, and why. */
+    const missingOf = (t: TeamView): string[] => [
+      ...DAILY.flatMap(day => {
+        const { counts, reason } = t.days[day.key]
+        if (counts.every(v => v === null)) return [`${day.label}: ${reason}`]
+        return (counts[DAYS - 1] ?? null) === null ? [`${day.label} today: no current sample`] : []
+      }),
+      ...[...LINES.flat(), ...MORE].map(k => metricOf(t, k)).filter(m => m.value === null).map(absent),
+    ]
+
+    const line = (key: string, figures: readonly unknown[]) =>
+      figures.length === 0 ? null : (
+        <Box key={key} flexDirection="row" gap={2} flexWrap="wrap">
+          {figures as never}
         </Box>
       )
-    }
-
-    const shipping = (t: TeamView) => {
-      const parts = DAILY.map(day => {
-        const { counts, atLeast, reason } = t.days[day.key]
-        const today = counts[DAYS - 1] ?? null
-        const has = counts.some(v => v !== null)
-        return {
-          drawn: has ? figure(`${t.team}-${day.key}`, day.label, today === null ? null : `${atLeast ? '≥' : ''}${today}`, daySpark(counts)) : null,
-          why: !has ? `${day.label}: ${reason}` : today === null ? `${day.label} today: no current sample` : null,
-        }
-      })
-      return row(t.team, 'shipping', 'Shipping', parts.map(p => p.drawn), parts.flatMap(p => p.why ?? []))
-    }
 
     const more = (t: TeamView) => {
       const key = `more-${t.team}`
-      const held = MORE.map(k => metricOf(t, k))
+      const held = MORE.map(k => metricOf(t, k)).filter(m => m.value !== null)
       const covered = t.metrics.flatMap(m => (m.coverage !== null && m.coverage < 1 ? [`${m.label}: ${Math.floor(m.coverage * 100 + 1e-9)}% covered`] : []))
+      if (held.length === 0 && covered.length === 0) return null
       return (
         <Box key={`${t.team}-more`} flexDirection="column">
           <Button key={key} plain label={`${opened.includes(key) ? '▾' : '▸'} more`} onPress={press(key)} />
-          {opened.includes(key) && held.filter(m => m.value !== null).map(m => <Box key={`${key}-${m.key}`} paddingLeft={2}>{metricFigure(t, m)}</Box>)}
-          {lines(key, [...held.filter(m => m.value === null).map(absent), ...covered])}
+          {opened.includes(key) && held.map(m => <Box key={`${key}-${m.key}`} paddingLeft={2}>{metricFigure(t, m)}</Box>)}
+          {lines(key, covered)}
         </Box>
       )
     }
 
     const rows = (t: TeamView) => (
       <Box key={`${t.team}-rows`} flexDirection="column">
-        {shipping(t)}
-        {ROWS.map(r => {
-          const held = r.keys.map(k => metricOf(t, k))
-          return row(t.team, r.id, r.title, held.filter(m => m.value !== null).map(m => metricFigure(t, m)), held.filter(m => m.value === null).map(absent))
-        })}
+        {line(`${t.team}-daily`, dailyFigures(t))}
+        {LINES.map(keys => line(`${t.team}-${keys[0]}`, keys.map(k => metricOf(t, k)).filter(m => m.value !== null).map(m => metricFigure(t, m))))}
         {more(t)}
       </Box>
     )
 
-    // An id with no key may be any team: one closed line, which opens to its rows.
+    // An id with no key may be any team: one closed line, which opens to its figures.
     const unmatchedTeam = (t: TeamView) => {
       const key = `unkeyed-${t.team}`
       return (
         <Box key={t.team} flexDirection="column">
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Button key={key} plain label={opened.includes(key) ? '▾' : '▸'} onPress={press(key)} />
-            <Text weight="semibold">{t.team}</Text>
-            <Text dimColor size="caption">no team key</Text>
-          </Box>
+          {heading(`why-${t.team}`, t.team, missingOf(t), <Button key={key} plain label={opened.includes(key) ? '▾' : '▸'} onPress={press(key)} />, 'no team key')}
           {opened.includes(key) && rows(t)}
         </Box>
       )
@@ -511,17 +502,18 @@ export function registerTeam(on: On, options: Options): void {
         </Box>
 
         {meta.at === null && meta.error === null && <Text dimColor size="caption">reading…</Text>}
-        {list.length === 0 && selected.length === 0 && (meta.at !== null || meta.error !== null) && nothing('why-teams', 'Teams', noSeries)}
+        {list.length === 0 && selected.length === 0 && (meta.at !== null || meta.error !== null) && heading('why-teams', 'Teams', noSeries)}
         {shown.map(t => (
           <Box key={t.team} flexDirection="column" padding={1} backgroundColor={CARD_BG}>
-            <Box flexDirection="row" gap={1} alignItems="center">
-              <Text weight="semibold">{t.team}</Text>
-              {!t.keyed && <Text dimColor size="caption">no team key</Text>}
-            </Box>
+            {heading(`why-${t.team}`, t.team, missingOf(t), null, t.keyed ? '' : 'no team key')}
             {rows(t)}
           </Box>
         ))}
-        {(meta.at !== null || meta.error !== null) && missing.map(name => nothing(`why-${name}`, name, [`no team series carries the key ${name}`, ...noSeries, ...unkeyedWhy]))}
+        {(meta.at !== null || meta.error !== null) && missing.map(name => (
+          <Box key={name} flexDirection="column" padding={1} backgroundColor={CARD_BG}>
+            {heading(`why-${name}`, name, [`no team series carries the key ${name}`, ...noSeries, ...unkeyedWhy])}
+          </Box>
+        ))}
         {unmatched.map(unmatchedTeam)}
 
         <Box key="health" flexDirection="column">

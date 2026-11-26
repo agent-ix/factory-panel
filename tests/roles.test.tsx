@@ -330,7 +330,7 @@ test('an evaluation is given 5 minutes, the rest of the view drawn meanwhile', a
   const d = await draw($, w)
   expect(limits).toEqual([5 * MIN])
   expect(await d.lines()).toContain('reading the role evaluation, which can take minutes')
-  expect(await d.buttons()).toContain('○ QSL')
+  expect(await d.lines()).toContain('QSL')
   await d.ui.unmount()
 })
 
@@ -374,7 +374,7 @@ test('the section says it is reading while the rest of the view is drawn, and a 
   const w = await setup($, on, (_, __, w) => w.clock!.sleep(2 * MIN).then(() => answer([CODER])))
   const d = await draw($, w)
   expect(await d.lines()).toContain('reading the role evaluation, which can take minutes')
-  expect(await d.buttons()).toContain('○ QSL')
+  expect(await d.lines()).toContain('QSL')
   await w.clock!.advance(2 * MIN)
   expect(await d.buttons()).toContain('▸ coder')
   // Looked at again meanwhile, so nothing would be due for most of another minute.
