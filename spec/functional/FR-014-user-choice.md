@@ -21,11 +21,12 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 ## Behavior
 
 - `/factory use <modules>` SHALL replace the module selection with the listed modules.
-- `/factory focus <own|team|name>` SHALL set the focus scope, where the name is the rest of the line including spaces.
-- The mod SHALL resolve the name of `/factory focus` as [FR-020](./FR-020-named-focus-resolution.md) says.
+- `/factory focus <all|name|ID>` SHALL set the focus, where the name is the rest of the line including spaces.
+- The mod SHALL resolve the name or ID of `/factory focus` and store the Linear ID as [FR-020](./FR-020-named-focus-resolution.md) says.
 - The Focus pane SHALL state the reason for its scope as [FR-019](./FR-019-focus-mode-banner.md) says.
 - `/factory focus` with no argument SHALL open the Focus view.
-- `/factory teams <list>` SHALL replace the `teams` selection.
+- `/factory teams <list|all>` SHALL replace the `teams` selection.
+- The Work view SHALL offer both choices at its top, `Teams: <teams> ▾` and `Focus: <focus> ▾`, which write the same choice file as the commands ([FR-028](./FR-028-work-tab.md)).
 - A team that matches nothing SHALL be kept in the `teams` selection and reported as matching nothing.
 - `/factory hosts <all|local>` SHALL set the hosts scope.
 - The mod SHALL reject a value that is not valid for a choice, name the valid values, and leave the choice unchanged.
@@ -44,7 +45,7 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 - The mod SHALL print what it holds once that read ends, or after 5 seconds where it has not ended.
 - Where no read has ended for the focus and teams now selected, `/factory show` and a choice command SHALL print `focus data: not read yet`.
 - The mod SHALL NOT count a read in which the leads could not be listed as a read that has ended.
-- Where no such read has ended, `/factory show` and a choice command SHALL NOT say that no focus is reported or that no focus matches a name.
+- Where no such read has ended, `/factory show` and a choice command SHALL NOT say that no focus is reported or that a focus is not known.
 - Where such a read has ended, they SHALL print `focus data: read <age>`, with the age of the oldest progress shown where there is progress.
 - The help SHALL list each choice command with one example.
 - The mod SHALL NOT register a command for these choices other than `/factory` and the aliases of [FR-003](./FR-003-one-command.md).
@@ -54,8 +55,8 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-014-AC-1 | `/factory use queue,lanes` makes the band show queue and lanes, a later `/factory use focus` replaces them, and a later session with the same key shows focus. | Test |
-| FR-014-AC-2 | `/factory focus team`, `/factory teams QSL` and `/factory hosts all` each change the named scope and no other. | Test |
-| FR-014-AC-3 | `/factory focus Release Train` sets the focus name `Release Train`. | Test |
+| FR-014-AC-2 | `/factory focus Release Train`, `/factory teams QSL` and `/factory hosts all` each change the named scope and no other. | Test |
+| FR-014-AC-3 | `/factory focus <a name with spaces>` stores the initiative or project of that whole name. | Test |
 | FR-014-AC-4 | `/factory hosts bogus` names `all` and `local` and leaves the hosts scope unchanged. | Test |
 | FR-014-AC-5 | `/factory use bogus` and `/factory use` with no argument each name the valid modules and change nothing. | Test |
 | FR-014-AC-6 | `/factory teams NOPE` keeps `NOPE`, and the band says team NOPE matched nothing. | Test |
@@ -68,9 +69,11 @@ The mod SHALL let the user choose the modules, focus, teams and hosts from `/fac
 | FR-014-AC-13 | For two sessions with the same key, a choice made in the first and then one in the second leaves the second's choice in effect for both. | Test |
 | FR-014-AC-12 | The plugin registers `/factory` and the aliases of FR-003 and no other command. | Test |
 | FR-014-AC-15 | With no view drawn nothing reads the focuses until `/factory show` is typed, which reads them once and prints their age; a second `/factory show` within 2 minutes reads nothing. | Test |
-| FR-014-AC-16 | With `agent-msg who` not answering, `/factory show` and `/factory focus Release Train` each print after 5 seconds that the focus data is not read yet, and neither says no focus is reported or matched; after a read, a name that matches nothing is said to match no focus. | Test |
+| FR-014-AC-16 | With `agent-msg who` not answering, `/factory show` prints after 5 seconds that the focus data is not read yet, `/factory focus <name>` that the focuses are not read yet, and neither says no focus is reported or known. | Test |
 | FR-014-AC-17 | With the progress read less than 30 minutes ago, `/factory show` and a choice command make no ix-board `focus status` call. | Test |
 | FR-014-AC-18 | With `agent-msg who` failing, `/factory show` prints that the focus data is not read yet with that error, and does not say no focus is reported. | Test |
+| FR-014-AC-19 | `/factory teams all` selects every team and `/factory focus all`, or `own`, clears the focus, each leaving the other choice. | Test |
+| FR-014-AC-20 | A choice made in the Work view's header is in the choice file and leaves the other choice as it was. | Test |
 
 ## Dependencies
 

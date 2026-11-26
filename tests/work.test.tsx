@@ -2,13 +2,15 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { FEED_CAP, boardOf, composeWork, eventRole, foldFeed, lastOfEvents, mergeBoards, recentOf } from '../hooks/work'
+import { FEED_CAP, boardOf, composeWork, eventRole, focusFilter, foldFeed, lastOfEvents, mergeBoards, recentOf } from '../hooks/work'
 import { runFactory } from '../hooks/router'
-import { ticketLine } from '../hooks/workview'
+import { ticketLine, toggledTeams } from '../hooks/workview'
+import type { FocusView } from '../types'
 import { VIEW_IDS } from '../hooks/views'
-import { CLASSIC, FP, drawBand, fake$, options, out, report, startSession, world } from './world'
+import { CLASSIC, FP, drawBand, fake$, options, out, report, startSession, world, pid } from './world'
 import type { World } from './world'
 import { ix } from './board-kit'
+import { ALL_FOLDS, openWork } from './open'
 
 // Tests for the Work tab (FR-028): the leads and their tickets from the relay, the tickets' state, PRs and the recent
 // activity from the focus status ix-board already answers.
@@ -51,8 +53,13 @@ const old = () =>
 const events = (...rows: [string, string, string, string, number][]) =>
   JSON.stringify({ version: 1, truncated: false, has_more: false, next_cursor: '1-0', events: rows.map(([address, ticket, role, status, ago], i) => ({ id: `${i}-0`, at_ms: NOW - ago * MIN, binding: { address }, change: { kind: 'agent', agent: { agent_id: `a${i}`, name: `n${i}`, ticket, role, status, pane: null, session: null, reported_at_ms: NOW - ago * MIN } } })) })
 
+/** The world of the test under way, whose clock an opened fold's reads need. */
+let current: World
+const opened = async (ui: Parameters<typeof openWork>[0]) => openWork(ui, () => current.clock!.advance(1000), ALL_FOLDS)
+
 async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() => ReturnType<typeof out>), eventsText: string | ((argv: string[]) => ReturnType<typeof out>) = events(), agents = true, arrange: (w: World) => void = () => undefined): Promise<World> {
   const w = world(on, true)
+  current = w
   const lead = report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] })
   w.leads.set(LEAD, agents ? { ...lead, agents: [agent('coder-a', 'QSL-1240', 'coder', 'running', 9), agent('rev-a', 'QSL-1240', 'reviewer', 'running', 5), agent('rev-b', 'QSL-1240', 'code-reviewer', 'waiting', 6), agent('spec-a', 'QSL-1251', 'spec-author', 'done', 12), agent('gate-a', 'QSL-1238', 'gate', 'running', 30)] } : lead)
   w.leads.set(IDLE, { ...report(IDLE, 'idle', ['waiting']), agents: [agent('c1', 'QSL-2', 'coder', 'waiting', 41), agent('c2', 'QSL-3', 'coder', 'waiting', 50), agent('c3', 'QSL-4', 'coder', 'waiting', 60)] })
@@ -64,13 +71,19 @@ async function setup($: $t, on: Parameters<TestBody>[1], answer: string | (() =>
   ix(w, { projects: { Alpha: () => (typeof answer === 'string' ? out(answer) : answer()) } })
   arrange(w)
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await w.clock!.advance(1000)
-  await ui.unmount()
+  await (await openedPane($, w)).unmount()
   return w
 }
 
 type Drawn = { lines: string[]; text: string; buttons: { key: string; label: string; hotkey?: string }[]; press: (key: string) => Promise<void>; unmount: () => Promise<void> }
+
+/** The Work pane left on screen with every host and lead, and Recent, opened. */
+async function openedPane($: $t, w: World) {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await w.clock!.advance(1000)
+  await openWork(ui, () => w.clock!.advance(1000))
+  return ui
+}
 
 async function draw($: $t, surface: 'terminal' | 'desktop' = 'terminal', placement = 'dock'): Promise<Drawn> {
   const ui = await $.ui.mount({ ...PANE, surface, props: { ...PANE.props, placement } } as never)
@@ -78,6 +91,8 @@ async function draw($: $t, surface: 'terminal' | 'desktop' = 'terminal', placeme
     lines: [], text: '', buttons: [],
     press: async key => {
       await ui.press({ key })
+      // What an opening or a choice shows is read once the drawing has stood a moment.
+      await current?.clock?.advance(1000)
       await d.redraw()
     },
     unmount: () => ui.unmount(),
@@ -87,9 +102,9 @@ async function draw($: $t, surface: 'terminal' | 'desktop' = 'terminal', placeme
     d.buttons = (await ui.findAll({ type: 'Button' })).map(b => ({ key: b.key ?? '', label: String((b.props as { label?: string }).label ?? ''), hotkey: (b.props as { hotkey?: string }).hotkey }))
     d.text = d.lines.join('\n')
   }
+  // Everything that holds a ticket is opened, and Recent, so that all of it is on screen.
+  if (placement !== 'widget') await opened(ui)
   await (d as Drawn & { redraw: () => Promise<void> }).redraw()
-  // The folded finished tickets are opened, so that every ticket of a lead is on screen.
-  for (const b of d.buttons.filter(b => b.key.startsWith('finished-') && b.label.startsWith('▸'))) await d.press(b.key)
   return d
 }
 const m = (re: RegExp) => new RegExp(re.source, 'm')
@@ -106,15 +121,15 @@ test('the tickets a lead’s focus names are listed under it once, with the focu
     w.leads.set(LEAD, focused(LEAD, 'landing', ['QSL-1240', 'QSL-1251', 'QSL-9'], 780, [agent('c', 'QSL-1251', 'coder', 'running', 12)]))
   })
   const d = await draw($)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 Coding .*\[pr\] {2}focus 13h$/)
-  expect(ticketRow(d, 'QSL-1251')).toMatch(/coder running 12m$/)
-  expect(ticketRow(d, 'QSL-9')).toMatch(/reviewer done 30m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ QSL-1240 proof gate .*\[pr\] {3}13h$/)
+  expect(ticketRow(d, 'QSL-1251')).toMatch(/ 12m$/)
+  expect(ticketRow(d, 'QSL-9')).toMatch(/^ QSL-9 +30m$/)
   expect(d.lines.filter(l => l.trim().startsWith('QSL-1251'))).toHaveLength(1)
-  expect(d.lines).not.toContain('   no ticket reported')
+  expect(d.lines).not.toContain('    no ticket reported')
   await d.unmount()
   // The idle lead holds three more.
   const widget = await draw($, 'terminal', 'widget')
-  expect(widget.text).toContain('2 leads · 6 tickets')
+  expect(widget.text).toContain('2 leads · 1 active · 6 tickets')
   await widget.unmount()
 })
 
@@ -125,8 +140,8 @@ test('a lead with no ticket says so and what its focus says', async ($, on) => {
     w.leads.set(IDLE, focused(IDLE, '', [], 700))
   })
   const d = await draw($)
-  expect(d.lines.filter(l => l === '   no ticket reported')).toHaveLength(2)
-  expect(d.lines.filter(l => l.startsWith('   focus:'))).toEqual(['   focus: Landing 8 inherited PRs'])
+  expect(d.lines.filter(l => l === '    no ticket reported')).toHaveLength(2)
+  expect(d.lines.filter(l => l.startsWith('    focus:'))).toEqual(['    focus: Landing 8 inherited PRs'])
   await d.unmount()
 })
 
@@ -140,12 +155,15 @@ test('the leads of the selected teams that report nothing are named, and one tha
   })
   const d = await draw($)
   // Only their number is on screen until it is opened.
-  expect(d.buttons.find(b => b.key === 'silent')?.label).toBe('▸ 2 leads report no work')
+  // Each host holds its own, and only their number is on screen until it is opened.
+  expect(d.buttons.find(b => b.key === 'silent:luna')?.label).toBe('▸ 1 lead reports no work')
+  expect(d.buttons.find(b => b.key === 'silent:terra')?.label).toBe('▸ 1 lead reports no work')
   expect(d.text).not.toContain('luna:QSL:code')
-  await d.press('silent')
-  expect(d.lines).toContain('luna:QSL:code, terra:QSL:minder')
-  expect(d.lines).toContain('terra:QSL:gone')
-  await d.press('silent')
+  await d.press('silent:luna')
+  expect(d.lines).toContain('luna:QSL:code')
+  // The lead that could not be read is listed as a lead of its host.
+  expect(d.lines).toContain('QSL:gone')
+  await d.press('silent:luna')
   expect(d.text).not.toContain('luna:QSL:code')
   await d.unmount()
 })
@@ -158,25 +176,29 @@ test('one lead that reports nothing is named where no lead reported work', async
   })
   const d = await draw($)
   expect(d.lines).toContain('No lead has reported work.')
-  expect(d.buttons.find(b => b.key === 'silent')?.label).toBe('▸ 1 lead reports no work')
-  await d.press('silent')
+  expect(d.buttons.find(b => b.key === 'silent:draco')?.label).toBe('▸ 1 lead reports no work')
+  await d.press('silent:draco')
   expect(d.lines).toContain(LEAD)
   await d.unmount()
 })
 
-test('a lead is listed with its status mark and age, and its tickets with state, title, badges and last action', async ($, on) => {
+test('a lead is listed under its host by workspace and tab, and its tickets with id, title, badges and age and no role, status or state word', async ($, on) => {
   trace("FR-028-AC-1")
   await setup($, on, rich(), events([LEAD, 'QSL-1240', 'coder', 'running', 4], [LEAD, 'QSL-1240', 'reviewer', 'running', 2]))
   const d = await draw($)
-  expect(d.lines).toContain(LEAD)
-  expect(d.lines).toContain(IDLE)
+  expect(d.buttons.filter(b => b.key.startsWith('host:')).map(b => b.label)).toEqual(['▾ draco', '▾ titan'])
+  expect(d.lines).toContain('QSL:arch')
+  expect(d.lines).toContain('QSL:code')
   // The latest transition of an agent on the ticket, 2 minutes ago.
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ {3}QSL-1240 Coding proof gate ?… +\[pr\]\[review×2\] {2}reviewer 2m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/^ QSL-1240 proof gate checks[^ ]*.*… {2}\[pr\]\[review×2\] {4}2m$/)
   // No event for QSL-1251: the latest agent report (12 minutes ago) stands in.
-  expect(ticketRow(d, 'QSL-1251')).toMatch(/Specced residual ?… +\[spec\] {2}spec-author done 12m$/)
-  // The lead's age is its newest report (5 minutes) and a mark leads the row.
-  expect(d.lines).toContain('◐')
-  expect(d.lines).toContain('5m')
+  expect(ticketRow(d, 'QSL-1251')).toMatch(/^ QSL-1251 residual defects +\[spec\] {3}12m$/)
+  // The ages keep one column, and no row says what an agent or Linear says of the ticket.
+  const rows = d.lines.filter(l => /^ QSL-/.test(l))
+  expect(rows.map(l => l.length)).toEqual(rows.map(() => 56))
+  expect(rows.join('\n')).not.toMatch(/coder|reviewer|spec-author|focus|running|done|waiting|Coding|Specced/)
+  // The lead’s row names neither its host nor a project or ticket.
+  expect(d.lines.filter(l => l === LEAD)).toEqual([])
   await d.unmount()
 })
 
@@ -206,41 +228,42 @@ test('a ticket in progress that no lead reports is not listed under a lead', asy
   await d.unmount()
 })
 
-test('a lead collapses to its ticket count and expands again, and ticket rows fit 60 columns', async ($, on) => {
+test('a lead closes to its line and opens again, and ticket rows fit 60 columns', async ($, on) => {
   trace("FR-028-AC-4")
   await setup($, on, rich())
   const d = await draw($)
-  for (const l of d.lines.filter(l => /^ {3}QSL-/.test(l))) expect(l.length).toBeLessThanOrEqual(60)
-  expect(d.buttons.filter(b => b.key.startsWith('toggle-')).map(b => b.label)).toEqual(['▾', '▾'])
-  await d.press(`toggle-${LEAD}`)
-  expect(d.text).toMatch(m(/^\(2 tickets\)$/))
+  // The mark and its margin take four cells of the row.
+  for (const l of d.lines.filter(l => /^ QSL-/.test(l))) expect(l.length).toBeLessThanOrEqual(56)
+  expect(d.buttons.filter(b => b.key.startsWith('lead:')).map(b => b.label)).toEqual(['▾', '▾'])
+  await d.press(`lead:${LEAD}`)
+  expect(d.lines).toContain('QSL:arch')
   expect(ticketRow(d, 'QSL-1240')).toBe('')
-  await d.press(`toggle-${LEAD}`)
+  await d.press(`lead:${LEAD}`)
   expect(ticketRow(d, 'QSL-1240')).not.toBe('')
   await d.unmount()
-  expect(ticketLine({ id: 'QSL-1', title: 'x'.repeat(200), state: 'Coding', badges: ['[pr]', '[review×2]'], lastAction: { what: 'coder running', at: NOW - 4 * MIN } }, NOW, 60).length).toBeLessThanOrEqual(60)
+  expect(ticketLine({ id: 'QSL-1', state: 'working', title: 'x'.repeat(200), why: null, badges: ['[pr]', '[review×2]'], at: NOW - 4 * MIN }, NOW, 60)).toBe(`   QSL-1 ${'x'.repeat(28)}…  [pr][review×2]    4m`)
 })
 
 // ---------------------------------------------------------------- FR-028 old and finished work
 
-test('finished tickets are folded under their lead and a report over two hours old is marked old', async ($, on) => {
+test('finished tickets stay listed under their lead and a report over two hours old is a time warning', async ($, on) => {
   trace("FR-028-AC-22", "FR-028-AC-27")
-  await setup($, on, rich(), events(), true, w => {
+  const w = await setup($, on, rich(), events(), true, w => {
     w.leads.set(IDLE, { ...report(IDLE, 'idle', ['waiting']), focus: { summary: 'idle', tickets: [], reported_at_ms: NOW - 13 * 60 * MIN }, scope: null, agents: [agent('c1', 'QSL-2', 'coder', 'waiting', 13 * 60)] })
   })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await openWork(ui, () => w.clock!.advance(1000))
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   const label = async (key: string) => ((await ui.find({ key }))?.props as { label?: string } | undefined)?.label
-  expect(await label(`finished-${LEAD}`)).toBe('▸ 1 finished')
-  expect((await texts()).some(l => l.trim().startsWith('QSL-1251'))).toBe(false)
-  // The old lead has the hollow mark and says its report is old.
-  expect(await texts()).toEqual(expect.arrayContaining(['◌', 'old 13h', '2 leads · 1 old']))
-  await ui.press({ key: `finished-${LEAD}` })
+  // QSL-1251, whose only agent is done, is listed with the rest.
   expect((await texts()).some(l => l.trim().startsWith('QSL-1251'))).toBe(true)
+  // The old lead is under the host's fold: its row has the age as a time warning, and its words say why.
+  expect(await label('old:titan')).toBe('▾ ⏱ 1')
+  expect(await texts()).toEqual(expect.arrayContaining(['⏱ 13h', '    ⏱ old report: the lead last reported 13h ago']))
   await ui.unmount()
   const widget = await draw($, 'terminal', 'widget')
-  // The old lead's ticket is counted apart.
-  expect(widget.text).toBe('2 leads · ≥2 tickets · +1 old · 2 merged 24h · 1 old')
+  // The old lead's ticket is not counted.
+  expect(widget.text).toBe('2 leads · 1 active · ≥2 tickets · ⏱ 1')
   await widget.unmount()
 })
 
@@ -266,44 +289,41 @@ test('the widget says it is reading, or that the leads could not be read, and co
 
 const single = (identifier: string, state: string, prs: unknown[], complete = true) => ({ id: `id-${identifier}`, identifier, title: `single ${identifier}`, state: 'x', state_name: state, state_type: 'started', attachments_complete: complete, pull_requests: prs })
 
-test('a ticket no focus status names gets its state, title and [pr] from one read of ix-board', async ($, on) => {
+test('a ticket no focus status names gets its title and [pr] from the one read of the reported tickets', async ($, on) => {
   trace("FR-028-AC-24")
   const w = world(on, true)
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('a', 'QSL-1240', 'coder', 'running', 9), agent('b', 'QSL-7', 'coder', 'running', 9), agent('c', 'QSL-8', 'coder', 'running', 9), agent('d', 'not a ticket', 'coder', 'running', 9)] })
   const board = ix(w, { projects: { Alpha: () => out(rich()) }, issues: () => out(JSON.stringify({ complete: true, missing: [], issues: [single('QSL-7', 'Specify', [pr('open', 77)]), single('QSL-8', 'Specced', [pr('open', 88)], false)] })) })
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(60_000)
   const rows = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(rows.find(l => l.trim().startsWith('QSL-7 '))).toMatch(/QSL-7 Specify single .*\[pr\]/)
+  expect(rows.find(l => l.trim().startsWith('QSL-7 '))).toMatch(/QSL-7 single QSL-7 +\[pr\]/)
   // Where the attachments are cut short nothing is said of its PRs.
-  expect(rows.find(l => l.trim().startsWith('QSL-8 '))).toMatch(/QSL-8 Specced single /)
+  expect(rows.find(l => l.trim().startsWith('QSL-8 '))).toMatch(/QSL-8 single QSL-8 /)
   expect(rows.find(l => l.trim().startsWith('QSL-8 '))).not.toMatch(/\[pr\]/)
   // Asked once, of the identifiers no focus status names and no other word.
-  expect(board.calls.filter(c => c.startsWith('issues'))).toEqual(['issues QSL-7 QSL-8'])
+  expect(board.calls.filter(c => c.startsWith('issues'))).toEqual(['issues QSL-1240 QSL-7 QSL-8'])
   await ui.unmount()
 })
 
-test('the tickets read is shared and made again only after five minutes where there is a new ticket, else after thirty', async ($, on) => {
+test('the reported tickets are read in one call that is made again every five minutes', async ($, on) => {
   trace("FR-028-AC-25")
   const w = world(on, true)
   const lead = (...ids: string[]) => ({ ...report(LEAD, 'FSL alpha', ['running']), agents: ids.map((id, i) => agent(`a${i}`, id, 'coder', 'running', 1)) })
   w.leads.set(LEAD, lead('QSL-7'))
   const board = ix(w, {})
   await startSession($)
+  // The lead stays closed: the closed line needs its tickets' states.
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const calls = () => board.calls.filter(c => c.startsWith('issues'))
   await w.clock!.advance(MIN)
   expect(calls()).toEqual(['issues QSL-7'])
+  w.leads.set(LEAD, lead('QSL-7', 'QSL-9'))
   await w.clock!.advance(3 * MIN)
   expect(calls()).toHaveLength(1)
-  w.leads.set(LEAD, lead('QSL-7', 'QSL-9'))
-  await w.clock!.advance(4 * MIN)
+  await w.clock!.advance(3 * MIN)
   expect(calls()).toEqual(['issues QSL-7', 'issues QSL-7 QSL-9'])
-  await w.clock!.advance(20 * MIN)
-  expect(calls()).toHaveLength(2)
-  await w.clock!.advance(15 * MIN)
-  expect(calls()).toHaveLength(3)
   await ui.unmount()
 })
 
@@ -314,16 +334,17 @@ test('an ix-board that cannot read the tickets is a warning on the Work tab, and
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: ['Alpha'] }), agents: [agent('a', 'QSL-1240', 'coder', 'running', 9)] })
   ix(w, { projects: { Alpha: () => (fails ? out('', 1, 'ix-board broke') : out(rich())) } })
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   await w.clock!.advance(MIN)
-  expect((await texts()).some(l => /old: states, PRs and merges/.test(l))).toBe(false)
+  expect((await texts()).some(l => /^⏱ /.test(l))).toBe(false)
   fails = true
   await w.clock!.advance(40 * MIN)
   await ui.press({ key: 'warnings-toggle' })
   const lines = await texts()
   expect(lines.join('\n')).toMatch(/ix-board: .*ix-board broke/)
-  expect(lines.some(l => /^ix-board’s answer is \d+m old: states, PRs and merges are as of then\.$/.test(l))).toBe(true)
+  // How old the answer behind Recent is, as a time warning.
+  expect(lines.some(l => /^⏱ \d+m$/.test(l))).toBe(true)
   expect(lines).not.toContain('Nothing merged lately.')
   await ui.unmount()
 })
@@ -339,7 +360,7 @@ test('Recent lists merges newest first with repository, PR, ticket and title, an
   expect(d.text).not.toMatch(/old thing/)
   expect(d.buttons.find(b => b.key === 'kinds')).toEqual({ key: 'kinds', label: 'a all', hotkey: 'a' })
   await d.press('kinds')
-  expect(d.lines.filter(l => /QSL-1(251|238|199|111) /.test(l) && !/^ {3}/.test(l)).map(l => l.split(' ').slice(0, 1)[0])).toEqual(['3m', '6m', '20m', '22m'])
+  expect(d.lines.filter(l => /QSL-1(251|238|199|111) /.test(l) && !/^ /.test(l)).map(l => l.split(' ').slice(0, 1)[0])).toEqual(['3m', '6m', '20m', '22m'])
   expect(d.lines).toEqual(expect.arrayContaining(['✓', '●', '○']))
   expect(d.buttons.find(b => b.key === 'kinds')!.label).toBe('a merges')
   await d.press('kinds')
@@ -352,12 +373,12 @@ test('an ix-board without activity and PRs shows the tickets without a PR badge 
   await setup($, on, old())
   const d = await draw($)
   expect(d.text).toMatch(/needs ix-board ≥0\.9\.0/)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/Coding proof g/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/QSL-1240 proof gate/)
   expect(ticketRow(d, 'QSL-1240')).not.toMatch(/\[pr\]/)
   await d.unmount()
 })
 
-test('the stale result wrapper is read as the object inside, and ix-board is asked once for the tickets no focus status names', async ($, on) => {
+test('the stale result wrapper is read as the object inside, and ix-board is asked once for the reported tickets', async ($, on) => {
   trace("FR-028-AC-7")
   const wrapped = JSON.stringify({ result: JSON.parse(rich()) })
   const w = await setup($, on, wrapped)
@@ -365,14 +386,14 @@ test('the stale result wrapper is read as the object inside, and ix-board is ask
   expect(ticketRow(d, 'QSL-1240')).toMatch(/\[pr\]/)
   expect(d.lines.some(l => /filament-mltl#412/.test(l))).toBe(true)
   await d.unmount()
-  expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual(['ix-board --json focus status --project Alpha', 'ix-board --json issues QSL-2 QSL-3 QSL-4'])
+  expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual(['ix-board --json issues QSL-1238 QSL-1240 QSL-1251 QSL-2 QSL-3 QSL-4', 'ix-board --json focus status --project Alpha'])
 })
 
 test('where the events cannot be read the tickets show with the age of the latest report and the footer warns once', async ($, on) => {
   trace("FR-028-AC-8")
   await setup($, on, rich(), () => out('', 1, 'redis down'))
   const d = await draw($)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/reviewer (running )?5m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/ 5m$/)
   expect(d.buttons.find(b => b.key === 'warnings-toggle')?.label).toBe('1')
   await d.press('warnings-toggle')
   expect(d.text).toMatch(/agent-msg work events: redis down/)
@@ -384,7 +405,7 @@ test('the widget says how many leads, tickets and merges of the last 24 hours', 
   await setup($, on, rich())
   const d = await draw($, 'terminal', 'widget')
   // Five in hand: the one whose only agent is done is not counted.
-  expect(d.text).toBe('2 leads · 5 tickets · 2 merged 24h')
+  expect(d.text).toBe('2 leads · 1 active · 5 tickets')
   await d.unmount()
 })
 
@@ -399,9 +420,9 @@ test('Work follows Focus in the dock and /factory work opens it', async ($, on) 
 // ---------------------------------------------------------------- the model
 
 test('the latest event of each lead and ticket wins, an answer is merged once and activity is newest first', () => {
-  const last: Record<string, { role: string; status: string; at: number }> = {}
+  const last: Record<string, number> = {}
   lastOfEvents(JSON.parse(events([LEAD, 'QSL-1', 'coder', 'running', 10], [LEAD, 'QSL-1', 'reviewer', 'done', 3], [LEAD, 'QSL-1', 'coder', 'running', 8])).events, last)
-  expect(last[`${LEAD}\u0000QSL-1`]).toEqual({ role: 'reviewer', status: 'done', at: NOW - 3 * MIN })
+  expect(last[`${LEAD}\u0000QSL-1`]).toBe(NOW - 3 * MIN)
   const a = boardOf(JSON.parse(rich()))
   const merged = mergeBoards([a, a, boardOf(JSON.parse(old()))])
   expect(merged.activity!.map(x => x.identifier)).toEqual(['QSL-1251', 'QSL-1238', 'QSL-1199', 'QSL-1111'])
@@ -416,7 +437,7 @@ const eventCalls = (w: World) => w.ran.filter(l => l.startsWith('agent-msg work 
 
 const afterOf = (argv: string[]) => argv[argv.indexOf('--after') + 1]!
 
-test('the events are read page after page by their cursor, and the last action is the newest of all pages', async ($, on) => {
+test('the events are read page after page by their cursor, and a ticket’s age is that of the newest event of all pages', async ($, on) => {
   trace("FR-028-AC-12")
   const pages: Record<string, string> = {
     '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 30]], 'c1', true),
@@ -425,25 +446,23 @@ test('the events are read page after page by their cursor, and the last action i
   const w = await setup($, on, rich(), argv => out(pages[afterOf(argv)] ?? page([], afterOf(argv), false)))
   expect(eventCalls(w).map(l => l.split(' --after ')[1])).toEqual(['0-0', 'c1'])
   const d = await draw($)
-  expect(ticketRow(d, 'QSL-1240')).toMatch(/reviewer 2m$/)
+  expect(ticketRow(d, 'QSL-1240')).toMatch(/ 2m$/)
   await d.unmount()
 })
 
-test('the next read asks only for what came after the last cursor and keeps the earlier last actions', async ($, on) => {
+test('the next read asks only for what came after the last cursor and keeps the earlier ages', async ($, on) => {
   trace("FR-028-AC-12")
   const pages: Record<string, string> = {
     '0-0': page([[LEAD, 'QSL-1240', 'coder', 'running', 3], [LEAD, 'QSL-1251', 'spec-author', 'running', 3]], 'c1', false),
     c1: page([[LEAD, 'QSL-1240', 'reviewer', 'waiting', 0]], 'c2', false),
   }
   const w = await setup($, on, rich(), argv => out(pages[afterOf(argv)] ?? page([], afterOf(argv), false)))
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(2 * MIN)
   expect(eventCalls(w).map(l => l.split(' --after ')[1]).slice(0, 2)).toEqual(['0-0', 'c1'])
-  // QSL-1251, whose only agent is done, is among the finished.
-  await ui.press({ key: `finished-${LEAD}` })
   const rows = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(rows.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/reviewer \d+m$/)
-  expect(rows.find(l => l.trim().startsWith('QSL-1251'))).toMatch(/spec-author \d+m$/)
+  expect(rows.find(l => l.trim().startsWith('QSL-1240'))).toMatch(/ [12]m$/)
+  expect(rows.find(l => l.trim().startsWith('QSL-1251'))).toMatch(/ [45]m$/)
   await ui.unmount()
 })
 
@@ -456,7 +475,7 @@ test('five full pages with more behind are a warning, and the next read carries 
   await d.press('warnings-toggle')
   expect(d.text).toMatch(/events behind, catching up/)
   await d.unmount()
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(2 * MIN)
   expect(eventCalls(w).slice(5, 6).map(l => l.split(' --after ')[1])).toEqual(['c5'])
   await ui.unmount()
@@ -545,7 +564,7 @@ test('a review reported while the tab is on screen is listed within a minute', a
     const after = afterOf(argv)
     return out(reported && after !== 'c9' ? page([[LEAD, 'QSL-9001', 'reviewer', 'running', -1]], 'c9', false) : page([], after, false))
   })
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await ui.press({ key: 'kinds' })
   // Past the first read of the mount, then the review is reported just after a read.
   await w.clock!.advance(5000)
@@ -575,7 +594,7 @@ test('events held from an earlier read stay listed when a later read fails, with
   let fails = false
   const w = await setup($, on, rich(), argv => (fails ? out('', 1, 'redis down') : out(page(afterOf(argv) === '0-0' ? [[LEAD, 'QSL-1240', 'reviewer', 'running', 2]] : [], 'c1', false))))
   fails = true
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(2 * MIN)
   await ui.press({ key: 'kinds' })
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
@@ -585,15 +604,6 @@ test('events held from an earlier read stay listed when a later read fails, with
 })
 
 // ---------------------------------------------------------------- FR-009 the work band cell
-
-test('the widget marks the merges as a lower bound where ix-board cut its activity', async ($, on) => {
-  trace("FR-028-AC-9")
-  const cut = rich({ activity: Array.from({ length: 200 }, (_, i) => act('merged', `QSL-${i}`, 't', i + 1, i)) })
-  await setup($, on, cut)
-  const d = await draw($, 'terminal', 'widget')
-  expect(d.text).toBe('2 leads · 5 tickets · ≥200 merged 24h')
-  await d.unmount()
-})
 
 test('the band marks the counts as lower bounds where one lead’s report cannot be read', async ($, on) => {
   trace("FR-009-AC-13")
@@ -682,7 +692,7 @@ const focusCalls = (w: World) => w.ran.filter(l => l.startsWith('ix-board --json
 test('a gate entry without the tickets and activity, as an older build writes it, is read again at once', async ($, on) => {
   trace("FR-025-AC-15")
   const w = await overGate($, on, w => seedGate(w))
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(1000)
   expect(focusCalls(w)).toHaveLength(1)
   const drawn = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
@@ -709,7 +719,7 @@ for (const [title, entry, backoff] of [
       seedGate(w, entry)
       if (backoff !== null) w.files.set(GATE, JSON.stringify({ ...JSON.parse(w.files.get(GATE)!), backoffUntil: backoff }))
     })
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+    const ui = await openedPane($, w)
     await w.clock!.advance(2 * MIN)
     expect(focusCalls(w)).toEqual([])
     await ui.unmount()
@@ -718,20 +728,20 @@ for (const [title, entry, backoff] of [
 
 // ---------------------------------------------------------------- FR-028 what is missing says why
 
-test('a ticket Linear has no record of, or that ix-board could not be asked for, says so in place of a state', async ($, on) => {
+test('a ticket Linear has no record of, or that ix-board could not be asked for, says so in place of a title', async ($, on) => {
   trace("FR-028-AC-28")
   let fails = true
   const w = world(on, true)
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [agent('a', 'QSL-404', 'coder', 'running', 1)] })
   ix(w, { issues: ids => (fails ? out('', 1, 'ix-board broke') : out(JSON.stringify({ complete: false, missing: ids, issues: [] }))) })
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   const row = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').find(l => l.trim().startsWith('QSL-404'))
   await w.clock!.advance(MIN)
-  expect(await row()).toMatch(/QSL-404 state not read +coder running/)
+  expect(await row()).toMatch(/QSL-404 state not read +\d+m$/)
   fails = false
   await w.clock!.advance(40 * MIN)
-  expect(await row()).toMatch(/QSL-404 not in Linear +coder running/)
+  expect(await row()).toMatch(/QSL-404 not in Linear +\d+m$/)
   await ui.unmount()
 })
 
@@ -741,10 +751,10 @@ test('where Linear has none of the asked tickets, ix-board exits 3 with its answ
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [agent('a', 'QSL-404', 'coder', 'running', 1)] })
   ix(w, { issues: ids => out(JSON.stringify({ complete: false, missing: ids, issues: [] }), 3, '') })
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(MIN)
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 not in Linear +coder running/)
+  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 not in Linear +\d+m$/)
   // The read did not fail: the warnings say nothing of an exit.
   await ui.press({ key: 'warnings-toggle' })
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('\n')).not.toMatch(/ix-board exited|ix-board issues/)
@@ -757,32 +767,26 @@ test('exit 3 of ix-board issues with a message is a failure', async ($, on) => {
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [agent('a', 'QSL-404', 'coder', 'running', 1)] })
   ix(w, { issues: () => out('', 3, 'ix-board refused the request') })
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(MIN)
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 state not read +coder running/)
+  expect(lines.find(l => l.trim().startsWith('QSL-404'))).toMatch(/QSL-404 state not read +\d+m$/)
   await ui.unmount()
 })
 
-test('of more than 100 tickets no focus names, those in hand are asked for first and one left out reads state not read', async ($, on) => {
+test('more than 100 reported tickets are asked for in calls of 100 within one read', async ($, on) => {
   trace("FR-028-AC-30")
   const w = world(on, true)
-  // 100 finished tickets whose ids sort before the one in hand.
-  const done = Array.from({ length: 100 }, (_, i) => agent(`d${i}`, `AAA-${100 + i}`, 'coder', 'done', 1))
+  const done = Array.from({ length: 120 }, (_, i) => agent(`d${i}`, `AAA-${100 + i}`, 'coder', 'done', 1))
   w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running']), agents: [...done, agent('a', 'QSL-1', 'coder', 'running', 1)] })
   const board = ix(w, { issues: ids => out(JSON.stringify({ complete: true, missing: [], issues: ids.map(id => single(id, 'Specced', [])) })) })
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await w.clock!.advance(MIN)
-  const asked = board.calls.find(c => c.startsWith('issues'))!.split(' ').slice(1)
-  expect(asked).toHaveLength(100)
-  expect(asked).toContain('QSL-1')
-  expect(asked).not.toContain('AAA-199')
-  await ui.press({ key: `finished-${LEAD}` })
+  const ui = await openedPane($, w)
+  const calls = board.calls.filter(c => c.startsWith('issues')).map(c => c.split(' ').slice(1))
+  expect(calls.map(c => c.length)).toEqual([100, 21])
+  expect(calls.flat()).toContain('QSL-1')
   const rows = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(rows.find(l => l.trim().startsWith('QSL-1 '))).toContain('QSL-1 Specced')
-  expect(rows.find(l => l.trim().startsWith('AAA-199 '))).toContain('AAA-199 state not read')
-  expect(rows.find(l => l.trim().startsWith('AAA-198 '))).toContain('AAA-198 Specced')
+  expect(rows.find(l => l.trim().startsWith('AAA-219 '))).toContain('AAA-219 single AAA-219')
   await ui.unmount()
 })
 
@@ -792,10 +796,195 @@ test('where no focus names tracker work, Recent says there is no focus status to
   w.leads.set(LEAD, report(LEAD, 'FSL alpha', ['running']))
   ix(w, {})
   await startSession($)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const ui = await openedPane($, w)
   await w.clock!.advance(MIN)
   const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(lines).toContain('No focus names a project or ticket, so there is no focus status to read merges from.')
   expect(lines.join('\n')).not.toMatch(/Waiting for ix-board|Nothing merged/)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- FR-028 the teams and focus choices
+
+const OTHER = 'hub:ENG:code'
+const CHOICES = `${FP}/choices/draco_QSL_code.json`
+const inProject = (identifier: string, project: string | null) => ({ ...single(identifier, 'Specced', []), project_id: project })
+const saidTickets: Record<string, string | null> = { 'QSL-7': pid(1), 'QSL-8': pid(9), 'QSL-10': null }
+
+/**
+ * A world whose lead holds a ticket the focus status lists, one placed in the focus by its project, one of another
+ * project, one in none and one Linear has no record of; the idle lead holds only another project's; an ENG lead holds a
+ * ticket of the focus. The focus is the Linear project `Ledger`; the idle lead reports `Payments`, and the ENG lead
+ * `Elsewhere`.
+ */
+const P_LEDGER = pid(1)
+const P_PAYMENTS = pid(2)
+const P_ELSEWHERE = pid(3)
+const LEDGER = `project:${P_LEDGER}`
+
+async function filtering($: $t, on: Parameters<TestBody>[1], choices: Record<string, unknown> = { focus: LEDGER }, arrange: (w: World) => void = () => undefined): Promise<World> {
+  const w = world(on, true)
+  current = w
+  w.leads.set(LEAD, { ...report(LEAD, 'FSL alpha', ['running'], { projects: [P_LEDGER] }), agents: ['QSL-1240', 'QSL-7', 'QSL-8', 'QSL-9', 'QSL-10'].map((id, i) => agent(`a${i}`, id, 'coder', 'running', 1 + i)) })
+  w.leads.set(IDLE, { ...report(IDLE, 'other work', ['running'], { projects: [P_PAYMENTS] }), agents: [agent('b', 'QSL-8', 'coder', 'running', 3)] })
+  w.leads.set(OTHER, { ...report(OTHER, 'payments', ['running'], { projects: [P_ELSEWHERE] }), agents: [agent('c', 'QSL-1240', 'coder', 'running', 2)] })
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => {
+    const line = argv.join(' ')
+    if (line.startsWith('agent-msg work events')) return out(events([LEAD, 'QSL-7', 'reviewer', 'running', 4], [LEAD, 'QSL-8', 'reviewer', 'running', 3], [LEAD, 'QSL-9', 'reviewer', 'running', 2]))
+    return prior?.(argv, init)
+  }
+  const ledger = () => out(rich().replaceAll('"p1"', JSON.stringify(P_LEDGER)).replaceAll('"Alpha"', '"Ledger"'))
+  const empty = (id: string, name: string) => () => out(JSON.stringify({ ready_queue: [], blocker_layers: [], projects: [{ id, identifier: id, name, membership: 'full_project', open_by_state: [], progress: { done: 0, total: 0 }, milestones: [], in_progress: [] }] }))
+  const chunks: Record<string, string> = { [P_PAYMENTS]: 'Payments', [P_ELSEWHERE]: 'Elsewhere' }
+  ix(w, {
+    other: args => (args[0] === 'project-chunk' && args[1]! in chunks ? out(JSON.stringify({ name: chunks[args[1]!] })) : out('', 1, 'not stubbed')),
+    projects: { [P_LEDGER]: ledger, [P_PAYMENTS]: empty(P_PAYMENTS, 'Payments'), [P_ELSEWHERE]: empty(P_ELSEWHERE, 'Elsewhere') },
+    issues: ids => out(JSON.stringify({ complete: false, missing: ids.filter(id => id === 'QSL-9'), issues: ids.filter(id => id !== 'QSL-9').map(id => inProject(id, id in saidTickets ? saidTickets[id]! : P_LEDGER)) })),
+  })
+  w.files.set(CHOICES, JSON.stringify(choices))
+  arrange(w)
+  await startSession($)
+  const ui = await openedPane($, w)
+  await w.clock!.advance(1000)
+  await w.clock!.advance(MIN)
+  await ui.unmount()
+  return w
+}
+
+const rowsFor = (d: Drawn) => d.lines.filter(l => /^ QSL-/.test(l)).map(l => l.trim().split(' ')[0])
+const button = (d: Drawn, key: string) => d.buttons.find(b => b.key === key)?.label
+
+test('a focus narrows the tickets of the teams’ leads, folds a lead with nothing in it and keeps unknown projects apart', async ($, on) => {
+  trace("FR-028-AC-31", "FR-028-AC-32", "FR-028-AC-33")
+  await filtering($, on)
+  const d = await draw($)
+  // Listed by the focus status, and placed by its project: the two of the focus.
+  expect(rowsFor(d)).toEqual(['QSL-1240', 'QSL-7'])
+  // The ENG lead holds a ticket of the focus, and a focus never widens the teams.
+  expect(d.lines).not.toContain(OTHER)
+  expect(button(d, 'teams-choice')).toBe('Teams: QSL ▾')
+  expect(button(d, 'focus-choice')).toBe('Focus: Ledger ▾')
+  // QSL-9, which Linear has no record of, may be of the focus: counted apart and listed on demand.
+  expect(button(d, `unplaced-${LEAD}`)).toBe('▸ 1 ticket with unknown project')
+  await d.press(`unplaced-${LEAD}`)
+  expect(ticketRow(d, 'QSL-9')).toMatch(/QSL-9 not in Linear /)
+  // The idle lead holds another project's ticket only.
+  expect(button(d, 'outside:titan')).toBe('▸ 1 lead with nothing in this focus')
+  expect(d.buttons.map(b => b.key)).not.toContain(`lead:${IDLE}`)
+  await d.press('outside:titan')
+  expect(d.lines).toContain(`   ${IDLE} · 1 ticket outside the focus`)
+  await d.unmount()
+})
+
+test('Recent and the widget follow the focus and say what an unknown project leaves out', async ($, on) => {
+  trace("FR-028-AC-34")
+  await filtering($, on)
+  const d = await draw($)
+  await d.press('kinds')
+  const roles = d.lines.filter(l => /review start/.test(l))
+  expect(roles).toHaveLength(1)
+  expect(roles[0]).toContain('QSL-7')
+  expect(d.lines).toContain('1 event of tickets with unknown project not listed')
+  await d.unmount()
+  const widget = await draw($, 'terminal', 'widget')
+  expect(widget.text).toContain('1 lead · 2 active · ≥2 tickets · +1 unknown project')
+  await widget.unmount()
+})
+
+test('with the focus all every ticket of the teams’ leads is listed and none is set apart', async ($, on) => {
+  trace("FR-028-AC-31")
+  await filtering($, on, {})
+  const d = await draw($)
+  expect(rowsFor(d).sort()).toEqual(['QSL-10', 'QSL-1240', 'QSL-7', 'QSL-8', 'QSL-8', 'QSL-9'])
+  expect(button(d, 'focus-choice')).toBe('Focus: all ▾')
+  expect(d.buttons.filter(b => b.key.startsWith('outside:'))).toEqual([])
+  expect(d.buttons.filter(b => b.key.startsWith('unplaced-'))).toEqual([])
+  await d.unmount()
+})
+
+test('a lead whose report cannot be read stays listed under a focus', async ($, on) => {
+  trace("FR-028-AC-35")
+  await filtering($, on, { focus: LEDGER }, w => {
+    const prior = w.stub.value
+    w.stub.value = (argv, init) => (argv.join(' ') === `agent-msg work --lead ${IDLE} show` ? out('', 1, 'ssh: no route') : prior?.(argv, init))
+  })
+  const d = await draw($)
+  expect(d.lines).toContain('QSL:code')
+  expect(d.lines).toContain('▲')
+  expect(d.buttons.filter(b => b.key.startsWith('outside:'))).toEqual([])
+  await d.unmount()
+})
+
+test('a stored focus nothing knows is said and every ticket is listed', async ($, on) => {
+  trace("FR-028-AC-36")
+  await filtering($, on, { focus: `project:${pid(77)}` })
+  const d = await draw($)
+  expect(d.lines).toContain('focus project 00000000 is not known: showing all')
+  expect(button(d, 'focus-choice')).toBe('Focus: all ▾')
+  expect(rowsFor(d)).toContain('QSL-8')
+  expect(d.buttons.filter(b => b.key.startsWith('outside:'))).toEqual([])
+  await d.unmount()
+})
+
+test('the header chooses teams and focus, and each choice is saved and leaves the other', async ($, on) => {
+  trace("FR-028-AC-38", "FR-014-AC-20")
+  const w = await filtering($, on, {})
+  const saved = () => JSON.parse(w.files.get(CHOICES)!) as unknown
+  const d = await draw($)
+  await d.press('teams-choice')
+  expect(d.buttons.filter(b => b.key.startsWith('team-option-')).map(b => b.label)).toEqual(['  all teams', '  ENG', '✓ QSL'])
+  await d.press('team-option-ENG')
+  expect(saved()).toEqual({ teams: ['QSL', 'ENG'] })
+  expect(button(d, 'teams-choice')).toBe('Teams: QSL, ENG ▾')
+  await d.press('focus-choice')
+  // What the leads of the selected teams report, by name.
+  expect(d.buttons.filter(b => b.key.startsWith('focus-option-')).map(b => b.label)).toEqual(['✓ all', '  Elsewhere', '  Ledger', '  Payments'])
+  await d.press(`focus-option-${LEDGER}`)
+  expect(saved()).toEqual({ teams: ['QSL', 'ENG'], focus: LEDGER })
+  expect(button(d, 'focus-choice')).toBe('Focus: Ledger ▾')
+  expect(d.buttons.filter(b => b.key.startsWith('focus-option-'))).toEqual([])
+  await d.press('teams-choice')
+  await d.press('team-option-all')
+  expect(saved()).toEqual({ teams: ['all'], focus: LEDGER })
+  expect(button(d, 'teams-choice')).toBe('Teams: all ▾')
+  await d.unmount()
+})
+
+test('pressing a team adds or removes it, and none left is every team', () => {
+  trace("FR-028-AC-38")
+  expect(toggledTeams(['QSL'], 'ENG')).toEqual(['QSL', 'ENG'])
+  expect(toggledTeams(['QSL', 'ENG'], 'qsl')).toEqual(['ENG'])
+  expect(toggledTeams(['QSL'], 'QSL')).toEqual(['all'])
+  expect(toggledTeams([], 'ENG')).toEqual(['ENG'])
+  expect(toggledTeams(['QSL', 'ENG'], 'all')).toEqual(['all'])
+})
+
+test('a ticket is out of a focus only where all its projects are known, and an unread focus filters nothing', () => {
+  trace("FR-028-AC-32", "FR-028-AC-37")
+  const PID = pid(1)
+  const view = (selectors: FocusView['selectors'], over: Partial<FocusView> = {}): FocusView => ({ address: LEDGER, machine: '', kind: '', summary: '', status: 'unknown', scope: { initiatives: 0, projects: 0, tickets: 0 }, focusReportedAt: null, fetchedAt: null, initiatives: [], loose: [], header: null, warnings: [], title: 'F', via: 'chosen', notes: [], selectors, ...over })
+  const ticket = (identifier: string, project: string | null | undefined) => ({ identifier, title: 't', state: '', prs: null, ...(project === undefined ? {} : { project, milestone: null }) })
+  const singles = { issues: [ticket('A-1', PID), ticket('A-2', pid(5)), ticket('A-3', null), ticket('A-4', undefined)], activity: null, at: 1, ticketsOnly: true as const }
+  const chosen = { value: LEDGER, name: 'F', known: true }
+  const places = (f: FocusView) => {
+    const filter = focusFilter(LEDGER, 'k', { heldFor: 'k', chosen }, [f], [singles])
+    if (filter.kind !== 'named') throw new Error(filter.kind)
+    return ['A-1', 'A-2', 'A-3', 'A-4', 'A-5'].map(filter.place)
+  }
+  expect(places(view([{ kind: 'project', ref: PID }]))).toEqual(['in', 'out', 'out', 'unknown', 'unknown'])
+  // An initiative not expanded: what is in no project is out, and the rest is not known.
+  expect(places(view([{ kind: 'initiative', ref: PID }]))).toEqual(['unknown', 'unknown', 'out', 'unknown', 'unknown'])
+  expect(focusFilter(LEDGER, 'k', { heldFor: 'other', chosen }, [view([])], [])).toEqual({ kind: 'unread', why: 'focus not read: all tickets shown' })
+  // A choice that is no focus filters nothing.
+  expect(focusFilter(LEDGER, 'k', { heldFor: 'k', chosen: { ...chosen, known: false } }, [], []).kind).toBe('all')
+  expect(focusFilter('all', 'k', {}, [], []).kind).toBe('all')
+})
+
+test('the band’s work cell follows the focus', async ($, on) => {
+  trace("FR-009-AC-18")
+  await filtering($, on, { focus: LEDGER, modules: ['work'] })
+  const ui = await drawBand($, CLASSIC)
+  expect((await ui.find({ key: 'work' }))?.text).toMatch(/^≥2 tickets \+1 unknown project/)
   await ui.unmount()
 })

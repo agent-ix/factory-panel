@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ACCENT, DOING, READY, TRACK, bar, cellBar, dots, loadColor, spark, stackBar, tempColor, usd } from '../hooks/ui/glyphs'
+import { ACCENT, DOING, READY, TRACK, bar, cellBar, loadColor, spark, stackBar, tempColor, usd } from '../hooks/ui/glyphs'
 import { widgets } from '../hooks/ui/widgets'
 
 // Colour maths for the palette test: WCAG contrast and HSL of a #rrggbb colour.
@@ -83,17 +83,6 @@ test('a status chip is a bracketed name, the name in the state color, with no co
   const open = statusChip('relay', 'ix-relay', 'x', 'success', true, () => {}) as unknown as Node
   expect([kids(open)[2].props.children].flat()).toEqual(['▾'])
   expect(chipRow([closed as never, open as never]).props.flexDirection).toBe('row')
-})
-
-test('braille dots draw two samples per character, filled from the bottom', async () => {
-  expect(dots([1, 2, 3, 4])).toEqual(['⣠⣾'])
-  expect(dots([])).toEqual([''])
-  expect(dots([], 2)).toEqual(['', ''])
-  expect(dots([5])).toEqual(['⡄'])
-  expect(dots([5, 5])).toEqual(['⣤'])
-  expect(dots([1, NaN, 4])).toEqual(['⣸'])
-  // two rows: the low sample fills only the bottom row, the high one both
-  expect(dots([0, 8], 2)).toEqual(['⢸', '⣸'])
 })
 
 test('a progress row is a name, a segment bar and a right-aligned count, with no percentage', async () => {

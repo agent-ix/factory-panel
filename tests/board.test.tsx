@@ -702,7 +702,7 @@ test('a read of single tickets waits for one of the 4 ix-board places a refresh 
 })
 
 test('a unit unanswered at the call timeout or at the budget fails alone and is not remembered', async ($, on) => {
-  trace("FR-026-AC-25", "NFR-004-M-8")
+  trace("FR-026-AC-25", "NFR-004-M-7")
   const w = world(on, true)
   ix(w, { projects: { A: project('A', 1, 2) }, other: (_, init) => hang(w)(init) })
   const shown = await progress(w, [proj('A'), { kind: 'ticket', ref: 'QSL-9' }], { advance: 21_000 })

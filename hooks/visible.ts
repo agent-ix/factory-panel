@@ -5,17 +5,17 @@ import { pollCapacity } from './capacity'
 import { originOf } from './endpoints'
 import { pollEscalations } from './escalations'
 import { pollBoard, pollDoctor, pollHerdr, pollPrometheus } from './factory'
-import { pollFocus } from './focus'
 import { isOnView, resetOnView } from './onview'
 import { pollRelay } from './relay'
-import { pollRoles } from './roles'
 import { isDue, markStale, track } from './schedule'
 import type { SourceId } from './schedule'
 import { getSelection, refreshSelection } from './selection'
 import { guarded } from './shared'
 import type { Options } from './shared'
 import { pollRetro, pollTeam } from './team'
-import { pollEvents, pollTickets, pollWork } from './workview'
+import { pollLanes } from './worklane'
+import { pollEvents, pollProjects, pollTickets, pollWork } from './workview'
+import { pollFocus, readChoices } from './focus'
 import { VIEW_SPECS } from './views'
 import type { ViewId } from './views'
 
@@ -39,10 +39,11 @@ export const HEARTBEAT_MS = 15 * 1000
 const PANE_SOURCES: Record<ViewId, readonly SourceId[]> = {
   factory: ['selection', 'prometheus', 'herdr', 'relay', 'board'],
   focus: ['selection', 'focus'],
-  work: ['selection', 'focus', 'work', 'events', 'tickets'],
+  // What more the Work pane reads depends on what is open in it (workSources of hooks/workview.tsx).
+  work: ['selection', 'work'],
   escalations: ['escalations'],
   relay: ['announcements'],
-  team: ['selection', 'team', 'retro', 'roles', 'capacity'],
+  team: ['selection', 'team', 'retro', 'capacity'],
 }
 
 const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
@@ -62,11 +63,11 @@ const MODULE_SOURCES: Record<ModuleId, readonly SourceId[]> = {
 
 /**
  * The sources a pane draws. The Factory widget (desktop, minimized) shows no agents and no teams, and the Team widget
- * no roles and no capacity.
+ * no capacity.
  */
 export const paneSources = (view: ViewId, isWidget = false): readonly SourceId[] => {
   if (!isWidget) return PANE_SOURCES[view]
-  return view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view].filter(s => s !== 'roles' && s !== 'capacity')
+  return view === 'factory' ? ['prometheus', 'herdr', 'relay'] : PANE_SOURCES[view].filter(s => s !== 'capacity')
 }
 
 /**
@@ -83,7 +84,7 @@ async function readScope($: EngineInterface): Promise<boolean> {
   await refreshSelection($, true)
   const now = `${getSelection().focus.value}\u0000${getSelection().teams.value.join(',')}`
   // The first refresh only records the scope: the first reads already wait for it.
-  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'tickets', 'retro', 'roles')
+  if (lastScope !== undefined && lastScope !== now) markStale('focus', 'board', 'work', 'tickets', 'projects', 'membership', 'choices', 'retro')
   lastScope = now
   $.ui.invalidate('ui.render')
   return true
@@ -119,10 +120,16 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
       return pollEvents($)
     case 'tickets':
       return pollTickets($)
+    case 'workLanes':
+      return pollLanes($, options)
+    case 'projects':
+      return pollProjects($)
+    case 'membership':
+      return pollFocus($, false, false, true)
+    case 'choices':
+      return readChoices($)
     case 'retro':
       return pollRetro($)
-    case 'roles':
-      return pollRoles($)
     case 'capacity':
       return pollCapacity($, options)
     // The identity lookup is part of the selection's refresh.
@@ -131,8 +138,8 @@ function readSource($: EngineInterface, options: Options, id: SourceId): Promise
   }
 }
 
-/** Drawings, by surface and view, with a read already waiting out SETTLE_MS. */
-const pending = new Set<string>()
+/** Drawings, by surface and view, with a read already waiting out SETTLE_MS: the sources of the latest drawing. */
+const pending = new Map<string, readonly SourceId[]>()
 
 export function resetVisible(): void {
   pending.clear()
@@ -155,11 +162,14 @@ function dueNow(options: Options, sources: readonly SourceId[], now: number): So
   // A view can be drawn before session start has found the metrics address. Nothing is asked of an
   // unknown address, so it counts as no read; the redraw that ends session start asks.
   const isFound = originOf(options.prometheusUrl) !== undefined
-  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity')) && isDue(id, now))
+  return sources.filter(id => (isFound || (id !== 'prometheus' && id !== 'team' && id !== 'capacity' && id !== 'workLanes')) && isDue(id, now))
 }
 
-async function readDue($: EngineInterface, options: Options, surface: Surface, sources: readonly SourceId[], seat: Seat): Promise<void> {
-  pending.delete(`${seat.client} ${surface}`)
+async function readDue($: EngineInterface, options: Options, surface: Surface, seat: Seat): Promise<void> {
+  // What a view reads can change while its drawing settles: opening a fold of the Work pane asks for more.
+  const key = `${seat.client} ${surface}`
+  const sources = pending.get(key) ?? []
+  pending.delete(key)
   // The list of panes and herdr or tmux speak of the terminal. Elsewhere, and for a widget, nothing
   // says what is on screen, so the drawing is taken as the evidence.
   const isTerminal = seat.client === 'terminal'
@@ -178,9 +188,11 @@ async function readDue($: EngineInterface, options: Options, surface: Surface, s
  */
 export async function drawn($: EngineInterface, options: Options, surface: Surface, sources: readonly SourceId[], seat: Seat): Promise<void> {
   const key = `${seat.client} ${surface}`
-  if (pending.has(key)) return
+  if (pending.has(key)) return void pending.set(key, sources)
   const now = await $.clock.now()
   if (!sources.some(id => isDue(id, now))) return
-  pending.add(key)
-  void $.clock.after(SETTLE_MS, () => void readDue($, options, surface, sources, seat))
+  // Another drawing may have scheduled the read while the clock was asked.
+  const isScheduled = pending.has(key)
+  pending.set(key, sources)
+  if (!isScheduled) void $.clock.after(SETTLE_MS, () => void readDue($, options, surface, seat))
 }

@@ -32,7 +32,8 @@ The mod SHALL read a source only while something on screen draws its data.
 - The mod SHALL redraw its sites at least every 15 seconds, or every `refreshSeconds` where that is shorter, so that a view that stays on screen keeps being read.
 - The mod SHALL start no read from a timer or from session start other than through a drawing, except the identity lookup of an interactive session at start.
 - A session that is not interactive SHALL run no identity lookup and no read.
-- A typed `/factory show` or choice command reads the focus source once, through the same 30 minute gate, although no view draws it ([FR-014](./FR-014-user-choice.md)).
+- A typed `/factory show` or choice command, and a choice made in the Work view's header, reads the focus source once, through the same 30 minute gate, although no view draws it ([FR-014](./FR-014-user-choice.md)).
+- A read of the focus source names its choices after the lead reports are in, through the gates of [FR-020](./FR-020-named-focus-resolution.md).
 
 ### A terminal nobody can see
 
@@ -53,10 +54,11 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 | Factory pane | selection, Prometheus machines, `herdr api snapshot`, `agent-msg doctor`, `ix-board agents` |
 | Factory widget | Prometheus machines, `herdr api snapshot`, `agent-msg doctor` |
 | Focus pane | selection, focus |
-| Work pane | selection, focus, `agent-msg work` reports, `agent-msg work events`, `ix-board issues` |
+| Work pane | selection, `agent-msg work` reports, `agent-msg work events`, lane states (Prometheus fleet series), `ix-board issues`; under a chosen focus its focus status; with a lead open the project names; with Recent open the focus; with the focus list open the focus choices ([FR-028](./FR-028-work-tab.md)) |
+| Work widget | selection, `agent-msg work` reports; under a chosen focus its focus status and `ix-board issues` |
 | Escalations pane | `agent-msg escalations` and `escalation show` |
 | Message pane | `agent-msg log` and `agent-msg who` |
-| Team pane | selection, Prometheus team series, `ix-board retro delta`, `ix-board retro eval`, fleet capacity (Prometheus fleet series and `ix-board fleet ledger query`) |
+| Team pane | selection, Prometheus team series, `ix-board retro delta`, fleet capacity (Prometheus fleet series and `ix-board fleet ledger query`) |
 | Team widget | selection, Prometheus team series, `ix-board retro delta` |
 | Band cells `health`, `local`, `agents`, `spend` | Prometheus machines |
 | Band cells `focus`, `queue` | focus |
@@ -76,20 +78,19 @@ The engine draws into a terminal whether or not it can be seen, so for a drawing
 |--------|--------------------------|
 | selection (declaration and choice files), Prometheus machines | `refreshSeconds` |
 | `herdr api snapshot`, `agent-msg doctor` | 60 seconds, or `refreshSeconds` where that is longer |
-| `ix-board agents`, escalations, relay broadcasts, team series, work reports, fleet capacity | 60 seconds |
+| `ix-board agents`, escalations, relay broadcasts, team series, work reports, fleet capacity, lane states, the Work view's project names and focus choices | 60 seconds |
 | work events | 30 seconds |
 | focus | 2 minutes |
 | `ix-board retro delta` | 5 minutes |
-| `ix-board retro eval` | asked of the shared gate every 60 seconds, which runs it once in 30 minutes ([FR-031](./FR-031-role-evaluations.md)) |
 | `ix-board issues` | asked of the shared gate every 60 seconds, which runs it as [FR-028](./FR-028-work-tab.md) says |
 
 - The mod SHALL read a source at once when a view that draws it comes on screen and the data is older than the interval.
 - Opening a view by command or band digit SHALL force no read.
-- The `r` key of a view SHALL read that view's sources at once, except that `ix-board agents` is read only once 60 seconds have passed since its last read ([FR-025](./FR-025-per-project-last-good.md)) and `ix-board retro eval` is not run by it ([FR-031](./FR-031-role-evaluations.md)).
+- The `r` key of a view SHALL read that view's sources at once, except that `ix-board agents` is read only once 60 seconds have passed since its last read ([FR-025](./FR-025-per-project-last-good.md)).
 - The mod SHALL say that a team of the `teams` choice matched nothing only where both the focus reports and `ix-board agents` for that team have been read, so a band that reads only one of them says nothing about it.
 - A source that fails, or answers more slowly than its limit, SHALL be next read after twice its interval, doubling with each further failure to at most 5 minutes, or its interval where that is longer, and SHALL return to its interval after a read that answers in time. The limits are 2.5 seconds for Prometheus, 5 seconds for herdr, escalations and relay broadcasts, and 10 seconds for `agent-msg doctor`.
 - While `agent-msg whoami` has not said who the session is, the mod SHALL ask it again with the same doubling, from `refreshSeconds` to 5 minutes; a command SHALL ask at once.
-- A changed focus or teams value SHALL make the focus, `ix-board agents`, work report, `ix-board issues`, `ix-board retro delta` and `ix-board retro eval` reads due at the next drawing.
+- A changed focus or teams value SHALL make the focus, `ix-board agents`, work report, `ix-board issues`, project name, focus choice and `ix-board retro delta` reads due at the next drawing.
 - The Linear-backed reads of `ix-board` stay held by their own 30 minute gate ([FR-025](./FR-025-per-project-last-good.md)); this requirement only decides when the mod asks.
 - The mod SHALL make no Prometheus read before the metrics address is known ([FR-007](./FR-007-endpoint-discovery.md)), and SHALL NOT count a drawing before then as a failed read.
 - The mod SHALL raise no toast or notification from a read.

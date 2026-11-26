@@ -1,14 +1,14 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { MODULE_IDS } from './band/modules'
-import { focusBannerNow, focusDetailNow, readForCommand } from './focus'
+import { choiceApplied, focusBannerNow, focusDetailNow, focusHeld, readForCommand } from './focus'
 import { readRecords } from './progress'
 import { SOURCE_NAMES, selectorErrorList, sourceState } from './sources'
-import { markStale } from './schedule'
-import { clearChoice, getSelection, normalizeModules, refreshSelection, writeChoice } from './selection'
+import { ALL, clearChoice, focusValue, getSelection, normalizeModules, refreshSelection, writeChoice } from './selection'
 import type { Feature, Selection } from './selection'
 import { defaultView, isViewId, showView } from './views'
 import type { ViewId } from './views'
+import { choicesText, labelOf } from './focuschoice'
 import { ago } from './shared'
 import type { Options } from './shared'
 
@@ -21,20 +21,20 @@ const VALID_MODULES = MODULE_IDS.join(', ')
 
 /** The skill snippet: the declaration an agent writes for its own session. */
 export const snippetFor = (sel: Selection): string => {
-  const example = { modules: ['queue', 'lanes'], hosts: 'local', focus: 'own', teams: sel.identity.status === 'detected' ? [sel.identity.team] : ['QSL'] }
+  const example = { modules: ['queue', 'lanes'], hosts: 'local', focus: 'all', teams: sel.identity.status === 'detected' ? [sel.identity.team] : ['QSL'] }
   return [
     'Skill snippet (the agent writes this file for its own session; writing it again replaces the earlier choice):',
     `  Write ~/.ix/factory-panel/features/${sel.key}.json with this content:`,
     `  ${JSON.stringify(example)}`,
-    `  Keys, all optional: modules (${VALID_MODULES}), hosts (${VALID_HOSTS}), focus (own, team or a focus name), teams (a list of team names).`,
+    `  Keys, all optional: modules (${VALID_MODULES}), hosts (${VALID_HOSTS}), focus (all, initiative:<Linear ID> or project:<Linear ID>), teams (a list of team names, or ["all"]).`,
   ].join('\n')
 }
 
 const CHOICE_HELP = [
   '  Choose:      what to display (your choice beats a skill\'s, which beats the automatic view)',
   '    /factory use queue,lanes     the modules, in this order',
-  '    /factory focus team          own | team | a focus name, e.g. /factory focus Release Train',
-  '    /factory teams QSL,ENG       the teams whose leads and lanes show',
+  '    /factory focus Release Train an initiative or project the leads report, by name or ID; or all',
+  '    /factory teams QSL,ENG       the teams whose leads and lanes show; all is every team',
   '    /factory hosts all           all | local machines',
   '    /factory show                what is shown and where each value came from',
   '    /factory reset               back to the skill\'s selection or the automatic view',
@@ -89,11 +89,13 @@ export const showText = async ($: EngineInterface, sel: Selection): Promise<stri
   // The state the panes keep is the host's; a caller without it just has no banner line.
   const banner = await focusBannerNow($, sel).catch(() => null)
   const detail = await focusDetailNow($, sel).catch(() => [])
+  const chosen = await focusHeld($).then(held => held.meta.chosen, () => undefined)
+  const focus = chosen?.value === sel.focus.value && chosen.name !== null ? `${chosen.name} (${sel.focus.value})` : sel.focus.value
   return [
     id.status === 'detected' ? `Session key: ${sel.key} (address ${id.address}, third segment: ${id.segment})` : `Session key: ${sel.key} (could not tell who this session is)`,
     line('modules', sel.modules.value.join(', '), sel.modules.source),
     line('hosts', sel.hosts.value, sel.hosts.source),
-    line('focus', sel.focus.value, sel.focus.source),
+    line('focus', focus, sel.focus.source),
     line('teams', sel.teams.value.length > 0 ? sel.teams.value.join(', ') : 'every team', sel.teams.source),
     ...(banner === null ? [] : [banner]),
     ...detail,
@@ -108,16 +110,25 @@ const list = (text: string): string[] => text.split(/[\s,]+/).filter(Boolean)
 /** A typed command is on screen: one gated read of the focuses it is about to print. Where none can be made, what is held is printed. */
 const readFocuses = ($: EngineInterface, changed: boolean): Promise<void> => readForCommand($, changed).catch(() => undefined)
 
-/**
- * After a choice: re-read the selection, read the focuses for it, and say what is now shown. The lanes the scope reads
- * are due at the next drawing of a view that shows them.
- */
+/** After a choice: re-read what it selects and say what is now shown. */
 async function applied($: EngineInterface, lead: string): Promise<string> {
-  const sel = await refreshSelection($)
-  markStale('focus', 'board', 'work', 'tickets', 'retro', 'roles')
-  await readFocuses($, true)
-  $.ui.invalidate('ui.render')
+  const sel = await choiceApplied($)
   return `${lead}\n${await showText($, sel)}`
+}
+
+/**
+ * The focus a name or Linear ID names among those the leads report. Where it names none or several, `value` is null
+ * and `message` says so and lists those that can be chosen.
+ */
+async function findFocus($: EngineInterface, reference: string): Promise<{ value: string | null; message: string }> {
+  await readFocuses($, false)
+  const options = await focusHeld($).then(held => held.meta.options, () => undefined)
+  if (options === undefined) return { value: null, message: 'The focuses are not read yet; run it again. The focus is unchanged.' }
+  const asked = reference.toLowerCase()
+  const found = options.filter(o => o.name === reference || o.value === asked || o.id === asked)
+  if (found.length === 1) return { value: found[0]!.value, message: labelOf(found[0]!.value, found[0]!.name) }
+  const why = found.length === 0 ? `No lead reports a focus "${reference}"` : `"${reference}" names several focuses; use the ID`
+  return { value: null, message: `${why}. The focus is unchanged.\n${choicesText(options)}` }
 }
 
 async function choose($: EngineInterface, command: string, rest: string): Promise<string> {
@@ -139,12 +150,16 @@ async function choose($: EngineInterface, command: string, rest: string): Promis
       return failed(() => writeChoice($, c => ({ ...c, modules })), `Showing ${modules.join(', ')}.`)
     }
     case 'focus': {
-      const focus = rest.trim()
-      const value = ['own', 'team'].includes(focus.toLowerCase()) ? focus.toLowerCase() : focus
-      return failed(() => writeChoice($, c => ({ ...c, focus: value })), `Focus: ${value}.`)
+      const reference = focusValue(rest)
+      if (reference === ALL) return failed(() => writeChoice($, c => ({ ...c, focus: ALL })), 'Focus: all.')
+      const found = await findFocus($, reference)
+      const value = found.value
+      if (value === null) return found.message
+      return failed(() => writeChoice($, c => ({ ...c, focus: value })), `Focus: ${found.message}.`)
     }
     case 'teams': {
-      const teams = list(rest)
+      const named = list(rest)
+      const teams = named.some(t => t.toLowerCase() === ALL) ? [ALL] : named
       if (teams.length === 0) return '/factory teams needs team names, for example /factory teams QSL,ENG.'
       return failed(() => writeChoice($, c => ({ ...c, teams })), `Teams: ${teams.join(', ')}.`)
     }

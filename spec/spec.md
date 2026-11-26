@@ -34,8 +34,7 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 - The commands, help text and documentation a person uses to learn all of the above.
 - The Focus card of 0.7.0: progress per project, initiatives with their projects nested beneath, honest roll-up totals, and source errors folded into one footer warning icon.
 - The Work tab of 0.8.0 (leads, their tickets and merges) and the Team tab's review, flow and retro-health additions, its teams by Linear key, its daily rows of completed issues and merged PRs and the coverage of its tiles.
-- The role evaluations on the Team tab: each role's score, trend, failing rules and unscored rules from `ix-board retro eval`.
-- The fleet capacity on the Team tab: each host's busy ratio, ready-buffer deficit and output against its recorded sustainable level, read without writing anything.
+- The fleet’s hosts on the Team tab: each host’s lanes by state, CPU, finished work per hour and shortfall of ready work, read without writing anything.
 - The review, spec and gate events in the Work tab's Recent list, the work cell of the band, and the shared reads of the leads' work reports that show which leads could not be read.
 - The reads of 0.7.1: one combined progress call for the projects of a focus, a shared memory of selectors ix-board cannot answer, Linear-backed reads at most once in 30 minutes, and no read of what is not on screen.
 
@@ -48,9 +47,10 @@ factory-panel is a Claude Code mod that keeps the state of an Agent IX factory i
 | Mouse interaction in the classic layout | The terminal does not capture the mouse there; every action has a keyboard path. |
 | Per-user theming of the views | The shared style layer in `docs/STYLE.md` is deliberate and uniform. |
 | A named-focus field in ix-board | A focus is named by its lead's summary; ix-board owns its data model. |
-| Writing named focuses, fixing ix-board data or errors, per-ticket drill-down | ix-relay owns named focus writes, ix-board owns its own failures; the mod only reads named focuses and shows progress per selector. |
+| Role scores on the Team tab (FR-031 of 0.9.0, removed) | The rules the evaluation scores have no captured data. |
+| Writing anything to relay or Linear about focuses, fixing ix-board data or errors, per-ticket drill-down | Linear owns initiatives and projects, ix-board owns its own failures; the mod only reads and shows progress per selector. |
 | A new relay protocol | The mod reads `agent-msg whoami` and `agent-msg work` as they are. |
-| Roles as plugin configuration, including dynamic roles | Skills select features; the mod chooses nothing by role and only draws the role evaluations ix-board computes. Dynamic role configuration is a possible later step. |
+| Roles as plugin configuration, including dynamic roles | Skills select features; the mod chooses nothing by role and draws nothing about roles. Dynamic role configuration is a possible later step. |
 | Running in non-interactive (`-p`) sessions | There is no surface to draw on and nobody to ask. |
 
 ## 3. System Overview
@@ -120,7 +120,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-017 | Last good progress | [FR-017](functional/FR-017-last-good-progress.md) |
 | FR-018 | Source errors visible and not fatal | [FR-018](functional/FR-018-errors-visible-not-fatal.md) |
 | FR-019 | Focus mode banner | [FR-019](functional/FR-019-focus-mode-banner.md) |
-| FR-020 | Named focus resolution | [FR-020](functional/FR-020-named-focus-resolution.md) |
+| FR-020 | Focus choice | [FR-020](functional/FR-020-named-focus-resolution.md) |
 | FR-021 | Initiative expansion | [FR-021](functional/FR-021-initiative-expansion.md) |
 | FR-022 | Initiative roll-up and honest totals | [FR-022](functional/FR-022-initiative-rollup-and-honest-totals.md) |
 | FR-023 | Nested initiative display | [FR-023](functional/FR-023-nested-initiative-display.md) |
@@ -131,8 +131,7 @@ Two engine facts shape the design. The arrow keys at an empty prompt open the en
 | FR-028 | Work tab | [FR-028](functional/FR-028-work-tab.md) |
 | FR-029 | Team metrics and retro health | [FR-029](functional/FR-029-team-metrics.md) |
 | FR-030 | Lead report reads | [FR-030](functional/FR-030-lead-report-reads.md) |
-| FR-031 | Role evaluations | [FR-031](functional/FR-031-role-evaluations.md) |
-| FR-032 | Fleet capacity | [FR-032](functional/FR-032-fleet-capacity.md) |
+| FR-032 | Fleet hosts | [FR-032](functional/FR-032-fleet-capacity.md) |
 
 ### 4.3 Non-Functional Requirements
 

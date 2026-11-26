@@ -3,68 +3,94 @@ import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
 import { focusBanner } from '../hooks/band/modules'
-import { matchLeads } from '../hooks/namedfocus'
-import { LEAD, MIN, board, choose, focusCalls, hides, lead, named, onScreen, pageLines, pageOf, paneButtons, paneLines, shows, started, statusCalls } from './focus-kit'
-import { defRow, listJson, out, report, showJson, startSession, stubRow, world } from './world'
+import { LEAD, board, choose, hides, lead, pageLines, pageOf, paneLines, shows, started, statusCalls } from './focus-kit'
+import { FP, out, pid, report, roadmapJson, world } from './world'
 import type { World } from './world'
 
-// Tests for the banner that says why these focuses are shown and the resolution of the name of
-// `/factory focus <name>`: the keywords, the named focus definitions ix-relay stores, a lead address
-// and a lead summary, as a read-only lookup.
+// Tests for the banner that says why these focuses are shown and for the focus choice: `all`, or one Linear initiative
+// or project that leads report, by its Linear ID, with Linear's name from ix-board.
 
-const BETA = 'foc-0123456789abcdef0123456789abcdef'
-const ENG = 'foc-fedcba9876543210fedcba9876543210'
+const P1 = pid(1)
+const P2 = pid(2)
+const I1 = pid(9)
+const STABLE = `project:${P1}`
+const ALPHA = `initiative:${I1}`
+const STABLE_NAME = 'FSL stability: red main and blowups'
 
 /** The line `/factory show` prints for the banner, found by what it says. */
 const shown = async ($: Parameters<TestBody>[0]): Promise<string> => (await $.command.run({ command: 'factory', args: 'show' } as never)).text as string
+const run = async ($: Parameters<TestBody>[0], args: string): Promise<string> => ((await $.command.run({ command: 'factory', args } as never)) as { text: string }).text
+const stored = (w: World, key = 'draco_QSL_code') => JSON.parse(w.files.get(`${FP}/choices/${key}.json`) ?? 'null') as { focus?: string } | null
 
-/** A definition named Beta of team QSL over one project, and ix-board answering for it. */
-function beta(w: World, over: { team?: string; name?: string; show?: () => ReturnType<typeof out> } = {}): void {
-  named(w, () => out(listJson(defRow(BETA, over.name ?? 'Beta', over.team ?? 'QSL'))), { [BETA]: over.show ?? (() => out(showJson(over.name ?? 'Beta', over.team ?? 'QSL', { projects: ['p1'] }))) })
-  board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
+/**
+ * A lead reporting the initiative FSL Alpha, whose one project is P2, and the project P1, which no initiative of the
+ * roadmap holds, so that `project-chunk` names it.
+ */
+function linear(w: World, over: { initiative?: string; roadmapOnly?: boolean; unnamed?: boolean } = {}): void {
+  if (over.roadmapOnly !== true) lead(w, { initiatives: [I1], projects: [P1] }, 'FSL alpha summary')
+  board(w, { combined: args => pageOf(args[1] === P1 ? STABLE_NAME : 'Alpha work', 5, 10) })
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => {
+    const line = argv.join(' ')
+    if (line === 'ix-board --json roadmap') return out(roadmapJson([{ id: I1, name: over.initiative ?? 'FSL Alpha', projects: [{ id: P2, name: 'Alpha work' }] }]))
+    if (line === `ix-board --json project-chunk ${P1}`) return over.unnamed ? out('', 1, 'no such project') : out(JSON.stringify({ name: STABLE_NAME }))
+    if (over.unnamed && line.startsWith('ix-board --json focus status')) return out('', 1, 'no such project')
+    return prior?.(argv, init)
+  }
+}
+
+/** Every text line and button label of the Work view, with the focus choice opened where asked. */
+async function workLines($: Parameters<TestBody>[0], open = false): Promise<string[]> {
+  const ui = await $.ui.mount({ plugin: 'factory-panel', surface: 'terminal', component: 'Pane', requestId: 'work', props: { title: 'Work', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } } as never)
+  if (open) await ui.press({ key: 'focus-choice' })
+  const lines = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  const buttons = (await ui.findAll({ type: 'Button' })).map(b => String((b.props as { label?: string }).label ?? ''))
+  if (open) await ui.press({ key: 'focus-choice' })
+  await ui.unmount()
+  return [...lines, ...buttons]
 }
 
 // ---------------------------------------------------------------- FR-019 the banner
 
-test('a name that matches a lead summary is the first line of the pane and of /factory show', async ($, on) => {
-  trace("FR-019-AC-1")
+test('the name of the chosen focus is the line of the pane and of /factory show', async ($, on) => {
+  trace("FR-019-AC-1", "FR-019-AC-6")
   const w = world(on, true)
-  lead(w, null, 'Release Train')
-  choose(w, 'Release Train')
-  named(w, () => out(listJson()))
+  linear(w)
+  choose(w, STABLE)
   await started($, w)
   const lines = await pageLines($)
-  expect((await shown($)).split('\n')).toContain('your choice: Release Train')
-  expect((await shown($)).split('\n')).toContain('your choice: Release Train')
+  shows(lines, new RegExp(`^your choice: ${STABLE_NAME}$`))
+  hides(lines, /^your choice: project:/)
 })
 
-test('the default scope with a focus entry of the session says own focus', async ($, on) => {
+test('the default scope says the focuses of the session team', async ($, on) => {
   trace("FR-019-AC-2")
   const w = world(on, true)
   lead(w, null)
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('own focus')
-  expect((await shown($)).split('\n')).toContain('own focus')
+  expect((await shown($)).split('\n')).toContain('focuses of QSL')
 })
 
-test('focus team says team focuses', async ($, on) => {
-  trace("FR-019-AC-3")
+test('several chosen teams are named, and all teams says every team', async ($, on) => {
+  trace("FR-019-AC-3", "FR-019-AC-10")
   const w = world(on, true)
   lead(w, null)
-  choose(w, 'team')
+  w.files.set(`${FP}/choices/draco_QSL_code.json`, JSON.stringify({ teams: ['QSL', 'ENG'] }))
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('team focuses')
+  expect((await shown($)).split('\n')).toContain('focuses of QSL, ENG')
+  await $.command.run({ command: 'factory', args: 'teams all' } as never)
+  expect((await shown($)).split('\n')).toContain('focuses of every team')
 })
 
-test('an identified session whose team has no focus entry says no focus reported, showing the whole team', async ($, on) => {
+test('an identified session whose team has no focus entry says no focus reported by that team', async ($, on) => {
   trace("FR-019-AC-4")
   const w = world(on, true)
   w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2'))
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('no focus reported, showing the whole team')
+  expect((await shown($)).split('\n')).toContain('no focus reported by QSL')
 })
 
-test('whoami failing with focus own says it could not tell who the session is', async ($, on) => {
+test('whoami failing with no choice says it could not tell who the session is', async ($, on) => {
   trace("FR-019-AC-5")
   const w = world(on, true)
   w.whoami.value = undefined
@@ -73,39 +99,33 @@ test('whoami failing with focus own says it could not tell who the session is', 
   expect((await shown($)).split('\n')).toContain('could not tell who this session is, showing every focus')
 })
 
-test('a name that matches a named focus definition says your choice', async ($, on) => {
-  trace("FR-019-AC-6")
+test('a stored ID nothing knows gives the banner of the teams and a line that says so', async ($, on) => {
+  trace("FR-019-AC-7", "FR-020-AC-10")
   const w = world(on, true)
-  choose(w, 'Beta')
-  beta(w)
-  await started($, w)
-  expect((await shown($)).split('\n')).toContain('your choice: Beta')
-})
-
-test('a name that matches nothing says your choice and adds a separate warning line', async ($, on) => {
-  trace("FR-019-AC-7")
-  const w = world(on, true)
-  lead(w, null, 'Release train')
-  choose(w, 'Nothing like it')
-  named(w, () => out(listJson()))
+  linear(w)
+  choose(w, `initiative:${pid(77)}`)
   await started($, w)
   const lines = await pageLines($)
-  expect((await shown($)).split('\n')).toContain('your choice: Nothing like it')
-  shows(lines, /^no focus matches "Nothing like it"$/)
-  expect(lines[1]).not.toBe('no focus matches "Nothing like it"')
+  expect((await shown($)).split('\n')).toContain('focuses of QSL')
+  shows(lines, /^focus initiative 00000000 is not known: showing all$/)
+  // Everything of the selected teams is still drawn.
+  shows(lines, /FSL alpha summary/)
+  const work = await workLines($)
+  shows(work, /is not known: showing all/)
+  shows(work, /^Focus: all ▾$/)
 })
 
-test('whoami failing with a name says your choice', async ($, on) => {
+test('whoami failing with a chosen focus says your choice', async ($, on) => {
   trace("FR-019-AC-8")
   const w = world(on, true)
   w.whoami.value = undefined
-  choose(w, 'Beta', 'default')
-  beta(w)
+  linear(w)
+  choose(w, ALPHA, 'default')
   await started($, w)
-  expect((await shown($)).split('\n')).toContain('your choice: Beta')
+  expect((await shown($)).split('\n')).toContain('your choice: FSL Alpha')
 })
 
-test('whoami failing with focus team says it could not tell who the session is', async ($, on) => {
+test('whoami failing with a stored team focus says it could not tell who the session is', async ($, on) => {
   trace("FR-019-AC-9")
   const w = world(on, true)
   w.whoami.value = undefined
@@ -113,299 +133,145 @@ test('whoami failing with focus team says it could not tell who the session is',
   lead(w, null)
   await started($, w)
   expect((await shown($)).split('\n')).toContain('could not tell who this session is, showing every focus')
-  // The order is the spec's: the name first, then the identity, then own, team and the rest.
   const detected = { hosts: 'local', teams: [], ownTeam: 'QSL', teamsSelected: false } as const
-  expect(focusBanner({ ...detected, focus: 'Beta', identity: 'unknown' }, [])).toBe('your choice: Beta')
-  expect(focusBanner({ ...detected, focus: 'own', identity: 'unknown' }, [])).toBe('could not tell who this session is, showing every focus')
-  expect(focusBanner({ ...detected, focus: 'own', identity: 'detected' }, [])).toBe('no focus reported, showing the whole team')
+  expect(focusBanner({ ...detected, focus: STABLE, identity: 'unknown' }, [{ via: 'chosen', address: STABLE, title: 'Beta' } as never])).toBe('your choice: Beta')
+  expect(focusBanner({ ...detected, focus: 'all', identity: 'unknown' }, [])).toBe('could not tell who this session is, showing every focus')
+  expect(focusBanner({ ...detected, focus: 'all', identity: 'detected' }, [])).toBe('focuses of every team')
 })
 
-// ---------------------------------------------------------------- FR-020 named focus resolution
+// ---------------------------------------------------------------- FR-020 the focus choice
 
-test('the keywords own and team win over a definition named Own and the definition is not used', async ($, on) => {
+test('a stored own means all', async ($, on) => {
   trace("FR-020-AC-1")
   const w = world(on, true)
-  lead(w, null)
+  linear(w)
   choose(w, 'own')
-  named(w, () => out(listJson(defRow(BETA, 'Own', 'QSL'))), { [BETA]: () => out(showJson('Own', 'QSL', { projects: ['p1'] })) })
   await started($, w)
-  expect(focusCalls(w)).toEqual([])
-  const lines = await pageLines($)
-  expect((await shown($)).split('\n')).toContain('own focus')
-  expect(lines).not.toContain('Own')
+  shows(await pageLines($), /^focuses of QSL$/)
+  shows(await workLines($), /^Focus: all ▾$/)
 })
 
-test('a definition is matched by its name or its focus_id, ignoring case, and shows progress over its members', async ($, on) => {
-  trace("FR-020-AC-2")
+test('/factory focus with the Linear name or ID of a reported focus stores its ID and shows its name', async ($, on) => {
+  trace("FR-020-AC-2", "FR-014-AC-3")
   const w = world(on, true)
-  choose(w, 'BETA')
-  beta(w)
+  linear(w)
   await started($, w)
-  shows(await pageLines($), /^5\/10$/)
-  expect(statusCalls(w)).toEqual(['--project p1'])
-  expect(focusCalls(w)).toEqual(['list --json', `show ${BETA} --json`])
-  // The focus_id in upper case, on the next refresh.
-  await $.command.run({ command: 'factory', args: `focus ${BETA.toUpperCase()}` } as never)
+  for (const reference of [STABLE_NAME, P1, STABLE.toUpperCase()]) {
+    await run($, 'focus all')
+    const said = await run($, `focus ${reference}`)
+    expect(said).toMatch(new RegExp(`^Focus: ${STABLE_NAME}\\.$`, 'm'))
+    expect(said).toContain(`${STABLE_NAME} (${STABLE})`)
+    expect(stored(w)).toEqual({ focus: STABLE })
+  }
   await w.clock!.advance(1000)
-  const lines = await pageLines($)
-  shows(lines, /^your choice: FOC-0123456789ABCDEF0123456789ABCDEF$/)
-  shows(lines, /^5\/10$/)
-  expect(focusCalls(w).filter(c => c === `show ${BETA} --json`)).toHaveLength(2)
+  shows(await pageLines($), new RegExp(`^your choice: ${STABLE_NAME}$`))
+  shows(await workLines($), /^Focus: FSL stability.*▾$/)
 })
 
-test('with definitions named Beta for two teams the session team’s one is used', async ($, on) => {
+test('a name that an initiative and a project share is refused with both listed, and the choice is unchanged', async ($, on) => {
   trace("FR-020-AC-3")
   const w = world(on, true)
-  choose(w, 'Beta')
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'), defRow(ENG, 'Beta', 'ENG'))), {
-    [BETA]: () => out(showJson('Beta', 'QSL', { projects: ['qsl-project'] })),
-    [ENG]: () => out(showJson('Beta', 'ENG', { projects: ['eng-project'] })),
-  })
-  board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
+  linear(w, { initiative: STABLE_NAME })
   await started($, w)
-  expect(focusCalls(w)).toEqual(['list --json', `show ${BETA} --json`])
-  expect(statusCalls(w)).toEqual(['--project qsl-project'])
+  const said = await run($, `focus ${STABLE_NAME}`)
+  expect(said).toContain('names several focuses; use the ID. The focus is unchanged.')
+  expect(said).toContain(`  ${STABLE_NAME}  ${STABLE}`)
+  expect(said).toContain(`  ${STABLE_NAME}  ${ALPHA}`)
+  expect(stored(w)).toBeNull()
+  const picker = await workLines($, true)
+  shows(picker, /\(initiative\)$/)
+  shows(picker, /\(project\)$/)
 })
 
-test('with whoami failing both definitions are shown and two matched is said', async ($, on) => {
-  trace("FR-020-AC-3")
-  const w = world(on, true)
-  w.whoami.value = undefined
-  choose(w, 'Beta', 'default')
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'), defRow(ENG, 'Beta', 'ENG'))), {
-    [BETA]: () => out(showJson('Beta', 'QSL', { projects: ['qsl-project'] })),
-    [ENG]: () => out(showJson('Beta', 'ENG', { projects: ['eng-project'] })),
-  })
-  board(w, { combined: args => pageOf(`Pn ${args[1]}`, 1, 2) })
-  await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /^2 focuses matched "Beta"$/)
-  shows(lines, /^label qsl-project$/)
-  shows(lines, /^label eng-project$/)
-})
-
-test('with no definition the lead summary equal to the name is shown', async ($, on) => {
+test('a lead address, a lead summary, a part of a name and a name in another case name no focus', async ($, on) => {
   trace("FR-020-AC-4")
   const w = world(on, true)
-  lead(w, null, 'Release Train')
-  choose(w, 'release train')
-  named(w, () => out(listJson()))
+  linear(w)
   await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /^Release Train$/)
-  hides(lines, /^no focus matches/)
-  // And a name contained in a summary matches it when none is equal.
-  w.leads.set(LEAD, report(LEAD, 'The Release Train, all of it'))
-  await w.clock!.advance(2 * MIN + 1000)
-  shows(await pageLines($), /^The Release Train, all of it$/)
+  for (const name of [LEAD, 'FSL alpha summary', 'FSL', 'fsl alpha']) {
+    const said = await run($, `focus ${name}`)
+    expect(said).toContain(`No lead reports a focus "${name}". The focus is unchanged.`)
+    expect(said).toContain(`  FSL Alpha  ${ALPHA}`)
+  }
+  expect(stored(w)).toBeNull()
 })
 
-test('a list that exits non-zero or prints text that is not JSON shows a source error and the lead address resolves', async ($, on) => {
-  trace("FR-020-AC-5")
+test('the choices are exactly the initiatives and projects the leads of the selected teams report, by Linear name', async ($, on) => {
+  trace("FR-020-AC-5", "FR-028-AC-38")
   const w = world(on, true)
-  w.leads.set('host1:QSL:code', report('host1:QSL:code', 'Host one focus'))
-  choose(w, 'host1:QSL:code')
-  let mode: 'exit' | 'text' = 'exit'
-  named(w, () => (mode === 'exit' ? out('', 1, 'agent-msg: relay store unavailable') : out('not json at all')))
+  linear(w)
+  w.leads.set('draco:ENG:code', report('draco:ENG:code', 'Payments v2', ['running'], { projects: [pid(55)] }))
+  // A scope entry that is no Linear ID is not offered.
+  w.leads.set('draco:QSL:plan', report('draco:QSL:plan', 'Plan', ['running'], { projects: ['Some name'] }))
   await started($, w)
-  let lines = await pageLines($)
-  shows(lines, /^agent-msg focuses: list: agent-msg: relay store unavailable$/)
-  shows(lines, /^Host one focus$/)
-  mode = 'text'
-  // A source that failed is read after twice its interval (FR-027).
-  await w.clock!.advance(4 * MIN + 1000)
-  lines = await pageLines($)
-  shows(lines, /^agent-msg focuses: list: agent-msg focuses list --json printed text that is not JSON$/)
-  shows(lines, /^Host one focus$/)
+  const picker = await workLines($, true)
+  const offered = picker.slice(picker.indexOf('✓ all'))
+  expect(offered.slice(0, 3)).toEqual(['✓ all', '  FSL Alpha', `  ${STABLE_NAME}`])
+  hides(picker, /Some name|FSL alpha summary|project 00000000/)
 })
 
-test('a definition whose selection is empty shows its name and says it selects nothing, and ix-board is not called', async ($, on) => {
+test('a project nothing names is listed by its kind and the start of its ID', async ($, on) => {
   trace("FR-020-AC-6")
   const w = world(on, true)
-  choose(w, 'Beta')
-  beta(w, { show: () => out(showJson('Beta', 'QSL', {}, {}, { empty: true })) })
+  linear(w, { unnamed: true })
   await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /Beta/)
-  shows(lines, /^this focus selects nothing$/)
-  expect(statusCalls(w)).toEqual([])
+  shows(await workLines($, true), /^  project 00000000$/)
 })
 
-test('a definition whose selection cannot be decoded shows its name and says the selection is unavailable', async ($, on) => {
+test('a chosen project shows ix-board’s progress over that project alone', async ($, on) => {
   trace("FR-020-AC-7")
   const w = world(on, true)
-  choose(w, 'Beta')
-  beta(w, { show: () => out(showJson('Beta', 'QSL', {}, {}, { definition: null })) })
+  linear(w)
+  choose(w, STABLE)
   await started($, w)
+  expect(statusCalls(w)).toEqual([`--project ${P1}`])
   const lines = await pageLines($)
-  shows(lines, /Beta/)
-  shows(lines, /^the selection of this focus is unavailable$/)
-  expect(statusCalls(w)).toEqual([])
-})
-
-test('a definition with an exclusion says the exclusions are not applied to progress', async ($, on) => {
-  trace("FR-020-AC-8")
-  const w = world(on, true)
-  choose(w, 'Beta')
-  beta(w, { show: () => out(showJson('Beta', 'QSL', { projects: ['p1'] }, { tickets: ['QSL-9'] })) })
-  await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /^exclusions are not applied to progress$/)
   shows(lines, /^5\/10$/)
+  hides(lines, /FSL alpha summary/)
 })
 
-test('an archived definition returned by list is not used', async ($, on) => {
+test('a chosen initiative is expanded to its projects by ix-board', async ($, on) => {
+  trace("FR-020-AC-8", "FR-021-AC-2")
+  const w = world(on, true)
+  linear(w)
+  choose(w, ALPHA)
+  await started($, w)
+  expect(statusCalls(w)).toEqual([`--project ${P2}`])
+  shows(await paneLines($), /Alpha work/)
+})
+
+test('a chosen focus that no lead reports and Linear names stays applied', async ($, on) => {
   trace("FR-020-AC-9")
   const w = world(on, true)
-  choose(w, 'Beta')
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL', 'archived'))), { [BETA]: () => out(showJson('Beta', 'QSL', { projects: ['p1'] })) })
-  board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
+  linear(w, { roadmapOnly: true })
+  lead(w, null, 'Release train')
+  choose(w, ALPHA)
   await started($, w)
-  expect(focusCalls(w)).toEqual(['list --json'])
-  shows(await pageLines($), /^no focus matches "Beta"$/)
+  expect((await shown($)).split('\n')).toContain('your choice: FSL Alpha')
+  shows(await workLines($, true), /^✓ FSL Alpha$/)
 })
 
-test('with nothing matching the pane shows no focus and says nothing matched', async ($, on) => {
-  trace("FR-020-AC-10")
+test('a stored value that is no focus is all, said, and blanks nothing', async ($, on) => {
+  trace("FR-020-AC-10", "FR-013-AC-6")
   const w = world(on, true)
   lead(w, null, 'Release train')
-  choose(w, 'zzz')
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))))
+  choose(w, 'FSL alpha')
   await started($, w)
   const lines = await pageLines($)
-  shows(lines, /^0 focuses$/)
-  shows(lines, /^no focus matches "zzz"$/)
-  hides(lines, /^Release train$/)
+  shows(lines, /focus "FSL alpha" is not a Linear initiative or project focus, showing all/)
+  shows(lines, /Release train/)
+  shows(lines, /^focuses of QSL$/)
+  shows(await workLines($), /focus "FSL alpha" is not a Linear initiative or project focus, showing all/)
 })
 
-test('an unavailable row is matched by its focus_id alone and shows the id and the reason with no progress', async ($, on) => {
-  trace("FR-020-AC-12")
+test('no relay focus definition is asked for', async ($, on) => {
+  trace("FR-020-AC-11")
   const w = world(on, true)
-  choose(w, BETA.toUpperCase())
-  named(w, () => out(listJson(stubRow(BETA, 'the stored selection is not readable'))))
-  board(w, { combined: () => pageOf('x', 1, 2) })
+  linear(w)
   await started($, w)
-  let lines = await pageLines($)
-  expect(await paneButtons($)).toContain(`▾ ${BETA}`)
-  shows(lines, /^the stored selection is not readable$/)
-  expect(statusCalls(w)).toEqual([])
-  expect(focusCalls(w)).toEqual(['list --json'])
-  hides(lines, /done/)
-  // A name equal to no field of the row never matches it: not its code, not its reason.
-  for (const name of ['unavailable_definition', 'the stored selection is not readable', 'false']) {
-    await $.command.run({ command: 'factory', args: `focus ${name}` } as never)
-    await w.clock!.advance(1000)
-    lines = await pageLines($)
-    shows(lines, new RegExp(`^no focus matches "${name}"$`))
-  }
-})
-
-test('a show that fails or prints text that is not JSON shows a source error and the lead steps follow', async ($, on) => {
-  trace("FR-020-AC-13")
-  const w = world(on, true)
-  lead(w, null, 'Beta')
-  choose(w, 'Beta')
-  let mode: 'exit' | 'text' = 'exit'
-  beta(w, { show: () => (mode === 'exit' ? out('', 1, 'agent-msg: definition unreadable') : out('{ nope')) })
-  await started($, w)
-  let lines = await pageLines($)
-  shows(lines, new RegExp(`^agent-msg focuses: show ${BETA}: agent-msg: definition unreadable$`))
-  shows(lines, /^Beta$/)
-  mode = 'text'
-  // A source that failed is read after twice its interval (FR-027).
-  await w.clock!.advance(4 * MIN + 1000)
-  lines = await pageLines($)
-  shows(lines, /printed text that is not JSON/)
-  shows(lines, /^Beta$/)
-})
-
-test('a list or show that never returns is given up on after 5 seconds and the lead steps follow', async ($, on) => {
-  trace("FR-020-AC-14", "NFR-004-M-5")
-  const w = world(on, true)
-  lead(w, null, 'Beta')
-  choose(w, 'Beta')
-  const timeouts: (number | undefined)[] = []
-  const prior = w.stub.value
-  w.stub.value = (argv, init) => (argv[1] === 'focuses' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
-  await startSession($)
-  await onScreen($)
-  // A view is read once its drawing has stood for 150 ms.
-  await w.clock!.advance(150 + 4900)
-  hides(await paneLines($), /^Beta$/)
-  await w.clock!.advance(200)
-  const lines = await pageLines($)
-  expect(timeouts).toEqual([5000])
-  shows(lines, /^Beta$/)
-  shows(lines, /^agent-msg focuses: list: .+/)
-})
-
-test('a name given as team:segment shows every lead on several hosts and says how many matched', async ($, on) => {
-  trace("FR-020-AC-15")
-  const w = world(on, true)
-  w.leads.set('host1:QSL:code', report('host1:QSL:code', 'Host one focus'))
-  w.leads.set('host2:QSL:code', report('host2:QSL:code', 'Host two focus'))
-  w.leads.set('host2:ENG:code', report('host2:ENG:code', 'Other team'))
-  choose(w, 'QSL:CODE')
-  named(w, () => out(listJson()))
-  await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /^2 focuses matched "QSL:CODE"$/)
-  shows(lines, /^Host one focus$/)
-  shows(lines, /^Host two focus$/)
-  hides(lines, /^Other team$/)
-  expect(matchLeads('QSL:CODE', ['host1:QSL:code', 'host2:ENG:code'])).toEqual(['host1:QSL:code'])
-  expect(matchLeads('HOST1:qsl:code', ['host1:QSL:code', 'host2:QSL:code'])).toEqual(['host1:QSL:code'])
-  expect(matchLeads('code', ['host1:QSL:code'])).toEqual([])
-})
-
-test('when the members of the named definition change between refreshes the second computes progress over the new members', async ($, on) => {
-  trace("FR-020-AC-16")
-  const w = world(on, true)
-  choose(w, 'Beta')
-  let members = ['p1']
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))), { [BETA]: () => out(showJson('Beta', 'QSL', { projects: members })) })
-  board(w, { combined: args => pageOf(args[1]!, 5, 10) })
-  await started($, w)
-  expect(statusCalls(w)).toEqual(['--project p1'])
-  members = ['p1', 'p2']
-  await w.clock!.advance(2 * MIN + 1000)
-  expect(statusCalls(w).slice(-1)).toEqual(['--project p1 --project p2'])
-})
-
-test('two active definitions with the same name of one team are both shown and the pane says how many matched', async ($, on) => {
-  const w = world(on, true)
-  choose(w, 'Beta')
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'), defRow(ENG, 'Beta', 'QSL'))), {
-    [BETA]: () => out(showJson('Beta', 'QSL', { projects: ['p1'] })),
-    [ENG]: () => out(showJson('Beta', 'QSL', { projects: ['p2'] })),
-  })
-  board(w, { combined: args => pageOf(`Pn ${args[1]}`, 1, 2) })
-  await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /^2 focuses matched "Beta"$/)
-  shows(lines, /^label p1$/)
-  shows(lines, /^label p2$/)
-})
-
-test('a show that never returns is given up on after 5 seconds, the error is shown and the lead steps follow', async ($, on) => {
-  trace("FR-020-AC-14", "NFR-004-M-5")
-  const w = world(on, true)
-  lead(w, null, 'Beta')
-  choose(w, 'Beta')
-  const timeouts: (number | undefined)[] = []
-  named(w, () => out(listJson(defRow(BETA, 'Beta', 'QSL'))), { [BETA]: () => out('') })
-  const prior = w.stub.value
-  w.stub.value = (argv, init) => (argv[2] === 'show' ? (timeouts.push(init?.timeoutMs), w.clock!.sleep(init?.timeoutMs ?? 5000).then(() => Promise.reject(new Error('timed out')))) : prior?.(argv, init))
-  await startSession($)
-  await onScreen($)
-  // A view is read once its drawing has stood for 150 ms.
-  await w.clock!.advance(150 + 4900)
-  hides(await paneLines($), /^Beta$/)
-  await w.clock!.advance(200)
-  const lines = await pageLines($)
-  expect(timeouts).toEqual([5000])
-  shows(lines, /^Beta$/)
-  shows(lines, new RegExp(`^agent-msg focuses: show ${BETA}: .+`))
+  await run($, 'focus FSL Alpha')
+  await workLines($, true)
+  expect(w.ran.filter(l => l.startsWith('agent-msg focuses'))).toEqual([])
 })
 
 // ---------------------------------------------------------------- the work reports of the leads
@@ -430,24 +296,10 @@ test('a lead with no report at all draws no error', async ($, on) => {
   hides(await pageLines($), /^agent-msg work: /)
 })
 
-test('a name that is the address of a lead whose work show fails shows that error and not only nothing matched', async ($, on) => {
-  trace("FR-018-AC-2")
-  const w = world(on, true)
-  w.leads.set('draco:QSL:code', report('draco:QSL:code', 'Fine'))
-  w.leads.set('draco:QSL:plan', undefined)
-  choose(w, 'draco:QSL:plan')
-  named(w, () => out(listJson()))
-  await started($, w)
-  const lines = await pageLines($)
-  shows(lines, /^agent-msg work: draco:QSL:plan: no report$/)
-  shows(lines, /^no focus matches "draco:QSL:plan"$/)
-})
-
-test('the banner calls the focus own only when the session’s own address has an entry', async () => {
+test('the banner says no focus is reported only where no lead of the teams has one', async () => {
   trace("FR-019-AC-2", "FR-019-AC-4")
   const entry = (address: string) => ({ address, via: null }) as never
-  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', ownAddress: 'draco:QSL:code', teamsSelected: false, focus: 'own', identity: 'detected' } as const
-  expect(focusBanner(scope, [entry('draco:ENG:code')])).toBe('no focus reported, showing the whole team')
-  expect(focusBanner(scope, [entry('draco:QSL:arch')])).toBe('no focus reported, showing the whole team')
-  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('DRACO:qsl:code')])).toBe('own focus')
+  const scope = { hosts: 'local', teams: ['QSL'], ownTeam: 'QSL', teamsSelected: false, focus: 'all', identity: 'detected' } as const
+  expect(focusBanner(scope, [entry('draco:ENG:code')])).toBe('no focus reported by QSL')
+  expect(focusBanner(scope, [entry('draco:ENG:code'), entry('DRACO:qsl:code')])).toBe('focuses of QSL')
 })

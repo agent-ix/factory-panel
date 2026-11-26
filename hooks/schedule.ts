@@ -18,8 +18,11 @@ export type SourceId =
   | 'work'
   | 'events'
   | 'tickets'
+  | 'workLanes'
+  | 'projects'
+  | 'membership'
+  | 'choices'
   | 'retro'
-  | 'roles'
   | 'capacity'
 
 const MINUTE = 60 * 1000
@@ -46,6 +49,7 @@ export const intervalOf = (id: SourceId): number => {
     case 'relay':
       return Math.max(MINUTE, refreshMs)
     case 'focus':
+    case 'membership':
       return 2 * MINUTE
     // The relay's event stream: cheap to ask, and a review has to show within a minute of its report.
     case 'events':
@@ -53,7 +57,7 @@ export const intervalOf = (id: SourceId): number => {
     // The stored retro snapshots change when a retro runs: every few minutes is often enough.
     case 'retro':
       return 5 * MINUTE
-    // 'roles' and 'tickets' among them: a look at the shared gate, which runs ix-board itself far less often.
+    // 'tickets' among them: a look at the shared gate, which runs ix-board itself far less often.
     default:
       return MINUTE
   }

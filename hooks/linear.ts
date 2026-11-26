@@ -135,10 +135,6 @@ export type GateOptions<T> = {
   repeats?: (data: T) => boolean
   /** true for a held result that lacks what this build draws, as an older build wrote it: it is read again as though due */
   outdated?: (data: T) => boolean
-  /** how long a read that failed outright after running `ranMs` is held, in place of UNKEPT_TTL_MS */
-  errorHoldMs?: (ranMs: number) => number
-  /** how long a fetch another session claimed is left to it, for a read that may outlast CLAIM_MS */
-  claimMs?: number
 }
 
 /**
@@ -190,7 +186,7 @@ async function gate<T>(
   }
   // A manual refresh asks again at once when the last one was only held after a failure.
   else if (!isOutdated && had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
-  if (had.claimAt !== null && now - had.claimAt < (opts.claimMs ?? CLAIM_MS)) return cached()
+  if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached()
 
   const claim = now + Math.random() / 10
   // With the gate file unwritable no claim can be made or checked; this session fetches on its own.
@@ -226,12 +222,10 @@ async function gate<T>(
     const text = errorText(error)
     const retry = retryAfterMs(text)
     const until = retry !== null ? now + retry : null
-    const hold = opts.errorHoldMs?.((await $.clock.now()) - now) ?? UNKEPT_TTL_MS
     await exclusive(() =>
       save($, f => {
-        // A read that failed outright is held a few minutes like any source error, or as long as its caller says;
-        // Linear's own wait holds every read.
-        if (until === null) f.entries[key] = { data: had.data, at: now - (BOARD_INTERVAL_MS - hold), claimAt: null, unkept: true, error: text, ...(had.streak === undefined ? {} : { streak: had.streak }) }
+        // A read that failed outright is held a few minutes like any source error; Linear's own wait holds every read.
+        if (until === null) f.entries[key] = { data: had.data, at: now - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, unkept: true, error: text, ...(had.streak === undefined ? {} : { streak: had.streak }) }
         else {
           f.entries[key] = { ...had, claimAt: null }
           f.backoffUntil = until

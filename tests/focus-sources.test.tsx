@@ -5,9 +5,12 @@ import { trace } from './trace'
 import { resetSources, sourceFailed } from '../hooks/sources'
 import { showText } from '../hooks/router'
 import { getSelection } from '../hooks/selection'
-import { BAD_MILESTONE, CLASSIC, NEVER, bandCells, defRow, drawBand, fake$, listJson, out, report, roadmapJson, showJson, startSession, statusJson, world } from './world'
-import { LEAD, MIN, board, choose, focusCalls, hides, lead, look, named, onScreen, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
+import { BAD_MILESTONE, CLASSIC, NEVER, bandCells, drawBand, fake$, out, report, roadmapJson, startSession, statusJson, world, pid, reportsProject } from './world'
+import { LEAD, MIN, board, choose, hides, lead, look, onScreen, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
 import { record } from './focus-kit'
+
+const P_A = pid(21)
+const P_B = pid(22)
 
 // Tests of the flow around the progress of a focus: one refresh at a time, and the sources that fail
 // without blocking each other. How the rows and the warning are drawn is in focus-ui.test.tsx, and
@@ -70,8 +73,9 @@ test('agent-msg work failing is shown while the progress of a named focus is dra
   trace("FR-018-AC-2")
   const w = world(on, true)
   w.leads.set(LEAD, undefined) // listed by `agent-msg who`, with a work report that cannot be read
-  choose(w, 'Beta')
-  named(w, () => out(listJson(defRow('foc-beta', 'Beta', 'QSL'))), { 'foc-beta': () => out(showJson('Beta', 'QSL', { projects: ['p1'] })) })
+  choose(w, `project:${P_B}`)
+  const chunk = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${P_B}` ? out(JSON.stringify({ name: 'Beta' })) : chunk?.(argv, init))
   board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
   await started($, w)
   const lines = await paneLines($)
@@ -119,11 +123,10 @@ test('with no view drawn /factory show reads the focuses once, says how old they
   board(w, { combined: () => pageOf('Pa', 1, 2) })
   await startSession($)
   await w.clock!.advance(1000)
-  expect(focusCalls(w)).toEqual([])
   expect(w.ran.filter(l => l === 'agent-msg who' || l.startsWith('ix-board'))).toEqual([])
   const first = await shownText($)
   expect(first).toMatch(/^focus data: read \d+s ago, progress from \d+s ago$/m)
-  expect(first).toMatch(/^own focus$/m)
+  expect(first).toMatch(/^focuses of QSL$/m)
   expect(first).toMatch(/^ {4}Pa: 1\/2 /m)
   expect(statusCalls(w)).toEqual(['--project A'])
   const asked = w.ran.filter(l => l === 'agent-msg who').length
@@ -136,6 +139,7 @@ test('with no view drawn /factory show reads the focuses once, says how old they
 test('before a read has finished /factory show answers after five seconds, says the data is not read yet and claims neither no focus nor no match', async ($, on) => {
   trace("FR-014-AC-16")
   const w = world(on, true)
+  reportsProject(w, P_B, 'Release Train')
   const prior = w.stub.value
   w.stub.value = (argv, init) => (argv.join(' ') === 'agent-msg who' ? w.clock!.sleep(60_000).then(() => out('')) : prior?.(argv, init))
   await startSession($)
@@ -147,8 +151,8 @@ test('before a read has finished /factory show answers after five seconds, says 
     expect(text).toBeUndefined()
     await w.clock!.advance(2_000)
     await run
-    expect(text).toMatch(/^focus data: not read yet: it is being read now, run \/factory show again$/m)
-    expect(text).not.toMatch(/no focus reported|no focus matches/)
+    expect(text).toMatch(args === 'show' ? /^focus data: not read yet: it is being read now, run \/factory show again$/m : /^The focuses are not read yet; run it again\. The focus is unchanged\.$/)
+    expect(text).not.toMatch(/no focus reported|is not known/)
   }
   await w.clock!.advance(120_000)
 })
@@ -161,24 +165,24 @@ test('where the leads cannot be listed /factory show says the data is not read a
   await startSession($)
   const text = await shownText($)
   expect(text).toMatch(/^focus data: not read yet: the last read failed: .*relay store unavailable$/m)
-  expect(text).not.toMatch(/no focus reported|no focus matches/)
+  expect(text).not.toMatch(/no focus reported|is not known/)
 })
 
-test('a choice reads the focuses for what it chose before it answers, and says no match only after that read', async ($, on) => {
+test('a choice reads the focuses for what it chose before it answers', async ($, on) => {
   trace("FR-014-AC-16", "FR-014-AC-17")
   const w = world(on, true)
-  lead(w, { projects: ['A'] }, 'Release train summary')
-  named(w, () => out(listJson()))
-  board(w, { combined: () => pageOf('Pa', 1, 2) })
+  lead(w, { projects: [P_A, P_B] }, 'Release train summary')
+  board(w, { combined: args => out(statusJson([{ name: args[1] === P_A ? 'Pa' : 'Pb', id: args[1]!, done: 1, total: 2 }])) })
   await startSession($)
   await shownText($)
-  const asked = statusCalls(w).length
-  const chosen = ((await $.command.run({ command: 'factory', args: 'focus Nowhere' } as never)) as { text: string }).text
+  const chosen = ((await $.command.run({ command: 'factory', args: 'focus Pb' } as never)) as { text: string }).text
   expect(chosen).toMatch(/^focus data: read \d+s ago/m)
-  expect(chosen).toMatch(/^no focus matches "Nowhere"$/m)
-  const back = ((await $.command.run({ command: 'factory', args: 'focus own' } as never)) as { text: string }).text
+  expect(chosen).toMatch(/^your choice: Pb$/m)
+  expect(chosen).toMatch(/^ {4}Pb: 1\/2 /m)
+  const asked = statusCalls(w).length
+  const back = ((await $.command.run({ command: 'factory', args: 'focus all' } as never)) as { text: string }).text
   expect(back).toMatch(/^ {4}Pa: 1\/2 /m)
-  // The 30 minute gate holds: neither command asked ix-board again.
+  // The 30 minute gate holds: going back asked ix-board nothing.
   expect(statusCalls(w)).toHaveLength(asked)
 })
 
@@ -215,36 +219,6 @@ test('every source failing raises nothing and each module shows its source’s e
   shows(await factoryLines($), /^Metrics unavailable: .*503/)
   expect(await shownText($)).toMatch(/^ {2}agent-msg work: draco:QSL:plan: no report$/m)
   expect(await shownText($)).toMatch(/^ {2}ix-board: ix-board: authentication failed$/m)
-})
-
-test('agent-msg focuses list failing is listed under agent-msg focuses and the Focus pane still draws', async ($, on) => {
-  trace("FR-018-AC-7")
-  const w = world(on, true)
-  lead(w, null, 'Beta')
-  choose(w, 'Beta')
-  named(w, () => out('', 1, 'agent-msg: relay store unavailable'))
-  await started($, w)
-  expect(await shownText($)).toMatch(/^ {2}agent-msg focuses: list: agent-msg: relay store unavailable$/m)
-  expect(await shownText($)).toMatch(/^your choice: Beta$/m)
-  shows(await paneLines($), /^Beta$/)
-})
-
-test('the source state of agent-msg focuses and ix-board is cleared when nothing asks them any more', async ($, on) => {
-  trace("FR-018-AC-7")
-  const w = world(on, true)
-  lead(w, { projects: ['A'] }, 'Beta')
-  choose(w, 'Beta')
-  named(w, () => out('', 1, 'agent-msg: relay store unavailable'))
-  board(w, { combined: () => out('', 1, 'ix-board: authentication failed') })
-  await started($, w)
-  expect(await shownText($)).toMatch(/agent-msg focuses: list/)
-  // The choice stops being a name, and the lead no longer scopes anything.
-  w.leads.set(LEAD, report(LEAD, 'Beta', ['running'], null))
-  await $.command.run({ command: 'factory', args: 'focus own' } as never)
-  await w.clock!.advance(2 * MIN + 1000)
-  const after = await shownText($)
-  expect(after).not.toMatch(/agent-msg focuses/)
-  expect(after).not.toMatch(/ix-board/)
 })
 
 test('/factory show gives the age of ix-board projects from progress.json and of the other sources from memory', async ($, on) => {

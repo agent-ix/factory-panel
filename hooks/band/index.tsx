@@ -2,7 +2,9 @@ import { atom, read } from 'claude-code'
 import type { EngineInterface, On, RenderElement, RenderInput } from 'claude-code'
 
 import type { BoardView, Escalation, Freshness, FocusMeta, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead, WorkMeta } from '../../types'
-import { getSelection, takeBandNote, modulesToDraw, scopeOf } from '../selection'
+import { getSelection, takeBandNote, modulesToDraw, scopeKeyOf, scopeOf } from '../selection'
+import { focusNotice } from '../focuschoice'
+import { focusFilter } from '../work'
 import { errorText } from '../shared'
 import type { Options } from '../shared'
 import { showView, isViewId } from '../views'
@@ -20,13 +22,13 @@ const machines = atom({ plugin: 'factory-panel', key: 'machines' } as const, [] 
 const relay = atom({ plugin: 'factory-panel', key: 'relay' } as const, { ok: true, redis: '', watchers: [], warnings: 0, deadLetters: 0, inboxWaiting: 0, checks: [] } as RelayView, { shape: 'relay-1' })
 const board = atom({ plugin: 'factory-panel', key: 'board' } as const, { teams: [], agents: [], error: null } as BoardView, { shape: 'board-1' })
 const freshness = atom({ plugin: 'factory-panel', key: 'freshness' } as const, { prometheusAt: null, prometheusError: null, nodeMetricsSeen: false, herdrAt: null, herdrError: null, relayAt: null, relayError: null, boardAt: null, boardBusy: false } as Freshness, { shape: 'freshness-1' })
-const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], { shape: 'focuses-5' })
-const focusMeta = atom({ plugin: 'factory-panel', key: 'focusMeta' } as const, { at: null, busy: false, error: null, errors: [] } as FocusMeta, { shape: 'focusMeta-2' })
+const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], { shape: 'focuses-8' })
+const focusMeta = atom({ plugin: 'factory-panel', key: 'focusMeta' } as const, { at: null, busy: false, error: null, errors: [] } as FocusMeta, { shape: 'focusMeta-5' })
 const escalations = atom({ plugin: 'factory-panel', key: 'escalations' } as const, [] as Escalation[], { shape: 'escalations-1' })
 const escalationHidden = atom({ plugin: 'factory-panel', key: 'escalationHidden' } as const, [] as string[])
-const teamViews = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-5' })
+const teamViews = atom({ plugin: 'factory-panel', key: 'teams' } as const, [] as TeamView[], { shape: 'teams-7' })
 const workLeads = atom({ plugin: 'factory-panel', key: 'workLeads' } as const, [] as WorkLead[], { shape: 'workLeads-3' })
-const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0 } as WorkMeta, { shape: 'workMeta-5' })
+const workMeta = atom({ plugin: 'factory-panel', key: 'workMeta' } as const, { at: null, busy: false, error: null, relayError: null, listed: 0, silent: [], pending: 0, teams: [] } as WorkMeta, { shape: 'workMeta-6' })
 const workBoards = atom({ plugin: 'factory-panel', key: 'workBoards' } as const, {} as Record<string, WorkBoard>, { shape: 'workBoards-2' })
 const workTickets = atom({ plugin: 'factory-panel', key: 'workTickets' } as const, null as WorkBoard | null, { shape: 'workTickets-1' })
 
@@ -75,6 +77,8 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     read($, workTickets),
     $.clock.now(),
   ])
+  const scope = scopeOf(getSelection())
+  const boards = [...Object.values(wboards ?? {}), ...(wtickets ? [wtickets] : [])]
   return {
     machines: list(mach),
     relay: { ...EMPTY_RELAY, ...(rel ?? {}) },
@@ -83,8 +87,9 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     escalations: list(esc),
     hiddenEscalations: list(hid),
     localMachine,
-    scope: scopeOf(getSelection()),
+    scope,
     teamViews: list(tms),
+    focusNotice: fmeta?.heldFor === scopeKeyOf(scope) ? focusNotice(fmeta.chosen) : null,
     focusesLoaded: fmeta?.at !== undefined && fmeta.at !== null,
     boardLoaded: fresh?.boardAt !== undefined && fresh.boardAt !== null,
     prometheusError: fresh?.prometheusError ?? null,
@@ -92,7 +97,7 @@ async function snapshot($: EngineInterface, options: Options): Promise<Snapshot>
     relayError: fresh?.relayError ?? null,
     boardError: brd?.error ?? null,
     now,
-    work: { leads: list(wleads), at: wmeta?.at ?? null, relayError: wmeta?.relayError ?? null, listed: wmeta?.listed ?? 0, boards: [...Object.values(wboards ?? {}), ...(wtickets ? [wtickets] : [])] },
+    work: { leads: list(wleads), at: wmeta?.at ?? null, relayError: wmeta?.relayError ?? null, listed: wmeta?.listed ?? 0, boards, filter: focusFilter(scope.focus, scopeKeyOf(scope), fmeta ?? {}, list(foc), boards) },
   }
 }
 

@@ -22,6 +22,14 @@ export const spark = (values: readonly number[]): string => {
   return points.map(v => BLOCKS[span === 0 ? 0 : Math.round(((v - min) / span) * (BLOCKS.length - 1))]).join('')
 }
 
+/** A sparkline of counts per day from 0: one block a day, and `·` for a day with no count. */
+export const daySpark = (counts: readonly (number | null)[]): string => {
+  const most = Math.max(0, ...counts.flatMap(v => v ?? []))
+  return counts.map(v => (v === null ? '·' : BLOCKS[most === 0 ? 0 : Math.round((v / most) * (BLOCKS.length - 1))])).join('')
+}
+
+/** A share (0..1) as one circle filled by quarters. */
+export const gauge = (share: number): string => ['○', '◔', '◑', '◕', '●'][Math.max(0, Math.min(4, Math.floor(share * 4)))]!
 
 /** `share` (0..1) of `cells` cells, in eighths: full blocks plus one partial cell. */
 const fill = (share: number | null, cells: number): { full: number; partial: string } => {
@@ -39,31 +47,6 @@ export const bar = (share: number | null, cells: number): string => {
 }
 
 
-const LEFT = [0, 0x40, 0x44, 0x46, 0x47]
-const RIGHT = [0, 0x80, 0xa0, 0xb0, 0xb8]
-
-/**
- * A braille dot histogram: two samples per character, four dot levels per row, filled from
- * the bottom. Values scale between the series' own minimum and maximum, the lowest still
- * drawing one dot; a constant series draws half height. Non-finite values are skipped.
- * Returns one string per row, top row first. Needs a terminal font with braille.
- */
-export const dots = (values: readonly number[], rows = 1): string[] => {
-  const points = values.filter(v => Number.isFinite(v))
-  const levels = 4 * rows
-  const min = Math.min(...points)
-  const span = Math.max(...points) - min
-  const heights = points.map(v => (span === 0 ? levels / 2 : 1 + Math.round(((v - min) / span) * (levels - 1))))
-  return Array.from({ length: rows }, (_, r) => {
-    const below = 4 * (rows - 1 - r)
-    let line = ''
-    for (let i = 0; i < heights.length; i += 2) {
-      const lit = (h: number | undefined) => Math.max(0, Math.min(4, (h ?? 0) - below))
-      line += String.fromCharCode(0x2800 + (LEFT[lit(heights[i])] ?? 0) + (RIGHT[lit(heights[i + 1])] ?? 0))
-    }
-    return line
-  })
-}
 /** The semantic color a load percentage wears. */
 export const loadColor = (pct: number | null): 'success' | 'warning' | 'error' | 'inactive' =>
   pct === null ? 'inactive' : pct >= 90 ? 'error' : pct >= 75 ? 'warning' : 'success'

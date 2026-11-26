@@ -4,7 +4,7 @@ import type { FocusHeader, FocusInitiative, FocusProject, FocusWarning, WorkBoar
 import { gatedBoard } from './linear'
 import { MEMBERSHIP_MS, RETRY_MS, findRecord, isUsable, isUuid, keyOf, nameFor, projectKey, readBad, saveBad } from './progress'
 import type { Bad, BadEntry, Initiatives, Member, Membership, ProgressFile, ProgressRecord, ProjectRef, Records } from './progress'
-import { after, errorText } from './shared'
+import { after, errorText, pausedText } from './shared'
 import { boardOf, mergeBoards } from './work'
 
 // Progress of a focus: one combined `ix-board focus status` call over all its healthy projects. An
@@ -272,6 +272,50 @@ function expandHeld(s: Selector, memory: Initiatives, entry: BadEntry): Expansio
 }
 
 const initiativeName = (s: Selector): string => s.label ?? `initiative ${short(s.ref)}`
+
+/** The Linear names `ix-board roadmap` gives its initiatives and projects, by focus value; none where it cannot be read. Shared with the progress reads. */
+export async function roadmapNames($: EngineInterface): Promise<Map<string, string>> {
+  const read = await gatedBoard($, ROADMAP_KEY, async (): Promise<RoadmapRead> => {
+    const ran = await limited(() => $.process.run(['ix-board', '--json', 'roadmap'], { timeoutMs: CALL_TIMEOUT_MS }))
+    if (ran.exitCode !== 0) {
+      const stderr = lastLine(ran.stderr)
+      if (AUTH.test(stderr) || RATE.test(stderr)) throw new Error(stderr)
+      return { error: stderr || lastLine(ran.stdout) || `ix-board exited ${ran.exitCode}` }
+    }
+    try {
+      return { list: roadmapInitiatives(JSON.parse(ran.stdout)) }
+    } catch {
+      return { error: 'ix-board printed text that is not JSON' }
+    }
+  })
+  const names = new Map<string, string>()
+  for (const i of read.data?.list ?? []) {
+    if (text(i.id)) names.set(`initiative:${i.id.toLowerCase()}`, String(i.name))
+    for (const p of i.projects ?? []) if (text(p.id) && text(p.name)) names.set(`project:${p.id.toLowerCase()}`, p.name)
+  }
+  return names
+}
+
+/**
+ * The name `ix-board project-chunk` gives a project; null where it gives none. A call that fails is no answer: the gate
+ * holds Linear's rate limit for every read, and any other failure 5 minutes, and `onError` is told why.
+ */
+export async function projectName($: EngineInterface, id: string, onError: (why: string) => void = () => undefined): Promise<string | null> {
+  const read = await gatedBoard($, `project-name:${id}`, async (): Promise<{ name: string | null }> => {
+    const ran = await limited(() => $.process.run(['ix-board', '--json', 'project-chunk', id], { timeoutMs: CALL_TIMEOUT_MS }))
+    if (ran.exitCode !== 0) throw new Error(lastLine(ran.stderr) || lastLine(ran.stdout) || `ix-board exited ${ran.exitCode}`)
+    let chunk: { name?: unknown }
+    try {
+      chunk = JSON.parse(ran.stdout) as { name?: unknown }
+    } catch {
+      throw new Error('ix-board printed text that is not JSON')
+    }
+    return { name: text(chunk.name) ? chunk.name : null }
+  })
+  if (read.backoffUntil !== null) onError(pausedText(read.backoffUntil, await $.clock.now()))
+  else if (read.error !== null) onError(read.error)
+  return read.data?.name ?? null
+}
 
 // ---------------------------------------------------------------- the refresh
 

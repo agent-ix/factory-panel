@@ -90,24 +90,6 @@ export async function refresh(w: World): Promise<void> {
 
 export const pageOf = (name: string, done: number, total: number, inProgress = 0) => out(statusJson([{ name, done, total, inProgress }]))
 
-/** The `agent-msg focuses` calls made so far, as the words after `focuses`. */
-export const focusCalls = (w: World) => w.ran.filter(l => l.startsWith('agent-msg focuses ')).map(l => l.slice('agent-msg focuses '.length))
-
-/**
- * Stands in for `agent-msg focuses`: `list` answers `list`, and `show <id>` answers `shows[id]`; a
- * function answers each call, so a test can fail it, hold it back or change it between refreshes.
- */
-export function named(w: World, list: () => ReturnType<typeof out> | Promise<ReturnType<typeof out>>, shows: Record<string, () => ReturnType<typeof out> | Promise<ReturnType<typeof out>>> = {}): void {
-  const prior = w.stub.value
-  w.stub.value = (argv, init) => {
-    const line = argv.join(' ')
-    if (line === 'agent-msg focuses list --json') return list()
-    const m = /^agent-msg focuses show (\S+) --json$/.exec(line)
-    if (m) return (shows[m[1]!] ?? (() => out('', 1, `no such definition ${m[1]}`)))()
-    return prior?.(argv, init)
-  }
-}
-
 /** Sets the choice the session would hold: `/factory focus <name>` written to its choice file. */
 export const choose = (w: World, focus: string, key = 'draco_QSL_code') => void w.files.set(`${FP}/choices/${key}.json`, JSON.stringify({ focus }))
 

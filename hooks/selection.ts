@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import { MODULE_IDS } from './band/modules'
 import type { ModuleId, Scope } from './band/modules'
 import { isDue, track } from './schedule'
+import { NOT_A_FOCUS, parseRef } from './focuschoice'
 import { errorText } from './shared'
 
 // What the panel shows is selected per feature: modules, hosts, focus and teams. Each feature
@@ -16,6 +17,8 @@ export const FALLBACK_MODULES: readonly ModuleId[] = ['local', 'focus', 'lead', 
 
 export const FEATURES = ['modules', 'hosts', 'focus', 'teams'] as const
 export type Feature = (typeof FEATURES)[number]
+/** The focus value, and the teams entry, that narrow nothing. */
+export const ALL = 'all'
 export type Source = 'user' | 'declaration' | 'default'
 export type Hosts = 'all' | 'local'
 
@@ -99,8 +102,13 @@ export function parseFile(text: string, file: string): Parsed {
   }
   if ('focus' in o) {
     const v = typeof o.focus === 'string' ? o.focus.trim() : ''
-    if (v !== '') picked.focus = v
-    else notes.push(`${file}: focus ignored, must be own, team or a focus name`)
+    if (v === '') notes.push(`${file}: focus ignored, must be all, initiative:<Linear ID> or project:<Linear ID>`)
+    else if (focusValue(v) === ALL || parseRef(v) !== null) picked.focus = v.toLowerCase()
+    else {
+      // A value that names no focus is all, and is said.
+      picked.focus = ALL
+      notes.push(`${file}: focus "${v}" ${NOT_A_FOCUS}, showing all`)
+    }
   }
   if ('teams' in o) {
     const list = strings(o.teams)?.map(t => t.trim()).filter(Boolean)
@@ -110,19 +118,27 @@ export function parseFile(text: string, file: string): Parsed {
   return { picked, notes }
 }
 
+/** The focus a value selects: `own` and `team`, which the teams selection has replaced, are all. */
+export const focusValue = (v: string): string => ([ALL, 'own', 'team'].includes(v.trim().toLowerCase()) ? ALL : v.trim())
+
+/** The teams a list selects; none, where it names `all`, which is every team. */
+const teamsValue = (list: readonly string[]): string[] => (list.some(t => t.toLowerCase() === ALL) ? [] : [...list])
+
 /** Decides each feature from the highest source that selects it. */
 export function decide(identity: Identity, choice: Picked, declaration: Picked, notes: string[], hasChoices: boolean): Selection {
   const unknown = identity.status === 'unknown'
   const pick = <T,>(c: T | undefined, d: T | undefined, dflt: T): { value: T; source: Source } =>
     c !== undefined ? { value: c, source: 'user' } : d !== undefined ? { value: d, source: 'declaration' } : { value: dflt, source: 'default' }
+  const focus = pick(choice.focus, declaration.focus, ALL)
+  const teams = pick<string[]>(choice.teams, declaration.teams, identity.status === 'detected' ? [identity.team] : [])
   return {
     identity,
     key: keyOf(identity),
     modules: pick<ModuleId[]>(choice.modules, declaration.modules, [...FALLBACK_MODULES]),
     // With no way to tell who the session is, the automatic scope is the whole factory.
     hosts: pick<Hosts>(choice.hosts, declaration.hosts, unknown ? 'all' : 'local'),
-    focus: pick(choice.focus, declaration.focus, 'own'),
-    teams: pick<string[]>(choice.teams, declaration.teams, identity.status === 'detected' ? [identity.team] : []),
+    focus: { value: focusValue(focus.value), source: focus.source },
+    teams: { value: teamsValue(teams.value), source: teams.source },
     notes,
     hasChoices,
   }
@@ -134,10 +150,12 @@ export const scopeOf = (s: Selection): Scope => ({
   focus: s.focus.value,
   teams: s.teams.value,
   ownTeam: s.identity.status === 'detected' ? s.identity.team : null,
-  ownAddress: s.identity.status === 'detected' ? s.identity.address : null,
   teamsSelected: s.teams.source !== 'default',
   identity: s.identity.status,
 })
+
+/** What a read of the focuses is asked for: what is held answers this focus and these teams only. */
+export const scopeKeyOf = (scope: { focus: string; teams: readonly string[] }): string => `${scope.focus}\u0000${scope.teams.join(',')}`
 
 /** The modules to draw: the selection, with the host list first wherever the hosts scope is `all`. */
 export const modulesToDraw = (s: Selection): ModuleId[] =>

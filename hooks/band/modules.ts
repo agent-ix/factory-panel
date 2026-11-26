@@ -1,7 +1,8 @@
 import type { BoardView, Escalation, FocusView, Machine, RelayView, TeamView, WorkBoard, WorkLead } from '../../types'
 import { agoShort } from '../shared'
 import { cellBar, loadColor, tempColor, usd } from '../ui/glyphs'
-import { workCounts } from '../work'
+import { ALL_TICKETS, focusCounts } from '../work'
+import type { FocusFilter } from '../work'
 
 // The band's modules. Each is a pure function of a snapshot of what the panes already collected,
 // so a test seeds a snapshot and reads the cell back. A module with nothing to say returns null
@@ -21,14 +22,12 @@ export type Cell = { id: ModuleId; pane: string; parts: Part[]; alert?: string }
 /** What the selection narrows the band to. `teams` empty means every team. */
 export type Scope = {
   hosts: 'all' | 'local'
-  /** `own`, `team` or a focus name. */
+  /** `all`, `initiative:<Linear ID>` or `project:<Linear ID>`. */
   focus: string
   teams: readonly string[]
   /** The session's own team; null when the relay did not say. */
   ownTeam: string | null
-  /** The session's own address; null when the relay did not say. */
-  ownAddress?: string | null
-  /** True when the user or a declaration named the teams, so one that matches nothing is worth saying. */
+  /** True when the user or a declaration chose the teams, so one that matches nothing is worth saying. */
   teamsSelected: boolean
   identity: 'pending' | 'detected' | 'unknown'
 }
@@ -47,6 +46,8 @@ export type Snapshot = {
   teamViews: readonly TeamView[]
   /** True once the focus reports and once ix-board's agents have been read: only then can a team be said to match nothing. */
   focusesLoaded: boolean
+  /** what is wrong with the chosen focus */
+  focusNotice?: string | null
   boardLoaded: boolean
   prometheusError: string | null
   /** When the relay check last answered (null: never) and what it last said when it failed. */
@@ -59,7 +60,7 @@ export type Snapshot = {
 }
 
 /** What the Work view holds: the leads and how their last read went (see WorkMeta), and the focus statuses. */
-export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; boards: readonly WorkBoard[] }
+export type WorkState = { leads: readonly WorkLead[]; at: number | null; relayError: string | null; listed: number; boards: readonly WorkBoard[]; /** what the focus narrows the tickets to */ filter?: FocusFilter }
 
 // A machine whose relay watcher has not pushed for this long reads as down.
 const DOWN_AFTER_SECS = 120
@@ -79,68 +80,48 @@ const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCas
 
 export const teamOf = (address: string): string => address.split(':')[1] ?? ''
 
-/** The teams whose lead entries may be read for this scope; null reads every lead (a focus name searches all). */
-export const focusTeams = (scope: Scope): string[] | null => {
-  const want = scope.focus.trim().toLowerCase()
-  if (scope.identity === 'detected' && scope.ownTeam !== null) {
-    if (want === 'own') return [scope.ownTeam]
-    if (want === 'team') return [scope.ownTeam, ...scope.teams.filter(t => !same(t, scope.ownTeam!))]
-    return null
-  }
-  return scope.teams.length > 0 ? [...scope.teams] : null
+/** The teams whose leads are read and listed; null is every team. */
+export const focusTeams = (scope: Scope): string[] | null => (scope.teams.length > 0 ? [...scope.teams] : null)
+
+/** The focus entries this scope shows: the chosen focus's where it is held, else the leads' of the selected teams. */
+export const scopeFocuses = (all: readonly FocusView[], scope: Scope): FocusView[] => {
+  const chosen = all.filter(f => f.via === 'chosen' && f.address === scope.focus)
+  if (chosen.length > 0) return chosen
+  const teams = focusTeams(scope)
+  const shown = all.filter(f => f.via !== 'chosen' && (teams === null || teams.some(t => same(t, teamOf(f.address)))))
+  // Together under each team, in the order the teams are listed.
+  if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
+  return shown
 }
 
-/** The focus entries this scope shows, in order, and a note when a name matched none or several. */
-export const scopeFocuses = (all: readonly FocusView[], scope: Scope): { shown: FocusView[]; note: string | null } => {
-  const want = scope.focus.trim()
-  const lower = want.toLowerCase()
-  const teams = focusTeams(scope)
-  const inTeams = (f: FocusView) => teams === null || teams.some(t => same(t, teamOf(f.address)))
-  if (lower === 'own' || lower === 'team') {
-    // Grouped under each team, in the order the teams are listed.
-    const shown = all.filter(inTeams)
-    if (teams !== null) shown.sort((a, b) => teams.findIndex(t => same(t, teamOf(a.address))) - teams.findIndex(t => same(t, teamOf(b.address))))
-    return { shown, note: null }
-  }
-  // A focus name the poll already resolved (a definition, a lead address or a summary) is shown as it found it.
-  const resolved = all.filter(f => f.via !== null && f.via !== undefined)
-  if (resolved.length > 0) return { shown: resolved, note: resolved.length > 1 ? `${resolved.length} focuses matched "${want}"` : null }
-  // A focus name: a session that could not be identified is first held to the teams it was given.
-  const pool = scope.identity === 'detected' ? [...all] : all.filter(inTeams)
-  const exact = pool.filter(f => same(f.summary, want))
-  const shown = exact.length > 0 ? exact : pool.filter(f => f.summary.toLowerCase().includes(lower))
-  const note = shown.length === 0 ? `no focus matches "${want}"` : shown.length > 1 ? `${shown.length} focuses matched "${want}"` : null
-  return { shown, note }
-}
+/** The start of the line that says no lead of the teams has reported a focus. */
+export const NO_FOCUS_BY = 'no focus reported by'
 
 /** The one line that says why these focuses are shown; null while the session is still being identified. */
 export const focusBanner = (scope: Scope, focuses: readonly FocusView[]): string | null => {
-  // The session's own entry: an entry at the session's own address.
-  const ownEntryExists = scope.ownAddress != null && focuses.some(f => f.via == null && same(f.address, scope.ownAddress!))
-  const name = scope.focus.trim()
-  const lower = name.toLowerCase()
-  const keyword = lower === 'own' || lower === 'team'
-  if (!keyword && name !== '') return `your choice: ${name}`
-  if (scope.identity === 'unknown') return 'could not tell who this session is, showing every focus'
-  if (scope.identity === 'pending') return null
-  if (lower === 'own' && ownEntryExists) return 'own focus'
-  if (lower === 'team') return 'team focuses'
-  return 'no focus reported, showing the whole team'
+  const chosen = focuses.find(f => f.via === 'chosen' && f.address === scope.focus)
+  if (chosen !== undefined) return `your choice: ${chosen.title ?? chosen.address}`
+  const teams = focusTeams(scope)
+  if (teams === null) {
+    if (scope.identity === 'unknown') return 'could not tell who this session is, showing every focus'
+    return scope.identity === 'pending' ? null : 'focuses of every team'
+  }
+  const has = scopeFocuses(focuses, scope).length > 0
+  return `${has ? 'focuses of' : NO_FOCUS_BY} ${teams.join(', ')}`
 }
 
-const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope).shown
+const scoped = (s: Snapshot): FocusView[] => scopeFocuses(s.focuses, s.scope)
 const pickFocus = (s: Snapshot): FocusView | undefined => scoped(s)[0]
 
 /** Machines the hosts scope covers: every machine, or this one. */
 const hostsOf = (s: Snapshot): readonly Machine[] =>
   s.scope.hosts === 'all' ? s.machines : s.machines.filter(m => m.name.toLowerCase() === s.localMachine)
 
-/** What the scope has to say: who the session is, a focus name that matched none or several, a team nothing answers for. */
+/** What the scope has to say: who the session is, what is wrong with the chosen focus, a team nothing answers for. */
 export const scopeNotes = (s: Snapshot): string[] => {
   const notes: string[] = []
   if (s.scope.identity === 'unknown') notes.push('could not tell who this session is')
-  const { note } = scopeFocuses(s.focuses, s.scope)
-  if (note !== null && s.focusesLoaded) notes.push(note)
+  if (s.focusNotice != null) notes.push(s.focusNotice)
   const known = new Set([...s.focuses.map(f => teamOf(f.address).toLowerCase()), ...s.board.agents.map(a => a.team.toLowerCase())])
   // Only the sources of what is drawn are read, so both that could name a team must have answered,
   // ix-board for a list that holds it.
@@ -192,7 +173,7 @@ const focus = (s: Snapshot): Cell | null => {
   if (f === undefined) return null
   const { done, total } = progressOf(f)
   const share = total > 0 ? done / total : null
-  const label = onlyProject(f)?.name ?? (f.summary || f.address)
+  const label = f.title ?? onlyProject(f)?.name ?? (f.summary || f.address)
   const parts: Part[] = [
     { text: `${fit(label, 18)} `, bold: true },
     { text: cellBar(share, 8), tone: 'claude' },
@@ -229,7 +210,7 @@ const MARKS: Record<string, { mark: string; tone: Tone }> = {
 
 const lead = (s: Snapshot): Cell | null => {
   const f = pickFocus(s)
-  if (f === undefined || f.via === 'definition') return null
+  if (f === undefined || f.via === 'chosen') return null
   const agent = s.board.agents.find(a => a.agent === f.address)
   const status = agent?.status ?? f.status
   const { mark, tone } = MARKS[status] ?? { mark: '○', tone: 'inactive' as Tone }
@@ -269,22 +250,27 @@ const relay = (s: Snapshot): Cell | null => {
 const work = (s: Snapshot): Cell | null => {
   const w = s.work
   if (w.at === null && w.relayError === null) return null // not asked yet
+  const filter = w.filter ?? ALL_TICKETS
   const known = w.leads.filter(l => l.readAt !== null)
   const unread = w.leads.length - known.length
   const old = known.filter(l => l.error !== null).length
   // With no report in hand, now or from an earlier read, nothing is known of the tickets.
   const isKnown = known.length > 0 || (unread === 0 && w.relayError === null)
-  const c = workCounts(w.leads, w.boards, s.now, isKnown, w.listed)
+  const c = focusCounts(w.leads, w.boards, s.now, isKnown, w.listed, filter)
   const dash = (n: number | null, isAtLeast = false) => (n === null ? '—' : `${isAtLeast ? '≥' : ''}${n}`)
   // Each dash of the cell says why, a reason two share once.
   const why = [...new Set([c.prsWhy, c.mergedWhy].filter(r => r !== null))]
   // A lead that was never read, reports nothing or reports old work may hold more tickets and PRs than are counted.
   const isShort = c.reporting < c.listed
   const of = c.tickets !== null && isShort ? ` (${c.reporting}/${c.listed} leads)` : ''
+  // A ticket whose project is unknown may be in the focus, so what is counted is a lower bound.
+  const isPlaced = c.unplaced === 0
   const parts: Part[] = [
-    { text: `${dash(c.tickets, isShort)} ${c.tickets === 1 ? 'ticket' : 'tickets'}`, tone: c.tickets === null ? 'inactive' : undefined },
+    { text: `${dash(c.tickets, isShort || !isPlaced)} ${c.tickets === 1 ? 'ticket' : 'tickets'}`, tone: c.tickets === null ? 'inactive' : undefined },
+    { text: c.tickets === null || isPlaced ? '' : ` +${c.unplaced} unknown project`, dim: true },
+    { text: filter.kind === 'unread' ? ' · focus not read' : '', tone: 'warning' },
     { text: `${of}${c.oldTickets > 0 ? ` · +${c.oldTickets} old` : ''}`, dim: true },
-    { text: ` · ${dash(c.prsOpen, isShort || c.prsPartial)} ${c.prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
+    { text: ` · ${dash(c.prsOpen, isShort || c.prsPartial || !isPlaced)} ${c.prsOpen === 1 ? 'PR' : 'PRs'} open`, dim: true },
     { text: ` · ${dash(c.merged, c.mergedPartial)} merged 24h`, dim: true },
     { text: c.oldAt === null ? '' : ` · ix-board ${agoShort(c.oldAt, s.now)} old`, tone: 'warning' },
     { text: why.length === 0 ? '' : ` (${why.join('; ')})`, dim: true },
@@ -298,11 +284,8 @@ const work = (s: Snapshot): Cell | null => {
   return { id: 'work', pane: 'work', parts, alert }
 }
 
-/**
- * The teams the Team view and the team cell read: those the user or a declaration chose, whatever the focus; where none
- * is chosen, those of the session's focus, else its own team. None: every team.
- */
-export const selectedTeams = (scope: Scope): string[] => (scope.teamsSelected ? [...scope.teams] : (focusTeams(scope) ?? [...scope.teams]))
+/** The teams the Team view and the team cell read: those selected, whatever the focus. None: every team. */
+export const selectedTeams = (scope: Scope): string[] => [...scope.teams]
 
 /**
  * The team views a selection reads: `shown`, those keyed with a selected team, in the selection's order; `unmatched`,
@@ -323,14 +306,12 @@ export const headlineViews = (views: readonly TeamView[], selected: readonly str
   return shown.length > 0 ? shown : unmatched
 }
 
-/** The first tile of the first team that has a reading: the one the Team view shows first. */
+/** The tickets closed today of the first team that has a count of them. */
 const team = (s: Snapshot): Cell | null => {
   for (const t of headlineViews(s.teamViews, selectedTeams(s.scope))) {
-    const tile = t.metrics.find(m => m.value !== null)
-    if (tile !== undefined && tile.value !== null) {
-      const value = tile.unit === 'seconds' ? `${Math.round(tile.value)}s` : Number.isInteger(tile.value) ? String(tile.value) : tile.value.toFixed(1)
-      return { id: 'team', pane: 'team', parts: [{ text: `${t.team} ${tile.label} `, dim: true }, { text: tile.atLeast ? `≥${value}` : value }] }
-    }
+    const { counts, atLeast } = t.days.closures
+    const today = counts[counts.length - 1]
+    if (today !== null && today !== undefined) return { id: 'team', pane: 'team', parts: [{ text: `${t.team} closed `, dim: true }, { text: `${atLeast ? '≥' : ''}${today}` }] }
   }
   return null
 }

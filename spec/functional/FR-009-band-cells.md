@@ -44,8 +44,8 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
   | relay | Message |
   | team | Team |
 
-- The team module SHALL show the label and value of the first tile that has a reading, of the first team that has one among the selected teams that have series (the exporter ids with no key where none has), with `≥` before a value that is a lower bound ([FR-029](./FR-029-team-metrics.md)).
-- The mod SHALL leave out the team module when no team metrics exist.
+- The team module SHALL show `<team> closed N`, the tickets closed today of the first team that has a count among the selected teams that have series (the exporter ids with no key where none has), with `≥` before a count that is a lower bound ([FR-029](./FR-029-team-metrics.md)).
+- The mod SHALL leave out the team module when no team has a count for today.
 
 ### The work module
 
@@ -62,6 +62,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 - An answer of ix-board more than 35 minutes old SHALL NOT be drawn as current: the cell SHALL say its age, `ix-board <age> old`, and K SHALL be a lower bound where a focus status is that old or was never answered.
 - K SHALL be a lower bound where the latest refresh of a focus status failed in whole or part, however new the answer held.
 - Wherever N is drawn as a lower bound, M SHALL be too.
+- Under a chosen focus the cell SHALL count only the tickets of the focus ([FR-028](./FR-028-work-tab.md)). Where tickets in hand have an unknown project, N and M SHALL be lower bounds and the cell SHALL say `+U unknown project`. Where the focus is not read yet, the cell SHALL count every ticket and say `focus not read`.
 - The mod SHALL leave out the work module until the first read of the relay's leads has ended or failed.
 - A report held from an earlier read SHALL count as any other by its age ([FR-030](./FR-030-lead-report-reads.md)).
 - Where no report is held and the read of the leads failed, N and M SHALL read `—`.
@@ -80,7 +81,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 | FR-009-AC-4 | With the selection `focus,nope,focus,local`, the band shows focus then local, with digits 1 and 2. | Test |
 | FR-009-AC-5 | Pressing a digit that no cell carries opens nothing and changes nothing. | Test |
 | FR-009-AC-6 | Pressing the digit of a cell opens the view named in the module-to-view table, for every module in the table. | Test |
-| FR-009-AC-7 | The team cell shows the first tile with a reading of the first selected team that has one, and is left out when no team metrics exist. | Test |
+| FR-009-AC-7 | The team cell shows the tickets closed today of the first selected team that has a count, and is left out when none has. | Test |
 | FR-009-AC-8 | In a real classic session a digit typed while the prompt holds text is typed into the prompt and opens nothing. | Demonstration |
 | FR-009-AC-9 | The work cell reads the distinct tickets the leads have in hand, their distinct open and draft PRs and the merges of 24 hours. | Test |
 | FR-009-AC-10 | The work cell reads `—` for PRs and merges that ix-board has not said, and `≥M` where only some tickets' PRs are known. | Test |
@@ -91,6 +92,7 @@ The mod SHALL draw each band module as one cell that carries a digit and opens i
 | FR-009-AC-15 | With fewer current reports than leads listed the cell reads `≥N tickets (r/t leads)`, and the tickets only reports over 2 hours old name are counted apart. | Test |
 | FR-009-AC-16 | An ix-board answer over 35 minutes old has its age said and makes the merges a lower bound, as a focus status never answered or cut short by a source error does. | Test |
 | FR-009-AC-17 | A cell with `—` for PRs or merges says why. | Test |
+| FR-009-AC-18 | Under a chosen focus the cell counts the tickets of the focus and says how many have an unknown project. | Test |
 
 ## Dependencies
 

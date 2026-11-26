@@ -5,7 +5,7 @@ import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './fact
 import { PANE_SPEC as FOCUS_PANE, registerFocus, resetFocus, startFocus } from './focus'
 import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
-import { PANE_SPEC as WORK_PANE, registerWork, resetWork } from './workview'
+import { PANE_SPEC as WORK_PANE, registerWork, resetWork, workSources } from './workview'
 import { resolveEndpoints } from './endpoints'
 import { resetLeads } from './leads'
 import { bandPlan, renderBand, startBand, syncStatus } from './band'
@@ -54,7 +54,11 @@ export const register: Register = (on, rawOptions) => {
 
   // Registered ahead of the views' own drawings, so it hears every draw of a pane and passes it on.
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
-    if (isViewId(e.requestId)) await drawn($, options, e.requestId, paneSources(e.requestId, e.props.placement === 'widget'), { client: e.surface, placement: e.props.placement })
+    if (isViewId(e.requestId)) {
+      const isWidget = e.props.placement === 'widget'
+      const sources = e.requestId === 'work' ? await workSources($, isWidget) : paneSources(e.requestId, isWidget)
+      await drawn($, options, e.requestId, sources, { client: e.surface, placement: e.props.placement })
+    }
     return next(e)
   })
   registerFactory(on, options)

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { FocusInitiative, FocusMeta, FocusProject, FocusView, FocusWarning, SourceError } from '../types'
+import type { ChosenFocus, FocusOption, FocusInitiative, FocusMeta, FocusProject, FocusView, FocusWarning, SourceError } from '../types'
 import { widgets } from './ui/widgets'
 import { ACCENT } from './ui/glyphs'
 import { CARD_BG, INK, after, ago, agoShort, errorText, pausedText, progressBar } from './shared'
@@ -11,21 +11,20 @@ import { REFRESH_BUDGET_MS, resetBoard, selectorsOfScope } from './board'
 import { loadProgress, progressKeyOf } from './progressview'
 import { holdBoard, keepBoards } from './work'
 import type { Selector } from './board'
-import { matchLeads, resolveDefinitions } from './namedfocus'
-import type { Resolved } from './namedfocus'
+import { focusNotice, labelOf, namesOf, parseRef, reportedRefs } from './focuschoice'
 import { STALE_MS } from './progress'
 import { setSelectorErrors, sourceClear, sourceFailed, sourceOk } from './sources'
 import { focusDetail } from './showfocus'
-import { isDue, track } from './schedule'
-import { focusBanner, focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
-import { getSelection, scopeOf, selectionReady } from './selection'
+import { isDue, markStale, track } from './schedule'
+import { NO_FOCUS_BY, focusBanner, focusTeams, scopeFocuses, statusOf, teamOf } from './band/modules'
+import { getSelection, refreshSelection, scopeKeyOf, scopeOf, selectionReady } from './selection'
 import type { Selection } from './selection'
 import type { Options } from './shared'
 
-// The Focus pane: one card per named focus. A focus belongs to a coordinator agent: its
+// The Focus pane: one card per focus. A focus belongs to a coordinator agent: its
 // scope and focus line come from the coordinator's ix-relay work report, its progress from
 // `ix-board focus status` over that scope. Today a coordinator holds one focus; the list
-// is already a list, so named focuses only add cards.
+// is already a list, so more only add cards.
 
 const PANE = 'focus'
 const TITLE = 'Focus'
@@ -35,12 +34,12 @@ export const NO_SELECTORS = 'no selectors'
 const FIRST_DRAW_MS = 5_000
 
 const focuses = atom({ plugin: 'factory-panel', key: 'focuses' } as const, [] as FocusView[], {
-  shape: 'focuses-5',
+  shape: 'focuses-8',
 })
 const focusMeta = atom(
   { plugin: 'factory-panel', key: 'focusMeta' } as const,
   { at: null, busy: false, error: null, errors: [] } as FocusMeta,
-  { shape: 'focusMeta-2' },
+  { shape: 'focusMeta-5' },
 )
 export const focusCollapsed = atom({ plugin: 'factory-panel', key: 'focusCollapsed' } as const, [] as string[])
 const focusShowDone = atom({ plugin: 'factory-panel', key: 'focusShowDone' } as const, false)
@@ -67,6 +66,7 @@ const blank = (address: string): FocusView => ({
   title: null,
   via: null,
   notes: [],
+  selectors: [],
 })
 
 const leadEntry = (lead: string, report: WorkReport, note: string | null): Entry => ({
@@ -83,28 +83,20 @@ const leadEntry = (lead: string, report: WorkReport, note: string | null): Entry
       tickets: report.scope?.tickets?.length ?? 0,
     },
     focusReportedAt: report.focus?.reported_at_ms ?? report.scope?.reported_at_ms ?? null,
+    selectors: selectorsOfScope(report.scope),
   },
   selectors: selectorsOfScope(report.scope),
 })
 
-const definitionEntry = (d: Resolved): Entry => ({
-  view: {
-    ...blank(d.focusId),
-    kind: 'named focus',
-    title: d.name,
-    via: 'definition',
-    notes: d.notes,
-    scope: {
-      initiatives: d.selectors.filter(s => s.kind === 'initiative').length,
-      projects: d.selectors.filter(s => s.kind === 'project' || s.kind === 'milestone').length,
-      tickets: d.selectors.filter(s => s.kind === 'ticket').length,
-    },
-  },
-  selectors: d.unavailable ? [] : d.selectors,
-})
-
-/** What a read is asked for: the focuses held answer this focus and these teams only. */
-const scopeKeyOf = (scope: { focus: string; teams: readonly string[] }): string => `${scope.focus}\u0000${scope.teams.join(',')}`
+/** The card of the chosen initiative or project: its progress is ix-board's over that one selector. */
+function chosenEntry(value: string, name: string | null): Entry {
+  const { kind, id } = parseRef(value)!
+  const selectors: Selector[] = [{ kind, ref: id }]
+  return {
+    view: { ...blank(value), kind, title: labelOf(value, name), via: 'chosen', selectors, scope: { initiatives: kind === 'initiative' ? 1 : 0, projects: kind === 'project' ? 1 : 0, tickets: 0 } },
+    selectors,
+  }
+}
 
 /** Whether a read has finished for the focus and teams now selected, so that what it did not find is known to be absent. */
 const isRead = (meta: FocusMeta, sel: Selection): boolean => meta.at !== null && meta.scope === scopeKeyOf(scopeOf(sel))
@@ -115,9 +107,8 @@ export async function focusBannerNow($: EngineInterface, sel: Selection): Promis
   const all = await read($, focuses)
   const banner = focusBanner(scope, all)
   if (isRead(await read($, focusMeta), sel)) return banner
-  // Before a read, "no focus reported" is not known: the own focus line is left out unless an entry of its own shows it.
-  const own = scope.focus.trim().toLowerCase() === 'own' && scope.identity === 'detected'
-  return own && !all.some(f => f.address.toLowerCase() === scope.ownAddress?.toLowerCase()) ? null : banner
+  // Before a read, that no focus is reported is not known.
+  return banner?.startsWith(NO_FOCUS_BY) ? null : banner
 }
 
 /**
@@ -128,8 +119,9 @@ export async function focusDetailNow($: EngineInterface, sel: Selection): Promis
   const all = await read($, focuses)
   const meta = await read($, focusMeta)
   const now = await $.clock.now()
-  const { shown, note } = scopeFocuses(all, scopeOf(sel))
-  const detail = focusDetail(shown, now)
+  const shown = scopeFocuses(all, scopeOf(sel))
+  const notice = meta.heldFor === scopeKeyOf(scopeOf(sel)) ? focusNotice(meta.chosen) : null
+  const detail = [...(notice === null ? [] : [notice]), ...focusDetail(shown, now)]
   if (!isRead(meta, sel)) {
     const failure = meta.error ?? meta.errors.find(e => e.source === 'agent-msg work')?.text
     const why = running !== null ? ': it is being read now, run /factory show again' : failure === undefined ? '' : `: the last read failed: ${failure}`
@@ -137,7 +129,7 @@ export async function focusDetailNow($: EngineInterface, sel: Selection): Promis
   }
   const answered = shown.flatMap(f => (f.fetchedAt === null ? [] : [f.fetchedAt]))
   const age = `focus data: read ${ago(meta.at!, now)}${answered.length === 0 ? '' : `, progress from ${ago(Math.min(...answered), now)}`}`
-  return [age, ...(note === null ? [] : [note]), ...detail]
+  return [age, ...detail]
 }
 
 /** One refresh at a time: a tick that arrives during one is run once, after it. */
@@ -145,11 +137,16 @@ let running: Promise<void> | null = null
 let again = false
 let againManual = false
 let againAnew = false
+let againFull = false
 
-/** Reads every focus. `anew` reads the leads' reports again even where the other view has just read them. */
-export function pollFocus($: EngineInterface, manual = false, anew = manual): Promise<void> {
+/**
+ * Reads every focus. `anew` reads the leads' reports again even where the other view has just read them. `isMembership`
+ * reads only which tickets the chosen focus holds, for the Work tab: its one focus status, and no other focus or name.
+ */
+export function pollFocus($: EngineInterface, manual = false, anew = manual, isMembership = false): Promise<void> {
   if (running !== null) {
     again = true
+    againFull ||= !isMembership
     againManual ||= manual
     againAnew ||= anew
     return running
@@ -159,17 +156,21 @@ export function pollFocus($: EngineInterface, manual = false, anew = manual): Pr
       let asManual = manual
       let asAnew = anew
       let isFirstPass = true
+      let isNarrow = isMembership
       do {
         again = false
         againManual = false
         againAnew = false
+        againFull = false
+        const narrow = isNarrow
         const how = asManual
         const reuse = asAnew ? 0 : LEAD_REUSE_MS
         const early = isFirstPass
         isFirstPass = false
-        await track($, 'focus', () => refreshFocus($, how, reuse, early))
+        await track($, narrow ? 'membership' : 'focus', () => refreshFocus($, how, reuse, early, narrow))
         asManual = againManual
         asAnew = againAnew
+        isNarrow = !againFull
       } while (again)
     } finally {
       running = null
@@ -191,10 +192,47 @@ export async function readForCommand($: EngineInterface, changed: boolean): Prom
   if (reading !== null) await Promise.race([reading, after($, COMMAND_WAIT_MS)])
 }
 
+/** The focuses held and how they were read, which the Work view filters by. */
+export async function focusHeld($: EngineInterface): Promise<{ focuses: FocusView[]; meta: FocusMeta }> {
+  const [held, meta] = await Promise.all([read($, focuses), read($, focusMeta)])
+  return { focuses: held, meta }
+}
+
+/** Reads the focuses the leads of the selected teams report, with their names: what the Work tab's picker lists. */
+export function readChoices($: EngineInterface): Promise<boolean> {
+  return track($, 'choices', async () => {
+    try {
+      await selectionReady()
+      const teams = focusTeams(scopeOf(getSelection()))
+      const leads = (await listLeads($)).filter(a => teams === null || teams.some(t => t.toLowerCase() === teamOf(a).toLowerCase()))
+      const reads = await Promise.all(leads.map(lead => readLead($, lead)))
+      const options = await namesOf($, reportedRefs(reads.map(r => r.report?.scope)))
+      await update($, focusMeta, m => ({ ...m, options }))
+      return true
+    } catch (error) {
+      sourceFailed('agent-msg work', errorText(error))
+      return false
+    }
+  })
+}
+
 /** Whether a read of the focuses has ended, well or not: the focus statuses it asked for are then held. */
 export async function focusWasRead($: EngineInterface): Promise<boolean> {
   const meta = await read($, focusMeta)
   return meta.at !== null || meta.error !== null
+}
+
+/**
+ * Reads what a choice just written selects: the selection, and marks what the scope reads as due at the next drawing of
+ * a view that shows it. A typed command, which answers in words, reads the focuses as well.
+ */
+export async function choiceApplied($: EngineInterface, isCommand = true): Promise<Selection> {
+  const sel = await refreshSelection($)
+  markStale('focus', 'board', 'work', 'tickets', 'projects', 'membership', 'choices', 'retro')
+  // Where none can be made, what is held is drawn.
+  if (isCommand) await readForCommand($, true).catch(() => undefined)
+  $.ui.invalidate('ui.render')
+  return sel
 }
 
 /** Forgets the refresh state of an earlier session; the tests start each session from nothing. */
@@ -204,21 +242,26 @@ export function resetFocus(): void {
   again = false
   againManual = false
   againAnew = false
+  againFull = false
 }
 
 /**
  * One refresh of every focus; false when the relay could not be read (ix-board's reads have their own gate). With
  * `early`, a choice not yet drawn is drawn from the reports in after FIRST_DRAW_MS, and another refresh is asked for.
  */
-async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number, early: boolean): Promise<boolean> {
+async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number, early: boolean, isMembership: boolean): Promise<boolean> {
+  // With no chosen focus there is no membership to read.
+  if (isMembership) {
+    await selectionReady()
+    if (parseRef(getSelection().focus.value) === null) return true
+  }
   await update($, focusMeta, m => ({ ...m, busy: true }))
   try {
     // The scope needs to know who this session is before it knows which leads to read.
     await selectionReady()
     const scope = scopeOf(getSelection())
     const teams = focusTeams(scope)
-    const name = scope.focus.trim()
-    const isName = name !== '' && !['own', 'team'].includes(name.toLowerCase())
+    const choice = parseRef(scope.focus) === null ? null : scope.focus
     const errors: SourceError[] = []
 
     // Where the leads cannot be listed nothing is known of them: this read says nothing about what is absent.
@@ -238,21 +281,21 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
       }
       const answered: LeadRead[] = []
       const all = Promise.all(leads.map(async lead => void answered.push(await readLead($, lead, reuseMs))))
-      isPartial = early && isNewChoice && (await Promise.race([all.then(() => false), after($, FIRST_DRAW_MS)]))
+      isPartial = early && !isMembership && isNewChoice && (await Promise.race([all.then(() => false), after($, FIRST_DRAW_MS)]))
       if (!isPartial) await all
       else {
         listed = false
         again = true
+        againFull = true
         againManual ||= manual
       }
       const reports = [...answered]
       // A lead another session is reading says nothing yet, so this read says nothing about what is absent.
       if (reports.some(r => r.pending === true)) listed = false
       const failedReads = reports.flatMap(r => (r.error === null ? [] : [{ lead: r.address, error: r.error }]))
-      // A failure is shown for the leads the scope is about: those inside the team filter, those whose address is
-      // the name typed, and, when every lead is read, any lead if all of them failed (one with no live agent is normal there).
-      const named = isName ? matchLeads(name, leads).map(a => a.toLowerCase()) : []
-      const shownFails = failedReads.filter(x => teams !== null || named.includes(x.lead.toLowerCase()) || failedReads.length === reports.length)
+      // A failure is shown for the leads inside the team filter, and, when every lead is read, any lead if all of them
+      // failed (one with no live agent is normal there).
+      const shownFails = failedReads.filter(() => teams !== null || failedReads.length === reports.length)
       // Whether the relay failed is told once every lead has answered.
       if (isPartial) return drawn(reports, await $.clock.now())
       if (shownFails.length > 0) {
@@ -265,34 +308,29 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     // A report that could not be read now is drawn as it was last read, and says so.
     const drawn = (reports: readonly LeadRead[], now: number): { lead: string; report: WorkReport; note: string | null }[] =>
       reports.flatMap(r => (r.report ? [{ lead: r.address, report: r.report, note: r.error === null ? null : `work report not read, as read ${ago(r.at, now)}` }] : []))
-    const lookup = async (): Promise<Resolved[]> => {
-      if (!isName) return []
-      let failed: string | null = null
-      const found = await resolveDefinitions($, name, scope.identity === 'detected' ? scope.ownTeam : null, m => {
-        failed = failed === null ? m : `${failed} · ${m}`
-      })
-      if (failed !== null) {
-        errors.push({ source: 'agent-msg focuses', text: failed })
-        sourceFailed('agent-msg focuses', failed)
-      } else sourceOk('agent-msg focuses', await $.clock.now())
-      return found
+    const reports = await gather()
+    const prior = await read($, focusMeta)
+
+    // The focuses that can be chosen are those the reports name.
+    const refs = reportedRefs(reports.map(r => r.report.scope))
+    let chosen: ChosenFocus | undefined
+    if (choice !== null) {
+      let name = [...(prior.options ?? []), ...(prior.chosen === undefined ? [] : [prior.chosen])].find(o => o.value === choice)?.name ?? null
+      // One no lead reports is a focus only where Linear names it, which is asked before anything is drawn for it.
+      if (!refs.includes(choice) && name === null) name = (await namesOf($, [choice]))[0]?.name ?? null
+      chosen = { value: choice, name, known: refs.includes(choice) || name !== null }
     }
-    const [reports, defs] = await Promise.all([gather(), lookup()])
 
     const leadEntries = reports
       .filter(r => selectorsOfScope(r.report.scope).length > 0 || Boolean(r.report.focus?.summary))
       .map(r => leadEntry(r.lead, r.report, r.note))
-    let entries: Entry[]
-    if (!isName) entries = leadEntries
-    else if (defs.length > 0) entries = defs.map(definitionEntry)
-    else {
-      const addresses = matchLeads(name, reports.map(r => r.lead))
-      const byAddress = leadEntries.filter(e => addresses.some(a => a.toLowerCase() === e.view.address.toLowerCase()))
-      if (byAddress.length > 0) entries = byAddress.map(e => ({ ...e, view: { ...e.view, via: 'lead' as const } }))
-      else {
-        const picked = scopeFocuses(leadEntries.map(e => e.view), scope).shown
-        entries = leadEntries.filter(e => picked.includes(e.view)).map(e => ({ ...e, view: { ...e.view, via: 'summary' as const } }))
-      }
+    // A choice that is no focus shows what `all` shows.
+    const entries: Entry[] = chosen?.known === true ? [chosenEntry(chosen.value, chosen.name)] : leadEntries
+    if (isMembership && chosen?.known !== true) {
+      // A choice that is no focus filters nothing: there is nothing more to read for the Work tab.
+      const now = await $.clock.now()
+      await update($, focusMeta, m => ({ ...m, at: now, busy: false, error: null, errors, heldFor: scopeKeyOf(scope), chosen }))
+      return errors.length === 0
     }
     entries.sort((a, b) => a.view.address.localeCompare(b.view.address))
 
@@ -300,12 +338,25 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
     const before = await read($, focuses)
     const first = entries.map(e => {
       const prior = before.find(f => f.address === e.view.address)
-      const noSelectors = e.selectors.length === 0 && e.view.via !== 'definition'
+      const noSelectors = e.selectors.length === 0
       return { ...e.view, ...(prior === undefined ? {} : { initiatives: prior.initiatives, loose: prior.loose, header: prior.header, warnings: prior.warnings, fetchedAt: prior.fetchedAt }), notes: [...e.view.notes, ...(noSelectors ? [NO_SELECTORS] : [])] }
     })
     await update($, focuses, () => first)
-    await update($, focusMeta, m => ({ ...m, errors }))
+    const heldFor = scopeKeyOf(scope)
+    await update($, focusMeta, m => ({ ...m, errors, heldFor, chosen }))
+    // The Work tab keeps the answers of the focuses now shown only, so that none of an earlier choice places a ticket.
+    await keepBoards($, new Set(entries.filter(e => e.selectors.length > 0).map(e => progressKeyOf(e.selectors))))
 
+    // Names are read beside the progress, so that the choices are listed without waiting for it.
+    const publish = async (options: FocusOption[]) => {
+      const name = chosen === undefined ? null : (options.find(o => o.value === chosen!.value)?.name ?? chosen.name)
+      if (chosen !== undefined) chosen = { ...chosen, name }
+      await update($, focusMeta, m => ({ ...m, ...(isMembership ? {} : { options }), chosen }))
+      if (name !== null) await update($, focuses, list => list.map(f => (f.via === 'chosen' && f.address === chosen!.value ? { ...f, title: name } : f)))
+      return options
+    }
+    // For the Work tab's membership no name is read but the chosen one's, and that after its progress.
+    const naming = isMembership ? Promise.resolve<FocusOption[]>([]) : namesOf($, refs).then(publish)
     const failed = new Map<string, { name: string; error: string }>()
     // The 30 seconds of the refresh count from here, the first ix-board call, not from the lookups above.
     const endsAt = (await $.clock.now()) + REFRESH_BUDGET_MS
@@ -320,16 +371,16 @@ async function refreshFocus($: EngineInterface, manual: boolean, reuseMs: number
         await update($, focuses, list => list.map(f => (f.address === e.view.address ? { ...f, ...progress, notes: [...e.view.notes, ...(progress.notes ?? [])] } : f)))
       }),
     )
-    // The Work tab keeps the answers of the focuses now shown only.
-    const keys = new Set(entries.filter(e => e.selectors.length > 0).map(e => progressKeyOf(e.selectors)))
-    await keepBoards($, keys)
-    // Sources nobody asks any more say nothing: ix-board when no focus has a selector, the named focus lookup when the choice is not a name.
-    if (!isName) sourceClear('agent-msg focuses')
+    // The progress just read may name what nothing else did.
+    let options = await naming
+    if (options.some(o => o.name === null) || (chosen !== undefined && chosen.name === null)) options = await publish(await namesOf($, isMembership ? [chosen!.value] : refs))
+    // A source nobody asks any more says nothing: ix-board when no focus has a selector.
     if (entries.every(e => e.selectors.length === 0)) sourceClear('ix-board')
     setSelectorErrors(failed)
     const now = await $.clock.now()
     // With nothing to draw and reports still coming in, the views keep saying that the focuses are being read.
-    await update($, focusMeta, m => ({ at: isPartial && entries.length === 0 ? m.at : now, busy: isPartial, error: null, errors, ...(listed ? { scope: scopeKeyOf(scope) } : {}) }))
+    // A membership read says nothing of the other focuses, so it claims no read of the scope.
+    await update($, focusMeta, m => ({ at: isPartial && entries.length === 0 ? m.at : now, busy: isPartial, error: null, errors, heldFor, chosen, options: isMembership ? m.options : options, ...(listed && !isMembership ? { scope: scopeKeyOf(scope) } : isMembership && m.scope !== undefined ? { scope: m.scope } : {}) }))
     return errors.length === 0
   } catch (error) {
     await update($, focusMeta, m => ({ ...m, busy: false, error: errorText(error) }))
@@ -375,8 +426,10 @@ export function registerFocus(on: On, _options: Options): void {
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     // Only the focuses the selection shows; the team scope groups them under each team.
     const scope = scopeOf(getSelection())
-    const { shown: list, note } = scopeFocuses(all, scope)
-    const grouped = scope.focus.trim().toLowerCase() === 'team'
+    const list = scopeFocuses(all, scope)
+    const notice = meta.heldFor === scopeKeyOf(scope) ? focusNotice(meta.chosen) : null
+    // Under each team's name where the focuses of several teams are listed.
+    const grouped = list.every(f => f.via !== 'chosen') && new Set(list.map(f => teamOf(f.address).toLowerCase())).size > 1
     const banner = focusBanner(scope, all)
 
     const bar = (done: number, inProgress: number, ready: number, total: number, cells: number, complete = false) =>
@@ -391,7 +444,7 @@ export function registerFocus(on: On, _options: Options): void {
       return (
         <Box flexDirection="row" gap={1}>
           <Text weight="semibold">{list.length} focus{list.length === 1 ? '' : 'es'}</Text>
-          {first && total > 0 && <Text dimColor>· {Math.min(first.header && (first.header.partial || first.header.oldestAt !== null || first.header.notExpanded > 0) ? 99 : 100, Math.round((100 * done) / total))}% {first.address}</Text>}
+          {first && total > 0 && <Text dimColor>· {Math.min(first.header && (first.header.partial || first.header.oldestAt !== null || first.header.notExpanded > 0) ? 99 : 100, Math.round((100 * done) / total))}% {first.title ?? first.address}</Text>}
         </Box>
       )
     }
@@ -547,7 +600,7 @@ export function registerFocus(on: On, _options: Options): void {
     for (const x of meta.errors) warnings.push({ kind: 'source', name: x.source, text: x.text, id: null })
     if (meta.error) warnings.push({ kind: 'source', name: 'refresh', text: meta.error, id: null })
     const messages = warnings.map(w => (w.kind === 'source' ? `${w.name}: ${w.text}` : `${w.name}${w.id !== null ? ` (${w.id})` : ''}: ${w.text}`))
-    const prose = [...(banner === null ? [] : [banner]), ...(meta.at !== null && note !== null ? [note] : []), ...list.flatMap(proseOf)]
+    const prose = [...(banner === null ? [] : [banner]), ...list.flatMap(proseOf)]
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -558,6 +611,8 @@ export function registerFocus(on: On, _options: Options): void {
           </Box>
           <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollFocus($, true)} />
         </Box>
+
+        {notice !== null && <Text color="warning">{notice}</Text>}
 
         {list.length === 0 && (
           <Text dimColor>

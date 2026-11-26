@@ -155,19 +155,27 @@ export type FocusView = {
   loose: FocusProject[]
   header: FocusHeader | null
   warnings: FocusWarning[]
-  /** The name shown in place of the address: a named focus definition's name. */
+  /** The name shown in place of the address: the chosen focus's. */
   title: string | null
-  /** How the focus was found when the choice is a name: a definition, a lead address or a lead summary. */
-  via: 'definition' | 'lead' | 'summary' | null
-  /** Lines the card adds: exclusions not applied, selects nothing, selection unavailable, no selectors, earlier outcome. */
+  /** `chosen` for the chosen initiative or project; null for a lead's own focus. */
+  via: 'chosen' | null
+  /** Lines the card adds: no selectors, earlier outcome. */
   notes: string[]
+  /** What the focus is made of: the chosen initiative or project, or a lead's reported scope. */
+  selectors: { kind: 'initiative' | 'project' | 'milestone' | 'ticket'; ref: string; project?: string; label?: string }[]
 }
+
+/** An initiative or project leads report, with its Linear name where one is known; `value` is what the choice stores. */
+export type FocusOption = { value: string; kind: 'initiative' | 'project'; id: string; name: string | null }
+
+/** The chosen focus: `known` where a lead reports it or Linear names it. */
+export type ChosenFocus = { value: string; name: string | null; known: boolean }
 
 /** A source's error, shown on the pane and in `/factory show`. */
 export type SourceError = { source: string; text: string }
 
-/** `scope` is the focus and teams the last finished read was made for. */
-export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string }
+/** `scope` is the focus and teams the last finished read was made for, `heldFor` those the focuses held were found for. */
+export type FocusMeta = { at: number | null; busy: boolean; error: string | null; errors: SourceError[]; scope?: string; heldFor?: string; chosen?: ChosenFocus; /** the focuses the leads report; absent until their names have been read */ options?: FocusOption[] }
 
 // ---------------------------------------------------------------- Escalations and Relay panes
 
@@ -199,17 +207,14 @@ export type RelayMeta = { at: number | null; error: string | null; human: string
 
 export type TeamMetric = {
   key: string
-  /** the row it is drawn in */
-  group: 'velocity' | 'review' | 'flow'
   label: string
   /** the latest value, null when the series is absent */
   value: number | null
   /** whether `value` is a lower bound: the largest count of one of several scopes */
   atLeast: boolean
   unit: 'count' | 'rate' | 'seconds' | 'share'
-  /** higher is better (velocity) or worse (queues), for the trend's colour */
-  better: 'up' | 'down'
-  history: number[]
+  /** the last sample of each cell of the last 6 hours, oldest first; null where a cell has none */
+  history: (number | null)[]
   /** the share of its population the exporter measured, 0 to 1; null where it does not say */
   coverage: number | null
   /** why there is no `value`; null where there is one */
@@ -239,31 +244,14 @@ export type RetroView = { team: string; classes: RetroClass[] | null; latest: st
 
 export type RetroMeta = { at: number | null; error: string | null }
 
-/** One rule of a role evaluation; `reason` and `rubric` say why one is not scored. */
-export type RoleRule = { id: string; status: string; query: string; value: number | null; comparator: string; target: number | null; reason: string | null; rubric: string | null }
+/** A lane of a host that is stuck, or waiting on something that is no fault, and why. */
+export type LaneNote = { lane: string; kind: 'stuck' | 'waiting'; reason: string }
 
-/**
- * One role of an evaluation: the rules passed of those scored, and `trend`, the change from the window before over the
- * `matched` rules scored in both; `matched` is null where the answer does not say.
- */
-export type RoleScore = { role: string; passed: number; evaluated: number; passRate: number | null; trend: number | null; matched: number | null; rules: RoleRule[]; objectives: RoleObjective[] }
+/** One host of the fleet; a figure is null where it is not known. `needs` is the shortfall of ready work above 0. */
+export type HostRow = { host: string; working: number | null; stuck: number | null; idle: number | null; waiting: number; lanes: LaneNote[]; cpu: number | null; done: number | null; best: number | null; needs: number | null; isChurning: boolean }
 
-/** One objective metric of a role; a null `value` has no measurement, and `reason` says why. */
-export type RoleObjective = { id: string; query: string; value: number | null; unit: string; reason: string | null }
-
-/** What the mod keeps of `ix-board retro eval --json`: the window (ms since the epoch) and its roles. */
-export type RoleReport = { startMs: number; endMs: number; roles: RoleScore[] }
-
-/** A team's Roles section: its latest evaluation, and what to say about it or its absence. */
-export type RolesView = { team: string; report: RoleReport | null; note: string | null; isError: boolean }
-
-export type CapacityMetric = 'busy' | 'deficit' | 'output'
-
-/** One host's figure: its words, or why it is unavailable; `sampleAt` (ms since the epoch) where its sample says when. */
-export type CapacityCell = { metric: CapacityMetric; state: 'ok' | 'stale' | 'unavailable'; text: string; sampleAt: number | null }
-
-/** The fleet's capacity as read at `at`: each host's figures, and the metrics a whole source gives nothing of. */
-export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; missing: { metric: CapacityMetric; reason: string }[]; at: number }
+/** The fleet as read at `at`, with what is missing and why. */
+export type CapacityView = { hosts: HostRow[]; why: string[]; /** why a host has no done/h */ doneWhy: string[]; at: number }
 
 // ---------------------------------------------------------------- Work pane
 
@@ -271,7 +259,24 @@ export type CapacityView = { hosts: { host: string; cells: CapacityCell[] }[]; m
 export type WorkPr = { url: string; repo: string; number: number | null; status: string; draft: boolean }
 
 /** A ticket of the focus status: started, or closed lately. `prs` is null where ix-board is too old to say. */
-export type WorkIssue = { identifier: string; title: string; state: string; prs: WorkPr[] | null; /** when the answer naming it was read */ at?: number | null }
+export type WorkIssue = {
+  identifier: string
+  title: string
+  state: string
+  prs: WorkPr[] | null
+  /** when the answer naming it was read */
+  at?: number | null
+  /** the ids of its project and milestone, of an `ix-board issues` answer: null in none, absent where not said */
+  project?: string | null
+  milestone?: string | null
+  /** Linear's state category, when it last updated the ticket and when a PR of it was last opened or merged */
+  stateType?: string
+  updatedAt?: number | null
+  prAt?: number | null
+}
+
+/** The lanes by lead address: `since` is the time a stuck lane has been so for at least. */
+export type WorkLanes = { at: number; lanes: Record<string, { state: string; reason: string | null; isStuck: boolean; since: number | null }> }
 
 /** One entry of ix-board's `activity[]`: `at` in ms since the epoch. */
 export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; identifier: string; title: string; project: string; repo: string | null; number: number | null }
@@ -282,10 +287,10 @@ export type WorkActivity = { at: number; kind: 'merged' | 'closed' | 'opened'; i
  * answer held for the views, `at` is when it was read, null where none ever was, and `error` why the latest read
  * failed. `ticketsOnly` marks the read of single tickets, which says nothing of what was merged.
  */
-export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[] }
+export type WorkBoard = { issues: WorkIssue[]; activity: WorkActivity[] | null; cutAt?: number; at?: number | null; error?: string | null; ticketsOnly?: true; unknown?: string[]; /** the tickets that read asked for */ asked?: string[]; /** the tickets wanted that no read has asked for, or could */ left?: string[] }
 
 /** The gated `ix-board issues` answer: the tickets asked for, those answered, and when. */
-export type TicketsAnswer = { at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
+export type TicketsAnswer = { /** the TICKETS_SHAPE of the build that read it */ shape?: number; at: number; asked: string[]; issues: WorkIssue[]; /** those asked for that Linear has no record of */ unknown: string[] }
 
 export type WorkAgent = { name: string; ticket: string; role: string; status: string; reportedAt: number | null }
 
@@ -298,15 +303,15 @@ export type WorkLead = { address: string; status: string; reportedAt: number | n
 /** What a lead last said it is doing: the summary, the tickets it named, and when. */
 export type WorkLeadFocus = { summary: string; tickets: string[]; at: number | null }
 
-/** The latest transition of one agent on one ticket, from `agent-msg work events`. */
-export type WorkLast = { role: string; status: string; at: number }
-
 /**
  * `relayError` is why the last read of the leads gave nothing new: no list of leads, or no report of any lead.
  * `listed` counts the leads that read asked, `silent` names those that answered with no report, and `pending` counts
  * those another session was reading.
  */
-export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number }
+export type WorkMeta = { at: number | null; busy: boolean; error: string | null; relayError: string | null; listed: number; silent: string[]; pending: number; /** the teams of every lead `agent-msg who` lists */ teams: string[] }
+
+/** The choice open under the Work tab's header, and why a choice failed. */
+export type WorkPicker = { open: 'teams' | 'focus' | null; error: string | null }
 
 /** A reviewer, spec or gate agent starting or finishing on a ticket, from `agent-msg work events`. */
 export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step: 'start' | 'done'; ticket: string; address: string }
@@ -315,7 +320,7 @@ export type WorkRoleEvent = { at: number; role: 'review' | 'spec' | 'gate'; step
  * What the event stream has said of those roles: the latest events, oldest first, and where each assignment
  * (lead, agent, ticket) stands, so that a repeated report adds no event. `error` is the last read's problem.
  */
-export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null }
+export type WorkFeed = { events: WorkRoleEvent[]; phase: Record<string, 'running' | 'done'>; error: string | null; /** when the events were last read without failing */ at?: number; /** when an agent of each lead last changed role, status or ticket, and what each was */ turns?: Record<string, number>; marks?: Record<string, string> }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -355,16 +360,18 @@ declare module 'claude-code' {
       retroOpen: string[]
       teamOpen: string[]
       retroWarn: boolean
-      roles: Shaped<RolesView[]>
-      rolesOpen: string[]
       capacity: Shaped<CapacityView | null>
+      hostsOpen: string[]
       workLeads: Shaped<WorkLead[]>
-      workLast: Shaped<Record<string, WorkLast>>
+      workLast: Shaped<Record<string, number>>
       workMeta: Shaped<WorkMeta>
+      workPicker: Shaped<WorkPicker>
       workFeed: Shaped<WorkFeed>
+      workLanes: Shaped<WorkLanes | null>
+      workProjects: Record<string, string | null>
+      workNameError: string | null
       workBoards: Shaped<Record<string, WorkBoard>>
       workTickets: Shaped<WorkBoard | null>
-      workCollapsed: string[]
       workOpen: string[]
       workAll: boolean
       workWarnings: boolean

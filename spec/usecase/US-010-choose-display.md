@@ -22,8 +22,8 @@ Automatic is the default because the relay already supplies status and identity.
 
 ## Acceptance Examples (Illustrative)
 
-### US-010-EX-1: Looking at a named focus
+### US-010-EX-1: Looking at one focus
 
 - **Given** the view shows this session's own focus
 - **When** the user types `/factory focus <name>`
-- **Then** the band follows the named focus until the user resets it
+- **Then** the band follows the chosen focus until the user resets it

@@ -230,7 +230,7 @@ export async function bandLine(ui: Awaited<ReturnType<typeof drawBand>>): Promis
   return lines.length === 0 ? undefined : lines.map(l => l.text).join('')
 }
 
-// ---------------------------------------------------------------- ix-board and agent-msg focuses
+// ---------------------------------------------------------------- ix-board
 
 /** A project id for tests: a UUID made from a number, so ids are real in shape and distinct. */
 export const pid = (n: number | string): string => {
@@ -319,28 +319,12 @@ export const roadmapJson = (initiatives: RoadmapSpec[]) =>
 /** The error ix-board prints for the dangling milestone (SWM-295), as captured for project a31003a8 and initiative 674ffba8. */
 export const BAD_MILESTONE = 'issue QSL-3236 references unavailable milestone 871dbc77-cb19-474d-bd13-4db7145e8ec8 in project a31003a8-790b-482e-b28d-78f1d26a1cbf'
 
-/** A row of `agent-msg focuses list --json` that decodes. */
-export const defRow = (focusId: string, name: string, team: string, state = 'active') => ({ focus_id: focusId, team, name, state, latest_revision: 1, owner_id: 'o1', owner_epoch: 1, owner_state: 'live' })
-/** A row of `list --json` that cannot be used: only its id, `available` false, a code and a reason. */
-export const stubRow = (focusId: string, reason = 'the stored selection is not readable') => ({ focus_id: focusId, available: false, code: 'unavailable_definition', reason })
-export const listJson = (...definitions: unknown[]) => JSON.stringify({ definitions })
-
-type Members = { initiatives?: string[]; projects?: string[]; milestones?: [string, string][]; tickets?: string[] }
-const memberSet = (m: Members = {}) => ({
-  initiatives: (m.initiatives ?? []).map(ref => ({ ref, label: `label ${ref}` })),
-  projects: (m.projects ?? []).map(ref => ({ ref, label: `label ${ref}` })),
-  milestones: (m.milestones ?? []).map(([ref, project]) => ({ ref, project, label: `label ${ref}` })),
-  tickets: (m.tickets ?? []).map(ref => ({ ref, label: `label ${ref}` })),
-})
-/** `agent-msg focuses show <id> --json`: the definition under `definition`, and `empty_selection`. */
-export const showJson = (name: string, team: string, include: Members, exclude: Members = {}, over: { empty?: boolean; definition?: null } = {}) =>
-  JSON.stringify({
-    focus_id: 'foc-x',
-    state: 'active',
-    latest_revision: 1,
-    empty_selection: over.empty ?? false,
-    definition: over.definition === null ? null : { team, name, description: '', include: memberSet(include), exclude: memberSet(exclude) },
-  })
+/** A lead of the session's team that reports one project, which ix-board's `project-chunk` names. */
+export function reportsProject(w: World, id: string, name: string, lead = 'draco:QSL:code'): void {
+  w.leads.set(lead, report(lead, `working on ${name}`, ['running'], { projects: [id] }))
+  const prior = w.stub.value
+  w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${id}` ? out(JSON.stringify({ name })) : prior?.(argv, init))
+}
 
 export const NEVER = (): Promise<never> => new Promise<never>(() => undefined)
 /** A call that stays out until its own timeout passes on the moving clock, then fails as the host does. */

@@ -26,7 +26,7 @@ The mod SHALL fold every source and selector error of the Focus card into one ex
 - The mod SHALL draw no warning icon where the count is zero.
 - The mod SHALL draw the warning icon in the warning tone.
 - The mod SHALL draw no error text in the card body or in a project row.
-- The mod SHALL expand the warning icon into the full messages just above the footer, followed by the explanations of FR-019, FR-020, FR-022 and FR-023 that the card body does not carry, when the user activates the icon.
+- The mod SHALL expand the warning icon into the full messages just above the footer, followed by the explanations of FR-019, FR-022 and FR-023 that the card body does not carry, when the user activates the icon.
 - An expanded message SHALL name the ticket, milestone and project with their ids and names where the error text supplies them.
 - The mod SHALL collapse the messages on the next activation.
 - The mod SHALL keep the same error text in `/factory show` as [FR-018](./FR-018-errors-visible-not-fatal.md) requires.
