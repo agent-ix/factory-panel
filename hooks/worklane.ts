@@ -43,7 +43,7 @@ export function pollLanes($: EngineInterface, options: Options): Promise<boolean
   if (originOf(options.prometheusUrl) === undefined) return Promise.resolve(true)
   return track($, 'workLanes', async () => {
     try {
-      const [states, reasons, free, first] = await Promise.all([QUERIES.states, QUERIES.reasons, QUERIES.free, QUERIES.first].map(q => promQuery($, options.prometheusUrl, q)))
+      const [states, reasons, free, first] = await Promise.all([QUERIES.states, QUERIES.reasons, QUERIES.free, QUERIES.first].map(q => promQuery($, options.prometheusUrl, q, 'workLanes')))
       const now = await $.clock.now()
       const reasonOf = new Map([...newestByLane(reasons!, now).values()].map(l => [l.lane, l.labels.reason ?? null] as const))
       const lastFree = timesByLane(free!, Math.max)

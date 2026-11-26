@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { home } from './selection'
-import { errorText, runJson, runText, writeWhole } from './shared'
+import { errorText, runJson, runText, spawn, writeWhole } from './shared'
 
 // The leads' work reports, read once for the Focus and the Work view. A lead on another machine is reached through
 // ssh and answers in several seconds, so the reads are few at a time and given the time they take; a report that
@@ -17,6 +17,16 @@ export const LEAD_TIMEOUT_MS = 20_000
 export const LEAD_CONCURRENCY = 8
 /** A report read this lately is answered to the other view without a second read. */
 export const LEAD_REUSE_MS = 30_000
+/**
+ * What the Focus view draws of a lead, the focus it works on, changes when the lead takes up other work: a report read
+ * this lately answers it without a read, unless the refresh key or a choice asks anew. The Work view, which draws the
+ * lead's agents, keeps LEAD_REUSE_MS, and the Focus view takes the reports it read.
+ */
+export const FOCUS_REUSE_MS = 10 * 60 * 1000
+/** The lead list `agent-msg who` gave is answered to every view, the Message pane among them, for this long. */
+export const WHO_REUSE_MS = 60_000
+/** A report whose latest read failed is asked again this soon, whatever the reuse asked for. */
+export const FAILED_REUSE_MS = 30_000
 /** A report of another machine that any session read this lately is not read again. */
 export const SHARED_REUSE_MS = 50_000
 /** A lead on another machine that reported nothing is asked again only after this long. */
@@ -54,6 +64,8 @@ type Held = LeadRead & { triedAt: number }
 const held = new Map<string, Held>()
 const underWay = new Map<string, Promise<LeadRead>>()
 let listing: Promise<string[]> | null = null
+/** The last lead list read well, and when. */
+let listed: { at: number; leads: string[] } | null = null
 let busy = 0
 const waiting: (() => void)[] = []
 
@@ -64,6 +76,7 @@ export function resetLeads(): void {
   here = null
   lock = Promise.resolve()
   listing = null
+  listed = null
   busy = 0
   waiting.length = 0
 }
@@ -79,18 +92,23 @@ export async function twice<T>(run: () => Promise<T>): Promise<T> {
 }
 
 async function list($: EngineInterface): Promise<string[]> {
-  const text = await twice(() => runText($, ['agent-msg', 'who'], RELAY_TIMEOUT_MS))
+  const text = await twice(() => runText($, ['agent-msg', 'who'], RELAY_TIMEOUT_MS, 'who'))
   const leads = text
     .split('\n')
     .map(line => line.trim().split(/\s+/)[0] ?? '')
     .filter(address => address.split(':').length === 3)
   // A lead no longer listed is forgotten, so that it does not come back with an old report.
   for (const address of held.keys()) if (!leads.includes(address)) held.delete(address)
+  listed = { at: await $.clock.now(), leads }
   return leads
 }
 
-/** The verified lead addresses `agent-msg who` lists; unverified rows start with `-`. Askers at once share one call. */
-export function listLeads($: EngineInterface): Promise<string[]> {
+/**
+ * The verified lead addresses `agent-msg who` lists; unverified rows start with `-`. Askers at once share one call, and
+ * a list read less than `reuseMs` ago (0 for the refresh key) answers without one.
+ */
+export async function listLeads($: EngineInterface, reuseMs = WHO_REUSE_MS): Promise<string[]> {
+  if (listing === null && listed !== null && reuseMs > 0 && (await $.clock.now()) - listed.at < reuseMs) return listed.leads
   listing ??= list($).finally(() => {
     listing = null
   })
@@ -122,7 +140,7 @@ const SHARED_FILE = 'lead-reports.json'
 let here: Promise<string> | null = null
 /** This machine's short name, lower-case; '' where it cannot be read, and then every lead is taken as another's. */
 function hostName($: EngineInterface): Promise<string> {
-  here ??= $.process.run(['hostname', '-s'], { timeoutMs: 3_000 }).then(
+  here ??= spawn($, ['hostname', '-s'], 3_000).then(
     ran => ran.stdout.trim().toLowerCase(),
     () => '',
   )
@@ -170,7 +188,7 @@ function claim($: EngineInterface, address: string, reuseMs: number): Promise<Tu
     const isLive = (e: Shared | undefined): boolean => e !== undefined && e.claimAt !== null && now - e.claimAt < CLAIM_MS
     // `reuseMs` 0 is the refresh key: it reads anew, though never a lead being read.
     if (reuseMs > 0 && entry !== undefined && entry.triedAt !== null) {
-      const fresh = entry.report === null && entry.error === null ? SILENT_REMOTE_MS : Math.max(reuseMs, SHARED_REUSE_MS)
+      const fresh = entry.report === null && entry.error === null ? Math.max(reuseMs, SILENT_REMOTE_MS) : entry.error !== null ? SHARED_REUSE_MS : Math.max(reuseMs, SHARED_REUSE_MS)
       if (now - entry.triedAt < fresh) return { read: false, entry, isBusy: false }
     }
     if (isLive(entry) || Object.values(file).filter(isLive).length >= LEAD_CONCURRENCY) return { read: false, entry, isBusy: true }
@@ -196,7 +214,7 @@ async function ask($: EngineInterface, address: string, reuseMs: number): Promis
   const triedAt = await $.clock.now()
   let next: Held
   try {
-    const report = await twice(() => runJson<WorkReport | null>($, ['agent-msg', 'work', '--lead', address, 'show'], LEAD_TIMEOUT_MS))
+    const report = await twice(() => runJson<WorkReport | null>($, ['agent-msg', 'work', '--lead', address, 'show'], LEAD_TIMEOUT_MS, 'leads'))
     next = { address, report, at: await $.clock.now(), error: null, triedAt }
   } catch (error) {
     // The report last read, by this session or by another.
@@ -237,7 +255,9 @@ export async function readLead($: EngineInterface, address: string, reuseMs = LE
   const running = underWay.get(address)
   if (running !== undefined) return running
   const had = held.get(address)
-  if (had !== undefined && (await $.clock.now()) - had.triedAt < reuseMs) return had
+  // A lead whose read failed is asked again soon; one that answered is answered from its report for `reuseMs`.
+  const reuse = had?.error === null || had === undefined ? reuseMs : Math.min(reuseMs, FAILED_REUSE_MS)
+  if (had !== undefined && (await $.clock.now()) - had.triedAt < reuse) return had
   // Another asker may have started the read while the clock was asked.
   let read = underWay.get(address)
   if (read === undefined) {

@@ -1,14 +1,16 @@
 import type { EngineInterface, Register, RenderViewport } from 'claude-code'
 
 import { PANE_SPEC as ESCALATIONS_PANE, registerEscalations, startEscalations } from './escalations'
-import { PANE_SPEC as FACTORY_PANE, registerFactory, startFactory } from './factory'
+import { PANE_SPEC as FACTORY_PANE, factorySources, registerFactory, startFactory } from './factory'
 import { PANE_SPEC as FOCUS_PANE, registerFocus, resetFocus, startFocus } from './focus'
-import { PANE_SPEC as RELAY_PANE, registerRelay, startRelay } from './relay'
+import { PANE_SPEC as RELAY_PANE, registerRelay, resetRelay, startRelay } from './relay'
 import { PANE_SPEC as TEAM_PANE, registerTeam, startTeam } from './team'
 import { PANE_SPEC as WORK_PANE, registerWork, resetWork, workSources } from './workview'
 import { resolveEndpoints } from './endpoints'
 import { resetLeads } from './leads'
 import { bandPlan, renderBand, startBand, syncStatus } from './band'
+import { resetLinearSample } from './linear'
+import { resetMeter, resetMeterFile } from './meter'
 import { resetSchedule, setRefresh } from './schedule'
 import { resetSelection } from './selection'
 import { registerRouter } from './router'
@@ -57,7 +59,7 @@ export const register: Register = (on, rawOptions) => {
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (isViewId(e.requestId)) {
       const isWidget = e.props.placement === 'widget'
-      const sources = e.requestId === 'work' ? await workSources($, isWidget) : paneSources(e.requestId, isWidget)
+      const sources = e.requestId === 'work' ? await workSources($, isWidget) : e.requestId === 'factory' ? await factorySources($, isWidget) : paneSources(e.requestId, isWidget)
       await drawn($, options, e.requestId, sources, { client: e.surface, placement: e.props.placement })
     }
     return next(e)
@@ -81,6 +83,10 @@ export const register: Register = (on, rawOptions) => {
     resetWork()
     resetSchedule()
     resetVisible()
+    resetMeter()
+    resetRelay()
+    resetMeterFile()
+    resetLinearSample()
     // The band paints from the fallback at once; who the session is, what a skill declared and
     // what the user chose follow when `agent-msg whoami` and the files answer (never waited for).
     // A session with nobody at it draws nothing and asks nothing.

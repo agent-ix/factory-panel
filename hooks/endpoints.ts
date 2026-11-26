@@ -1,5 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
+import { spawn } from './shared'
 import type { Options } from './shared'
 
 // Where the panes read metrics. Highest first: the plugin's own setting, the shared ix config
@@ -29,7 +30,7 @@ export const grafanaFrom = (prometheus: string): string | undefined => {
 
 async function ixConfig($: EngineInterface, key: string): Promise<string | undefined> {
   try {
-    const ran = await $.process.run(['ix', 'config', 'get', key], { timeoutMs: 5_000 })
+    const ran = await spawn($, ['ix', 'config', 'get', key], 5_000)
     if (ran.exitCode !== 0) return undefined
     // An unset key prints a notice; only a URL counts as a value, wherever the CLI puts it.
     const plain = ran.stdout.replace(/\u001b\[[0-9;]*m/g, '')
@@ -42,7 +43,7 @@ async function ixConfig($: EngineInterface, key: string): Promise<string | undef
 
 async function relayEndpoint($: EngineInterface): Promise<string | undefined> {
   try {
-    const home = (await $.process.run(['printenv', 'HOME'], { timeoutMs: 5_000 })).stdout.trim()
+    const home = (await spawn($, ['printenv', 'HOME'], 5_000)).stdout.trim()
     if (home === '') return undefined
     const toml = await $.fs.read(`${home}/.ix/relay/config.toml`)
     const url = otlpEndpointOf(typeof toml === 'string' ? toml : '')

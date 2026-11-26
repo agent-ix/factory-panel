@@ -718,7 +718,7 @@ test('only an old cache is read once as the initial cache, later writes go to th
   trace("FR-015-AC-2")
   const w = world(on, true)
   fullWorld(w)
-  const old = JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at: Date.UTC(2026, 10, 24, 11, 50), claimAt: null, data: { agents: [{ team: 'QSL', agent: 'draco:QSL:code', status: 'idle', machine: 'draco', paneId: '', title: '', lastTurnAgeSecs: 1 }], notes: [] } } } })
+  const old = JSON.stringify({ backoffUntil: null, entries: { 'agents:QSL': { at: Date.UTC(2026, 10, 24, 11, 59, 30), claimAt: null, data: { agents: [{ team: 'QSL', agent: 'draco:QSL:code', status: 'idle', machine: 'draco', paneId: '', title: '', lastTurnAgeSecs: 1 }], notes: [] } } } })
   w.files.set(`${HOME_CACHE}/linear-gate.json`, old)
   // Without the work module, whose read of single tickets would be the first write.
   w.files.set(`${FP}/features/default.json`, JSON.stringify({ modules: ['local', 'focus', 'lead', 'lanes'] }))
@@ -726,7 +726,8 @@ test('only an old cache is read once as the initial cache, later writes go to th
   const standing = await drawBand($, CLASSIC)
   await w.clock!.advance(1000)
   await settle()
-  // The old content answered: ix-board was not asked, and the cached agent shows (1 idle).
+  // The old content answered: ix-board was not asked, and the cached agent shows (1 idle). The agents are shared for
+  // a minute, so the cached read is 30 seconds old.
   expect(w.ran.filter(l => l.startsWith('ix-board'))).toEqual([])
   expect(w.files.has(`${FP}/linear-gate.json`)).toBe(false)
   const ui = await drawBand($, CLASSIC)

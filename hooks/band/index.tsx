@@ -5,7 +5,7 @@ import type { BoardView, Escalation, Freshness, FocusMeta, FocusView, Machine, R
 import { getSelection, takeBandNote, modulesToDraw, scopeKeyOf, scopeOf } from '../selection'
 import { focusNotice } from '../focuschoice'
 import { focusFilter } from '../work'
-import { errorText } from '../shared'
+import { errorText, spawn } from '../shared'
 import type { Options } from '../shared'
 import { showView, isViewId } from '../views'
 import { buildCells, digitFor, scopeNotes } from './modules'
@@ -39,7 +39,7 @@ let lastStatus: string | undefined
 /** Reads the host name. Never throws. */
 export async function startBand($: EngineInterface): Promise<void> {
   try {
-    const host = await $.process.run(['hostname', '-s'], { timeoutMs: 3000 })
+    const host = await spawn($, ['hostname', '-s'], 3000)
     localMachine = host.stdout.trim().toLowerCase()
   } catch (error) {
     $.ui.log(`factory-panel: hostname failed: ${errorText(error)}`, { to: 'debug' })

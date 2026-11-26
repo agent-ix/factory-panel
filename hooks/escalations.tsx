@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Escalation, EscalationFilter, EscalationStatus, RelayMeta } from '../types'
-import { CARD_BG, CARD_BG_OPEN, ago, errorText, runJson, runText } from './shared'
+import { CARD_BG, CARD_BG_OPEN, ago, errorText, limiter, runJson, runText } from './shared'
 import type { Options } from './shared'
-import { track } from './schedule'
+import { markStale, track } from './schedule'
 import { ACCENT, DOING } from './ui/glyphs'
 
 // The Escalations pane: the operator's inbox of escalations from the leads, through `agent-msg`.
@@ -144,32 +144,43 @@ function viewOf(all: readonly Escalation[], hidden: readonly string[], filter: E
 
 // ---------------------------------------------------------------- polling
 
-/** Reads the escalations; false when the list could not be read. */
+/** At most this many `escalation show` run at once, however many rows lack their detail. */
+export const DETAIL_CONCURRENCY = 4
+const detailTurn = limiter(DETAIL_CONCURRENCY)
+/** The read of the list under way, which a read of the detail waits for. */
+let listing: Promise<boolean> | null = null
+
+/** Reads the list of escalations; false when it could not be read. The detail of the rows is a source of its own. */
 export function pollEscalations($: EngineInterface): Promise<boolean> {
-  return track($, 'escalations', () => readEscalations($))
+  const read = track($, 'escalations', () => readEscalations($))
+  listing = read
+  return read.finally(() => {
+    if (listing === read) listing = null
+  })
+}
+
+/** The list, then the detail of the rows the pane draws: what its refresh key and its actions read. */
+async function refreshEscalations($: EngineInterface): Promise<void> {
+  await pollEscalations($)
+  markStale('escalationDetail')
+  await pollEscalationDetail($)
 }
 
 async function readEscalations($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   const started = ++tick
   try {
-    const listed = parseEscalationList(await runText($, ['agent-msg', 'escalations'], 20_000))
+    const listed = parseEscalationList(await runText($, ['agent-msg', 'escalations'], 20_000, 'escalations'))
     const known = new Map((await read($, escalations)).map(x => [x.id, x]))
-    // Detail is read once per escalation, and again when its status moves.
-    const merged = await Promise.all(
-      listed.map(async x => {
-        const had = known.get(x.id)
-        // A row marked resolved here has its decision read from the relay once the relay lists it resolved.
-        const confirming = x.status === 'resolved' && markedAt.has(x.id)
-        if (had?.hasDetail && had.status === x.status && !confirming) return { ...had, ...x, ...pick(had) }
-        try {
-          const detail = parseEscalationDetail(await runText($, ['agent-msg', 'escalation', 'show', x.id], 20_000))
-          return { ...x, ...detail }
-        } catch {
-          return had ? { ...had, ...x } : x
-        }
-      }),
-    )
+    // Detail is read once per escalation, and again when its status moves; a row whose detail is due keeps what was
+    // read of it until then.
+    const merged = listed.map(x => {
+      const had = known.get(x.id)
+      // A row marked resolved here has its decision read from the relay once the relay lists it resolved.
+      const confirming = x.status === 'resolved' && markedAt.has(x.id)
+      if (had?.hasDetail && had.status === x.status && !confirming) return { ...had, ...x, ...pick(had) }
+      return had ? { ...had, ...x, ...pick(had), hasDetail: false } : x
+    })
     // Newest first: ids count up as escalations are filed.
     merged.sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)))
     // A row marked resolved after this poll began keeps its local mark over this poll's older listing.
@@ -179,11 +190,51 @@ async function readEscalations($: EngineInterface): Promise<boolean> {
     for (const [id, at] of markedAt) if (at < started && merged.some(x => x.id === id && x.status === 'resolved')) markedAt.delete(id)
     await settleHidden($, merged)
     await update($, escalationMeta, m => ({ ...m, at: now, error: null }))
+    // A row whose detail is missing is read at the next drawing of the pane.
+    if (merged.some(x => !x.hasDetail)) markStale('escalationDetail')
     return true
   } catch (error) {
     await update($, escalationMeta, m => ({ ...m, error: errorText(error) }))
     return false
   }
+}
+
+/**
+ * The rows whose detail the pane draws or acts on: those of the shown view, the open rows (the header counts the
+ * recommendations Resolve all sends) and the selected row. A resolved or hidden row in another view is not read.
+ */
+function detailWanted(all: readonly Escalation[], hidden: readonly string[], filter: EscalationFilter, selected: string): Escalation[] {
+  const ids = new Set([...viewOf(all, hidden, filter), ...viewOf(all, hidden, 'open')].map(x => x.id))
+  if (selected !== '') ids.add(selected)
+  return all.filter(x => ids.has(x.id))
+}
+
+/** Reads the detail of the rows the Escalations pane draws that lack it, DETAIL_CONCURRENCY at a time. */
+export function pollEscalationDetail($: EngineInterface): Promise<boolean> {
+  return track($, 'escalationDetail', async () => {
+    // The list under way decides which rows there are.
+    if (listing !== null) await listing.catch(() => undefined)
+    const [all, hidden, filter, selected] = await Promise.all([read($, escalations), read($, escalationHidden), read($, escalationFilter), read($, escalationSelected)])
+    const missing = detailWanted(all, hidden, filter, selected).filter(x => !x.hasDetail)
+    let ok = true
+    const details = await Promise.all(
+      missing.map(x =>
+        detailTurn(async () => {
+          try {
+            return { id: x.id, status: x.status, detail: parseEscalationDetail(await runText($, ['agent-msg', 'escalation', 'show', x.id], 20_000, 'escalationDetail')) }
+          } catch {
+            ok = false
+            return null
+          }
+        }),
+      ),
+    )
+    const got = new Map(details.flatMap(d => (d === null ? [] : [[d.id, d] as const])))
+    // Merged into the rows as they are now: a list read or a local mark meanwhile is kept, and a detail read for a
+    // status that has moved since is left for the next read.
+    if (got.size > 0) await update($, escalations, current => current.map(x => (got.get(x.id)?.status === x.status ? { ...x, ...got.get(x.id)!.detail } : x)))
+    return ok
+  })
 }
 
 /**
@@ -255,6 +306,8 @@ async function selectEscalation($: EngineInterface, id: string): Promise<void> {
   await update($, escalationSelected, () => (current === id ? '' : id))
   await update($, escalationDraft, () => '')
   await update($, escalationConfirm, () => '')
+  // A row opened from a view whose detail was not read is read at the next drawing.
+  markStale('escalationDetail')
   if (current !== id) void lookupAddress($, id)
 }
 
@@ -375,6 +428,7 @@ async function hideOne($: EngineInterface, id: string): Promise<void> {
 }
 
 async function restoreOne($: EngineInterface, id: string): Promise<void> {
+  markStale('escalationDetail')
   const ok = await changeHidden($, b => b.filter(h => idOf(h) !== id))
   await update($, escalationSelected, () => '')
   if (ok) await notice($, `Restored ${id}.`)
@@ -398,6 +452,8 @@ async function hideAll($: EngineInterface): Promise<void> {
 }
 
 async function setFilter($: EngineInterface, filter: EscalationFilter): Promise<void> {
+  // The rows of another view are read at the next drawing where their detail was not.
+  markStale('escalationDetail')
   await update($, escalationFilter, () => filter)
   await update($, escalationSelected, () => '')
   await update($, escalationConfirm, () => '')
@@ -440,7 +496,7 @@ async function resolveEscalation($: EngineInterface, id: string): Promise<void> 
       await notice($, `Resolve ${id} failed: ${errorText(error)}`)
     }
   })
-  void pollEscalations($)
+  void refreshEscalations($)
 }
 
 /** One press: resolves with the escalation's own recommendation. */
@@ -461,7 +517,7 @@ async function resolveRecommended($: EngineInterface, id: string): Promise<void>
       await notice($, `Resolve ${id} failed: ${errorText(error)}`)
     }
   })
-  if (ran) void pollEscalations($)
+  if (ran) void refreshEscalations($)
 }
 
 /** What a Resolve all press does: wait while a send runs (the confirm is kept), send when the confirm is this exact set's, else arm it. */
@@ -533,7 +589,7 @@ async function resolveAll($: EngineInterface): Promise<void> {
     await update($, escalationNotice, () => 'Wait for the current send to finish.')
     return
   }
-  void pollEscalations($)
+  void refreshEscalations($)
 }
 
 async function investigateEscalation($: EngineInterface, id: string): Promise<void> {
@@ -546,7 +602,7 @@ async function investigateEscalation($: EngineInterface, id: string): Promise<vo
       await notice($, `Investigate ${id} failed: ${errorText(error)}`)
     }
   })
-  void pollEscalations($)
+  void refreshEscalations($)
 }
 
 async function cancelArmed($: EngineInterface): Promise<void> {
@@ -841,7 +897,7 @@ export function registerEscalations(on: On, _options: Options): void {
           <Text color={waiting > 0 ? 'warning' : 'subtle'} weight="semibold">
             {waiting} waiting
           </Text>
-          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void pollEscalations($)} />
+          <Button key="refresh" plain label="↻" hotkey="r" onPress={() => void refreshEscalations($)} />
         </Box>
 
         <Box flexDirection="row" justifyContent="space-between" columnGap={2} flexWrap="wrap">

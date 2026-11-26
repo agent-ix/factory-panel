@@ -7,7 +7,7 @@ import { resetSources, sourceFailed } from '../hooks/sources'
 import { showText } from '../hooks/router'
 import { getSelection } from '../hooks/selection'
 import { BAD_MILESTONE, CLASSIC, NEVER, bandCells, drawBand, fake$, out, report, roadmapJson, startSession, statusJson, world, pid, reportsProject } from './world'
-import { LEAD, MIN, board, choose, hides, lead, look, onScreen, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
+import { LEAD, MIN, board, hides, lead, look, onScreen, pageOf, paneLines, seed, shows, started, statusCalls } from './focus-kit'
 import { record } from './focus-kit'
 
 const P_A = pid(21)
@@ -70,11 +70,12 @@ test('ix-board failing is shown and the summary is drawn while the metrics answe
   expect(await shownText($)).toMatch(/^ {2}ix-board: ix-board: authentication failed$/m)
 })
 
-test('agent-msg work failing is shown while the progress of a named focus is drawn', async ($, on) => {
+test('agent-msg work failing for one lead is shown while the progress of another lead’s focus is drawn', async ($, on) => {
   trace("FR-018-AC-2")
   const w = world(on, true)
   w.leads.set(LEAD, undefined) // listed by `agent-msg who`, with a work report that cannot be read
-  choose(w, `project:${P_B}`)
+  // A chosen focus Linear names reads no lead report (FR-027), so the progress drawn is another lead's focus.
+  w.leads.set('draco:QSL:arch', report('draco:QSL:arch', 'Beta work', ['running'], { projects: [P_B] }))
   const chunk = w.stub.value
   w.stub.value = (argv, init) => (argv.join(' ') === `ix-board --json project-chunk ${P_B}` ? out(JSON.stringify({ name: 'Beta' })) : chunk?.(argv, init))
   board(w, { combined: () => pageOf('Payments ledger', 5, 10) })
@@ -92,6 +93,8 @@ test('Prometheus that does not answer leaves the Focus pane and the lanes drawn 
   w.fetch.value = () => w.clock!.sleep(60_000).then(() => { throw new Error('too late') })
   await started($, w)
   await onScreen($, 'factory')
+  // The lanes are read while the ix-board chip is open (FR-027).
+  await look($, 'factory', ui => ui.press({ key: 'board' }))
   await w.clock!.advance(1000)
   await w.clock!.advance(5000)
   shows(await paneLines($), /^Release train summary$/)

@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import { errorText, writeWhole } from './shared'
+import { isMetering, linearCounters, meter } from './meter'
+import { errorText, spawn, writeWhole } from './shared'
 
 // Every ix-board read refreshes ix-board's cache of the whole Linear workspace once it is five
 // minutes old, and this mod loads in every session. So the panes share one gate, in a file every
@@ -10,7 +11,7 @@ import { errorText, writeWhole } from './shared'
 //
 // The file is written whole (a temporary file, renamed), and a write drops what nobody uses any more.
 
-/** Every gated read of Linear, `ix-board agents` included, runs at most once in this long across all sessions. */
+/** Every gated read of Linear runs at most once in this long across all sessions. */
 export const BOARD_INTERVAL_MS = 30 * 60 * 1000
 /** A fetch another session claimed is trusted to finish within this long. */
 const CLAIM_MS = 4 * 60 * 1000
@@ -69,7 +70,7 @@ const inFlight = new Map<string, Promise<Gated<unknown>>>()
 
 async function pathOf($: EngineInterface): Promise<string> {
   if (gatePath) return gatePath
-  const ran = await $.process.run(['printenv', 'HOME'], { timeoutMs: 5_000 })
+  const ran = await spawn($, ['printenv', 'HOME'], 5_000)
   const home = ran.stdout.trim()
   oldPath = `${home}/.cache/factory-panel/${GATE_FILE}`
   gatePath = `${home}/.ix/factory-panel/${GATE_FILE}`
@@ -135,6 +136,13 @@ export type GateOptions<T> = {
   repeats?: (data: T) => boolean
   /** true for a held result that lacks what this build draws, as an older build wrote it: it is read again as though due */
   outdated?: (data: T) => boolean
+  /**
+   * How long a result is shared before it is read again; BOARD_INTERVAL_MS unless given. A read that makes no Linear
+   * call (`ix-board agents` reads herdr) is given its own, shorter one, and `linear: false`.
+   */
+  intervalMs?: number
+  /** false for a read that makes no Linear call: Linear's rate limit neither holds it nor is set by it */
+  linear?: boolean
 }
 
 /**
@@ -157,17 +165,46 @@ export function gatedBoard<T>(
   return started
 }
 
+/** The row a gate key is counted under: its kind (`agents`, `tickets`...), not the teams or projects after the colon. */
+const gateName = (key: string): string => `gate:${key.split(':')[0]}`
+
+/** Linear's counters as of the last sample; the first sample is only the baseline. */
+let lastCounters: { requests: number; complexity: number } | null = null
+
+/** After a gated Linear read really ran: what ix-board's cache status says it spent. Only where FACTORY_PANEL_METER is set. */
+async function sampleLinear($: EngineInterface, name: string): Promise<void> {
+  try {
+    if (!(await isMetering($))) return
+    const ran = await spawn($, ['ix-board', '--json', 'cache', 'status'], 10_000, 'meter')
+    const now = linearCounters(ran.stdout)
+    if (now === null) return
+    // A counter that went down started a new window: what was spent since is not known, so nothing is added.
+    if (lastCounters !== null) meter.linear(name, Math.max(0, now.requests - lastCounters.requests), Math.max(0, now.complexity - lastCounters.complexity))
+    lastCounters = now
+  } catch {
+    // The meter is a side channel.
+  }
+}
+
+/** Forgets the last Linear sample; a new session has none. */
+export const resetLinearSample = (): void => void (lastCounters = null)
+
 async function gate<T>(
   $: EngineInterface,
   key: string,
   fetch: () => Promise<T>,
   opts: GateOptions<T>,
 ): Promise<Gated<T>> {
+  const name = gateName(key)
+  const isLinear = opts.linear !== false
+  const interval = opts.intervalMs ?? BOARD_INTERVAL_MS
+  // A failure is held for UNKEPT_TTL_MS, or the whole interval where that is shorter.
+  const unkeptTtl = Math.min(UNKEPT_TTL_MS, interval)
   const now = await $.clock.now()
   const g = await load($)
   const had = g.entries[key] ?? { at: null, claimAt: null, data: null }
   // A read that failed outright keeps saying so while it is held.
-  const cached = (error: string | null = had.unkept === true ? (had.error ?? null) : null, backoffUntil = g.backoffUntil): Gated<T> => ({
+  const cached = (error: string | null = had.unkept === true ? (had.error ?? null) : null, backoffUntil = isLinear ? g.backoffUntil : null): Gated<T> => ({
     data: had.data as T | null,
     at: had.at,
     held: had.unkept === true,
@@ -176,17 +213,19 @@ async function gate<T>(
     error,
   })
 
-  if (g.backoffUntil !== null && g.backoffUntil > now) return cached()
+  // Linear's rate limit holds every read that calls Linear; one that makes no Linear call is not held by it.
+  const backoff = isLinear ? g.backoffUntil : null
+  if (backoff !== null && backoff > now) return (meter.gate(name, 'backoff'), cached())
   // Only an answer that was kept: after a failure the hold protects ix-board, whichever build met it.
   const isOutdated = had.unkept !== true && had.data !== null && opts.outdated?.(had.data as T) === true
-  const wait = opts.manual ? MANUAL_MIN_MS : BOARD_INTERVAL_MS
+  const wait = opts.manual ? Math.min(MANUAL_MIN_MS, interval) : interval
   if (had.unkept === true && had.holdMs !== undefined && had.triedAt !== undefined) {
     // An inferred source error is held for its own time; a manual refresh asks it after 60 seconds.
-    if (now - had.triedAt < (opts.manual ? MANUAL_MIN_MS : had.holdMs)) return cached()
+    if (now - had.triedAt < (opts.manual ? MANUAL_MIN_MS : had.holdMs)) return (meter.gate(name, 'held'), cached())
   }
   // A manual refresh asks again at once when the last one was only held after a failure.
-  else if (!isOutdated && had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return cached()
-  if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return cached()
+  else if (!isOutdated && had.at !== null && now - had.at < wait && !(opts.manual && had.unkept === true)) return (meter.gate(name, had.unkept === true ? 'held' : 'hit'), cached())
+  if (had.claimAt !== null && now - had.claimAt < CLAIM_MS) return (meter.gate(name, 'claimed-elsewhere'), cached())
 
   const claim = now + Math.random() / 10
   // With the gate file unwritable no claim can be made or checked; this session fetches on its own.
@@ -199,9 +238,11 @@ async function gate<T>(
     )
     return !claimed || (await load($)).entries[key]?.claimAt === claim
   })
-  if (!taken) return cached()
+  if (!taken) return (meter.gate(name, 'claimed-elsewhere'), cached())
+  meter.gate(name, 'fetched')
   try {
     const data = await fetch()
+    if (isLinear) await sampleLinear($, name)
     const at = await $.clock.now()
     // A failed save must not throw the fetched data away: this session still shows it.
     // A result that is not to be kept is shown, held for UNKEPT_TTL_MS, and asked again after it.
@@ -214,18 +255,19 @@ async function gate<T>(
       save($, f => {
         f.entries[key] = keep
           ? { at, claimAt: null, data }
-          : { at: at - (BOARD_INTERVAL_MS - (holdMs ?? UNKEPT_TTL_MS)), claimAt: null, data, unkept: true, ...(streak > 0 ? { streak } : {}), ...(holdMs === undefined ? {} : { holdMs, triedAt: at }) }
+          : { at: at - (interval - (holdMs ?? unkeptTtl)), claimAt: null, data, unkept: true, ...(streak > 0 ? { streak } : {}), ...(holdMs === undefined ? {} : { holdMs, triedAt: at }) }
       }),
     ).catch(() => undefined)
     return { data, at, backoffUntil: null, error: null }
   } catch (error) {
+    if (isLinear) await sampleLinear($, name)
     const text = errorText(error)
-    const retry = retryAfterMs(text)
+    const retry = isLinear ? retryAfterMs(text) : null
     const until = retry !== null ? now + retry : null
     await exclusive(() =>
       save($, f => {
         // A read that failed outright is held a few minutes like any source error; Linear's own wait holds every read.
-        if (until === null) f.entries[key] = { data: had.data, at: now - (BOARD_INTERVAL_MS - UNKEPT_TTL_MS), claimAt: null, unkept: true, error: text, ...(had.streak === undefined ? {} : { streak: had.streak }) }
+        if (until === null) f.entries[key] = { data: had.data, at: now - (interval - unkeptTtl), claimAt: null, unkept: true, error: text, ...(had.streak === undefined ? {} : { streak: had.streak }) }
         else {
           f.entries[key] = { ...had, claimAt: null }
           f.backoffUntil = until

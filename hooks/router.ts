@@ -9,6 +9,7 @@ import type { Feature, Selection } from './selection'
 import { defaultView, isViewId, showView } from './views'
 import type { ViewId } from './views'
 import { choicesText, labelOf } from './focuschoice'
+import { fetchTable } from './meter'
 import { ago } from './shared'
 import type { Options } from './shared'
 
@@ -37,6 +38,7 @@ const CHOICE_HELP = [
   '    /factory teams QSL,ENG       the teams whose leads and lanes show; all is every team',
   '    /factory hosts all           all | local machines',
   '    /factory show                what is shown and where each value came from',
+  '    /factory show fetch          what the mod has read since the session started',
   '    /factory reset               back to the skill\'s selection or the automatic view',
 ].join('\n')
 
@@ -186,6 +188,8 @@ export async function runFactory($: EngineInterface, options: Options, args: str
   const text = args.trim()
   const command = (text.split(/\s+/)[0] ?? '').toLowerCase()
   const rest = text.slice(command.length).trim()
+  // What the mod has read so far, from memory: it starts no read and no process of its own.
+  if (command === 'show' && rest.toLowerCase() === 'fetch') return fetchTable()
   // Every command sees the files as they are now, so a declaration written a moment ago counts.
   const sel = await refreshSelection($)
   if (command === 'help' && rest === '') return helpText(isFullscreen, sel, options.inlineView)

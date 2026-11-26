@@ -1,4 +1,5 @@
 import type { EngineInterface } from 'claude-code'
+import { meter } from './meter'
 import { ACCENT, DOING, READY, TRACK } from './ui/glyphs'
 
 // ---------------------------------------------------------------- options
@@ -70,9 +71,9 @@ export const pausedText = (backoffUntil: number, now: number): string =>
 export async function writeWhole($: EngineInterface, path: string, text: string): Promise<void> {
   const temp = `${path}.${Math.random().toString(36).slice(2, 10)}.tmp`
   await $.fs.write(temp, text)
-  const moved = await $.process.run(['mv', '-f', temp, path], { timeoutMs: 5_000 })
+  const moved = await spawn($, ['mv', '-f', temp, path], 5_000)
   if (moved.exitCode === 0) return
-  await $.process.run(['rm', '-f', temp], { timeoutMs: 5_000 })
+  await spawn($, ['rm', '-f', temp], 5_000)
   throw new Error(moved.stderr.trim() || `could not write ${path}`)
 }
 
@@ -94,7 +95,21 @@ export function after($: EngineInterface, ms: number): Promise<true> {
     )
 }
 
-async function promGet<T>($: EngineInterface, url: string, body: string): Promise<T> {
+/** One Prometheus call, counted under `prometheus:<group>` with its round trip and the bytes it brought back. */
+async function promGet<T>($: EngineInterface, url: string, body: string, group: string): Promise<T> {
+  const began = Date.now()
+  let bytes = 0
+  let ok = false
+  try {
+    const data = await promCall<T>($, url, body, n => (bytes = n))
+    ok = true
+    return data
+  } finally {
+    meter.http(`prometheus:${group}`, Date.now() - began, bytes, ok)
+  }
+}
+
+async function promCall<T>($: EngineInterface, url: string, body: string, sized: (bytes: number) => void): Promise<T> {
   const timedOut = after($, PROMETHEUS_TIMEOUT_MS).then((): never => {
     throw new Error(`Prometheus timed out after ${PROMETHEUS_TIMEOUT_MS}ms`)
   })
@@ -106,6 +121,7 @@ async function promGet<T>($: EngineInterface, url: string, body: string): Promis
     }),
     timedOut,
   ])
+  sized(typeof response.text === 'string' ? response.text.length : 0)
   if (!response.ok) throw new Error(`Prometheus ${response.status}`)
   const parsed = JSON.parse(response.text) as { status: string; data?: T; error?: string }
   if (parsed.status !== 'success' || parsed.data === undefined) {
@@ -114,11 +130,13 @@ async function promGet<T>($: EngineInterface, url: string, body: string): Promis
   return parsed.data
 }
 
-export async function promQuery($: EngineInterface, base: string, query: string): Promise<Sample[]> {
+/** An instant query; `group` names the source it is counted under. */
+export async function promQuery($: EngineInterface, base: string, query: string, group: string): Promise<Sample[]> {
   const data = await promGet<{ result?: Sample[] }>(
     $,
     `${base.replace(/\/$/, '')}/api/v1/query`,
     `query=${encodeURIComponent(query)}`,
+    group,
   )
   return Array.isArray(data.result) ? data.result : []
 }
@@ -130,21 +148,36 @@ export async function promRange(
   query: string,
   seconds: number,
   step: number,
+  group: string,
 ): Promise<RangeSeries[]> {
   const end = Math.floor((await $.clock.now()) / 1000)
   const data = await promGet<{ result?: RangeSeries[] }>(
     $,
     `${base.replace(/\/$/, '')}/api/v1/query_range`,
     `query=${encodeURIComponent(query)}&start=${end - seconds}&end=${end}&step=${step}`,
+    group,
   )
   return Array.isArray(data.result) ? data.result : []
 }
 
 // ---------------------------------------------------------------- commands
 
+/**
+ * The one place the mod starts a host process, so that each is counted (hooks/meter.ts). `name` is the row it is
+ * counted under: the source behind it where the caller names one, else the program.
+ */
+export async function spawn($: EngineInterface, argv: readonly string[], timeoutMs: number, name: string = argv[0] ?? '?') {
+  const began = Date.now()
+  try {
+    return await $.process.run([...argv], { timeoutMs })
+  } finally {
+    meter.spawn(name, Date.now() - began)
+  }
+}
+
 /** Runs a host command and parses its standard output as JSON, whatever its exit code. */
-export async function runJson<T>($: EngineInterface, argv: string[], timeoutMs: number): Promise<T> {
-  const ran = await $.process.run(argv, { timeoutMs })
+export async function runJson<T>($: EngineInterface, argv: string[], timeoutMs: number, name?: string): Promise<T> {
+  const ran = await spawn($, argv, timeoutMs, name)
   try {
     return JSON.parse(ran.stdout) as T
   } catch {
@@ -154,8 +187,8 @@ export async function runJson<T>($: EngineInterface, argv: string[], timeoutMs: 
 }
 
 /** Runs a host command for its text; a non-zero exit throws with its last error line. */
-export async function runText($: EngineInterface, argv: string[], timeoutMs: number): Promise<string> {
-  const ran = await $.process.run(argv, { timeoutMs })
+export async function runText($: EngineInterface, argv: string[], timeoutMs: number, name?: string): Promise<string> {
+  const ran = await spawn($, argv, timeoutMs, name)
   if (ran.exitCode !== 0) {
     const why = ran.stderr.trim().split('\n').pop() || ran.stdout.trim().split('\n').pop()
     throw new Error(why || `${argv[0]} exited ${ran.exitCode}`)
@@ -290,4 +323,23 @@ export async function settlePanes($: EngineInterface, specs: readonly PaneSpec[]
 /** The specs an attach should open: those still open but unplaced, and any never opened. */
 export async function paneIdsToReopen($: EngineInterface): Promise<ReadonlySet<string>> {
   return new Set((await $.ui.panes()).filter(p => !p.isPlaced).map(p => p.id))
+}
+
+// ---------------------------------------------------------------- limits
+
+/** Runs at most `places` of the calls given to it at once; the rest wait in turn (the pattern of `limited` in hooks/board.ts). */
+export function limiter(places: number): <T>(run: () => Promise<T>) => Promise<T> {
+  let busy = 0
+  const waiting: (() => void)[] = []
+  return async <T>(run: () => Promise<T>): Promise<T> => {
+    if (busy < places) busy++
+    else await new Promise<void>(resolve => waiting.push(resolve))
+    try {
+      return await run()
+    } finally {
+      const next = waiting.shift()
+      if (next === undefined) busy--
+      else next()
+    }
+  }
 }

@@ -34,7 +34,7 @@ The mod SHALL key last-good records by project id, remember which projects belon
 - The mod SHALL prune an `initiatives` entry whose `seen_ms` is older than 24 hours.
 - The mod SHALL read the progress of a focus at most once in 30 minutes across all sessions on the machine, through the shared gate file `linear-gate.json`.
 - A cached progress refresh that another version of the mod made, without the tickets and activity this one keeps, SHALL be read again at once, so that a session running an older build cannot leave a newer one without them. A refresh held after a failure, one another session is reading, and every read under a rate limit SHALL be left to their hold.
-- The mod SHALL hold every other gated read of Linear, `ix-board agents` included, to the same 30 minutes, `ix-board agents` reading Linear's ready queue for teams with an idle agent.
+- The mod SHALL hold every other gated read of Linear to the same 30 minutes. `ix-board agents` reads herdr and makes no Linear call: it is shared for 60 seconds and is not held by Linear's rate limit ([FR-027](./FR-027-fetch-only-on-screen.md)).
 - A refresh with a failed project, initiative, milestone, ticket or roadmap read SHALL be kept for the same 30 minutes.
 - Where a source error cut a refresh short, the mod SHALL NOT call ix-board for that focus again for 5 minutes.
 - Where ix-board is not called during those 5 minutes, the mod SHALL mark the outcome as earlier.

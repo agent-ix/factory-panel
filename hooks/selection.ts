@@ -4,7 +4,7 @@ import { MODULE_IDS } from './band/modules'
 import type { ModuleId, Scope } from './band/modules'
 import { isDue, track } from './schedule'
 import { NOT_A_FOCUS, parseRef } from './focuschoice'
-import { errorText } from './shared'
+import { errorText, spawn } from './shared'
 
 // What the panel shows is selected per feature: modules, hosts, focus and teams. Each feature
 // takes the highest source that selects it: the user's choice (`/factory use|focus|teams|hosts`,
@@ -201,7 +201,7 @@ export function resetSelection(): void {
 
 export async function home($: EngineInterface): Promise<string> {
   if (homeDir !== undefined) return homeDir
-  const ran = await $.process.run(['printenv', 'HOME'], { timeoutMs: 5_000 })
+  const ran = await spawn($, ['printenv', 'HOME'], 5_000)
   homeDir = ran.stdout.trim()
   return homeDir
 }
@@ -214,7 +214,7 @@ export async function factoryDir($: EngineInterface): Promise<string> {
 /** Asks the relay who this session is; false when it could not say. */
 async function lookupIdentity($: EngineInterface): Promise<boolean> {
   try {
-    const who = await $.process.run(['agent-msg', 'whoami'], { timeoutMs: WHOAMI_TIMEOUT_MS })
+    const who = await spawn($, ['agent-msg', 'whoami'], WHOAMI_TIMEOUT_MS, 'selection')
     identity = who.exitCode === 0 ? parseIdentity(who.stdout) : { status: 'unknown' }
   } catch {
     identity = { status: 'unknown' }

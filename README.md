@@ -47,6 +47,7 @@ The features are the cells (`health`, `local`, `lanes`, `agents`, `spend`, `focu
 | `/factory teams QSL,ENG` | The teams whose leads and lanes show, `all` for every team (the default is your own). A team that matches nothing is kept and the band says so |
 | `/factory hosts all` | `all` shows every machine (and puts the host list first), `local` only this one |
 | `/factory show` | Prints each feature, its value and whether it came from you, a declaration or the default, with the session key |
+| `/factory show fetch` | Prints what the mod has read since the session started: by source, its reads, processes, HTTP calls, bytes, p50/p95 time, failures, slow answers, skipped reads and the outcomes of the shared gate. With `FACTORY_PANEL_METER=1` the same counts are written to `~/.ix/factory-panel/meter-<session>.json` every 5 minutes, with the Linear requests the gated reads spent |
 | `/factory reset` | Clears your choices |
 
 Teams and focus are two settings. Teams say whose leads are listed; the focus narrows their tickets and never adds a team. Both stand at the top of the Work tab, `Work   Teams: QSL, quoin ▾   Focus: FSL alpha ▾`, where pressing one changes it. There is no `own` or `team` focus: a stored one means `all`.

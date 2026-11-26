@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.10.3
+
+Fewer reads for the same panes, and a meter that says what was read. Data a minute or two old is fine, and a slow answer over the LAN or wifi is no longer treated as a failure.
+
+### What is read
+
+- `ix-board agents` reads herdr and makes no Linear call, so it is no longer held by the 30 minute Linear gate or by Linear's rate limit. The sessions of a machine share one read of it for 60 seconds. Lane states are at most a minute old, not 30.
+- The Factory pane reads `ix-board agents` only while its ix-board chip is open (the band's `lanes` and `lead` cells still read it), and reads it at once when the chip opens. Its `r` key reads it only while the chip is open.
+- The Escalations pane reads `escalation show` only for the rows of the shown view, the open rows and the selected row, at most 4 at once; a resolved row is read when its view is shown. The band's attention cell reads the list alone. With 100 escalations of which 10 are open: 10 detail reads instead of 100 at once.
+- A chosen focus that Linear names is drawn without reading any lead's work report.
+- The Focus view, and the band cells that draw it, read a lead's work report again after 10 minutes (was 30 seconds); a lead whose read failed after 30 seconds; `r` reads at once. The Work view keeps 30 seconds. With 11 leads the Focus pane runs at most 77 `work show` an hour instead of 330.
+- The Message pane reads 14 days of the log once a session, then only the minutes since its last read (was 14 days, 2000 messages, every minute). It shares one `agent-msg who` a minute with the Focus and Work views.
+- The Team pane's series are read every 5 minutes, their step (was every minute).
+- A read that answers slowly is next read after 1.5 times its interval, never more; only a failure doubles the wait. Prometheus counts as slow only past four times its own median and at least 2.5 seconds, not at a fixed 2.5 seconds: a Prometheus answering in 3 seconds is read every 15 seconds, not every 5 minutes.
+- The herdr or tmux view check runs only when a source other than the selection is due: a Focus pane in herdr checks every 2 minutes, not every 15 seconds.
+
+### Measurement
+
+- `/factory show fetch` prints, by source, the reads, processes, HTTP calls, bytes, p50/p95 time, failures, slow answers, skipped reads (not shown, off view, no metrics address) and the shared gate's outcomes since the session started. It starts no read.
+- With `FACTORY_PANEL_METER=1` the same counts are written to `~/.ix/factory-panel/meter-<session>.json` at most every 5 minutes, with the Linear requests and query complexity each gated Linear read spent, from `ix-board --json cache status`.
+
 ## 0.10.2
 
 The classic-layout `/factory help` no longer points at a line above the prompt and a number to type when the band is off, which is now the default. It says to type `/factory`; with `inlineView` set to `band` or `status` the earlier text is unchanged.

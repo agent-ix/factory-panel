@@ -5,6 +5,7 @@ import type { Announcement, RelayMeta } from '../types'
 import { ago, errorText, runText } from './shared'
 import type { Options } from './shared'
 import { track } from './schedule'
+import { listLeads } from './leads'
 
 // The Message pane (view id `relay`): a message to one lead or all of them, through `agent-msg`.
 // Escalations have their own pane.
@@ -44,6 +45,29 @@ export function parseAnnouncements(text: string): Announcement[] {
 
 // ---------------------------------------------------------------- polling
 
+/** The pane draws this many broadcasts. */
+const SHOWN = 30
+/** The first read looks this far back, for at most FULL_MAX messages of any kind. */
+const FULL_SINCE = '14d'
+const FULL_MAX = 2000
+/** A later read asks only for the minutes since the last read that answered, and a minute more, at most this many. */
+const SINCE_MAX = 500
+
+/** When the broadcasts were last read well; null before the first such read of the session. */
+let logReadAt: number | null = null
+
+/** Forgets the broadcasts' cursor; a new session reads them in full once. */
+export function resetRelay(): void {
+  logReadAt = null
+}
+
+/** The broadcasts newest first, each once: those just read, then those held. */
+const joined = (fresh: readonly Announcement[], held: readonly Announcement[]): Announcement[] => {
+  const keyOf = (a: Announcement) => `${a.at}\u0000${a.from}\u0000${a.text}`
+  const seen = new Set<string>()
+  return [...fresh, ...held].filter(a => !seen.has(keyOf(a)) && (seen.add(keyOf(a)), true)).slice(0, SHOWN)
+}
+
 /** Reads the broadcasts and the leads; false when either failed. */
 export function pollRelay($: EngineInterface): Promise<boolean> {
   return track($, 'announcements', () => readRelay($))
@@ -52,24 +76,27 @@ export function pollRelay($: EngineInterface): Promise<boolean> {
 async function readRelay($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
   const failed: string[] = []
-  const read1 = (what: string, argv: string[], timeoutMs: number) =>
-    runText($, argv, timeoutMs).catch(error => {
-      failed.push(`${what}: ${errorText(error)}`)
+  // The whole log once, then only what came since: the pane keeps the newest SHOWN broadcasts.
+  const minutes = logReadAt === null ? null : Math.ceil((now - logReadAt) / 60_000) + 1
+  const logArgs = minutes === null || minutes >= 14 * 24 * 60 ? ['--since', FULL_SINCE, '--max', String(FULL_MAX)] : ['--since', `${minutes}m`, '--max', String(SINCE_MAX)]
+  const [logText, leads] = await Promise.all([
+    runText($, ['agent-msg', 'log', ...logArgs], 30_000, 'announcements').catch(error => {
+      failed.push(`log: ${errorText(error)}`)
       return null
-    })
-  const [logText, whoText] = await Promise.all([
-    read1('log', ['agent-msg', 'log', '--since', '14d', '--max', '2000'], 30_000),
-    read1('who', ['agent-msg', 'who'], 20_000),
+    }),
+    // The lead list the Focus and Work views read too, shared for a minute.
+    listLeads($).catch(error => {
+      failed.push(`who: ${errorText(error)}`)
+      return null
+    }),
   ])
   // What was read is kept; what failed keeps its last value and the footer says why.
-  if (logText !== null) await update($, announcements, () => parseAnnouncements(logText).slice(0, 30))
-  if (whoText !== null) {
-    const leads = whoText
-      .split('\n')
-      .map(line => line.trim().split(/\s+/)[0] ?? '')
-      .filter(a => a.split(':').length === 3)
-    await update($, relayLeads, () => [...new Set(leads)].sort())
+  if (logText !== null) {
+    const isFull = minutes === null
+    await update($, announcements, held => joined(parseAnnouncements(logText), isFull ? [] : held))
+    logReadAt = now
   }
+  if (leads !== null) await update($, relayLeads, () => [...new Set(leads)].sort())
   await update($, relayMeta, m => ({ ...m, at: failed.length === 0 ? now : m.at, error: failed[0] ?? null }))
   return failed.length === 0
 }

@@ -1,8 +1,12 @@
 import type { EngineInterface } from 'claude-code'
 
+import { meter, readMedian } from './meter'
+
 // When each read of a source is next due. Nothing here starts a read: hooks/visible.ts asks, from a
-// drawing of a view, which of its sources are due. A source that fails or answers slowly is asked
-// half as often each time, up to five minutes apart, until it answers well again.
+// drawing of a view, which of its sources are due. A source that fails is asked half as often each
+// time, up to five minutes apart, until it answers again. One that answers, however slowly, is not
+// failing: Prometheus is across the LAN and several hosts are on wifi, so a slow answer only stretches
+// the next wait, by half, and never more than doubles it.
 
 export type SourceId =
   | 'selection'
@@ -13,6 +17,7 @@ export type SourceId =
   | 'board'
   | 'focus'
   | 'escalations'
+  | 'escalationDetail'
   | 'announcements'
   | 'team'
   | 'work'
@@ -26,10 +31,12 @@ export type SourceId =
   | 'capacity'
 
 const MINUTE = 60 * 1000
-/** The longest a failing or slow source is left alone, unless its own interval is longer. */
+/** The longest a failing source is left alone, unless its own interval is longer. */
 export const BACKOFF_CAP_MS = 5 * MINUTE
 /** A timer that fires this much early still counts. */
 const EARLY_MS = 500
+/** A slow answer stretches the next wait by this much, and slow answers in a row by no more. */
+export const SLOW_STRETCH = 1.5
 
 let refreshMs = 15 * 1000
 
@@ -54,8 +61,10 @@ export const intervalOf = (id: SourceId): number => {
     // The relay's event stream: cheap to ask, and a review has to show within a minute of its report.
     case 'events':
       return 30 * 1000
-    // The stored retro snapshots change when a retro runs: every few minutes is often enough.
+    // The stored retro snapshots change when a retro runs, and the team series move in 5 minute steps (STEP_SECS of
+    // hooks/team.tsx): every 5 minutes is as often as either can change.
     case 'retro':
+    case 'team':
       return 5 * MINUTE
     // 'tickets' among them: a look at the shared gate, which runs ix-board itself far less often.
     default:
@@ -63,12 +72,17 @@ export const intervalOf = (id: SourceId): number => {
   }
 }
 
-/** A read that takes longer than this counts against the source; null where a long read is normal. */
+/**
+ * A read that takes longer than this was slow; null where a long read is normal. A source asked across the network
+ * is slow only against its own usual time: four times the median of its last reads, and at least `floor`.
+ */
 const slowAfter = (id: SourceId): number | null => {
   switch (id) {
     case 'prometheus':
     case 'team':
-      return 2_500
+    case 'capacity':
+    case 'workLanes':
+      return Math.max(2_500, 4 * (readMedian(id) ?? 0))
     case 'herdr':
     case 'escalations':
     case 'announcements':
@@ -80,14 +94,14 @@ const slowAfter = (id: SourceId): number | null => {
   }
 }
 
-type State = { startedAt: number | null; failures: number; running: number }
+type State = { startedAt: number | null; failures: number; isSlow: boolean; running: number }
 
 const states = new Map<SourceId, State>()
 
 const stateOf = (id: SourceId): State => {
   let s = states.get(id)
   if (s === undefined) {
-    s = { startedAt: null, failures: 0, running: 0 }
+    s = { startedAt: null, failures: 0, isSlow: false, running: 0 }
     states.set(id, s)
   }
   return s
@@ -96,8 +110,9 @@ const stateOf = (id: SourceId): State => {
 /** How long after the last read started the next one is due. */
 export const waitOf = (id: SourceId): number => {
   const base = intervalOf(id)
-  const { failures } = stateOf(id)
-  return failures === 0 ? base : Math.min(base * 2 ** failures, Math.max(base, BACKOFF_CAP_MS))
+  const { failures, isSlow } = stateOf(id)
+  if (failures > 0) return Math.min(base * 2 ** failures, Math.max(base, BACKOFF_CAP_MS))
+  return isSlow ? base * SLOW_STRETCH : base
 }
 
 /** True when a source has no read under way and its data is older than its wait. */
@@ -106,7 +121,7 @@ export const isDue = (id: SourceId, now: number): boolean => {
   return s.running === 0 && (s.startedAt === null || now - s.startedAt >= waitOf(id) - EARLY_MS)
 }
 
-/** Runs one read and records when it started and whether the source answered well (`run` returns false when it did not). */
+/** Runs one read and records when it started and whether the source answered (`run` returns false when it did not). */
 export async function track($: EngineInterface, id: SourceId, run: () => Promise<boolean>): Promise<boolean> {
   const s = stateOf(id)
   // Counted before the first wait, so a second drawing in the same moment does not start another.
@@ -120,9 +135,13 @@ export async function track($: EngineInterface, id: SourceId, run: () => Promise
     return ok
   } finally {
     s.running--
+    const took = startedAt === null ? 0 : (await $.clock.now()) - startedAt
+    // Judged against the reads before this one, so that one slow read does not raise its own bar.
     const slow = slowAfter(id)
-    const wasSlow = slow !== null && startedAt !== null && (await $.clock.now()) - startedAt > slow
-    s.failures = ok && !wasSlow ? 0 : s.failures + 1
+    const wasSlow = ok && slow !== null && startedAt !== null && took > slow
+    meter.read(id, took, ok, wasSlow)
+    s.failures = ok ? 0 : s.failures + 1
+    s.isSlow = wasSlow
   }
 }
 
@@ -132,6 +151,7 @@ export const markStale = (...ids: SourceId[]): void => {
     const s = stateOf(id)
     s.startedAt = null
     s.failures = 0
+    s.isSlow = false
   }
 }
 
