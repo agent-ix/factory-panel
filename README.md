@@ -63,7 +63,7 @@ A focus is `all`, or one Linear initiative or project that the leads of your tea
 
 ### Team tab
 
-Each team shows its figures with sparklines, a line each for: `closed` and `merged` (today, with the last seven days); `in progress`, `blocked` and `oldest` (the oldest age in a stage); `ready` issues; `first review` and `PR cycle` medians. `more` holds leaf work remaining, ready unmerged PRs, findings by severity and changes requested. A figure that is not known is left out, and one `○` beside the team’s name says what is missing and why when pressed.
+Each team shows its figures with sparklines in fixed columns, two to a line where the pane has room, grouped as: `closed` and `merged` (today, with the last seven days); `in progress`, `blocked` and `oldest` (the oldest age in a stage); `ready` issues; `first review` and `PR cycle` medians. `more` holds leaf work remaining, ready unmerged PRs, findings by severity and changes requested. A figure that is not known is left out, and one `○` beside the team’s name says what is missing and why when pressed.
 
 `Health` is one line a team, `◔ Health  retro 1d ▸` or `○ Health  no retro ▸`; pressed, it says what the retro checks, what regresses, when it last ran and the command that runs it.
 

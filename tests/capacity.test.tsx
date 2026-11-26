@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
+import { paint } from './paint'
 
 import { out, startSession, world } from './world'
 import type { Run, World } from './world'
@@ -123,6 +124,20 @@ test('each host is a row of working, stuck and idle lanes, CPU and finished work
   expect(await d.cells('draco')).toEqual(['2', '0', '1', '◔ 42%', '3 (best 6)', 'needs work 3'])
   expect(await d.cells('luna')).toEqual(['0', '0', '1', '◕ 99%', '—'])
   expect((await d.section()).join('\n')).not.toMatch(/Busy|Ready deficit|unavailable|of level/)
+  await d.ui.unmount()
+})
+
+test('every cell of the Hosts table starts in the column of its heading', async ($, on) => {
+  trace("FR-032-AC-1")
+  const w = await setup($, on)
+  const d = await draw($, w)
+  const lines = paint((await d.ui.findAll({ type: 'Box' }))[0])
+  const head = lines.find(l => l.includes('working') && l.includes('stuck'))!
+  const columns = ['working', 'stuck', 'idle', 'CPU', 'done/h'].map(name => head.indexOf(name))
+  for (const [host, cells] of [['draco', ['2', '0', '1', '◔ 42%', '3 (best 6)']], ['luna', ['0', '0', '1', '◕ 99%', '—']]] as const) {
+    const row = lines.find(l => l.includes(` ${host} `))!
+    expect(cells.map((c, i) => row.slice(columns[i]!, columns[i]! + c.length))).toEqual([...cells])
+  }
   await d.ui.unmount()
 })
 

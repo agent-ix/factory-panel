@@ -80,6 +80,16 @@ const COVERAGE = 'ix_team_metric_coverage'
 /** Published for every scope of the exporter, so it names a team's scopes even where one counts nothing. */
 const SCOPES = 'ix_team_source_available'
 
+// Every figure stands in one grid: its name, its value right-aligned and its sparkline, each in a column of one width.
+const NAME_CELLS = Math.max(...[...DAILY, ...SPECS].map(s => s.label.length))
+const VALUE_CELLS = 7
+export const FIGURE_CELLS = NAME_CELLS + 1 + VALUE_CELLS + 1 + SPARK_CELLS
+/** Between the two figures of a line. */
+const FIGURE_GAP = 2
+
+/** How many figures stand on a line in a pane of `width` columns, the padding of a team's card taken off. */
+const figuresAcross = (width: number): 1 | 2 => (width - 2 >= 2 * FIGURE_CELLS + FIGURE_GAP ? 2 : 1)
+
 /** Reads the team series from Prometheus; false when it failed. */
 export function pollTeam($: EngineInterface, options: Options): Promise<boolean> {
   return track($, 'team', () => readTeam($, options))
@@ -404,15 +414,23 @@ export function registerTeam(on: On, options: Options): void {
       </Box>
     )
 
+    const across = figuresAcross(e.props.bodyColumns ?? 100)
     const figure = (key: string, label: string, value: string | null, trail: string) => (
-      <Box key={key} flexDirection="row" gap={1}>
-        <Text dimColor>{label}</Text>
-        {value !== null && <Text weight="semibold" tabular>{value}</Text>}
-        {trail !== '' && <Text color={ACCENT}>{trail}</Text>}
+      <Box key={key} flexDirection="row" gap={1} width={FIGURE_CELLS} flexShrink={0}>
+        <Box flexDirection="row" width={NAME_CELLS} flexShrink={0}>
+          <Text dimColor wrap="truncate-end">{label}</Text>
+        </Box>
+        <Box flexDirection="row" width={VALUE_CELLS} justifyContent="flex-end" flexShrink={0}>
+          {value !== null && <Text weight="semibold" tabular>{value}</Text>}
+        </Box>
+        <Box flexDirection="row" width={SPARK_CELLS} flexShrink={0}>
+          {trail !== '' && <Text color={ACCENT}>{trail}</Text>}
+        </Box>
       </Box>
     )
     const metricOf = (t: TeamView, key: string): TeamMetric => t.metrics.find(m => m.key === key)!
-    const metricFigure = (t: TeamView, m: TeamMetric) => figure(`${t.team}-${m.key}`, m.label, format(m), m.history.length > 1 ? spark(thin(m.history)) : '')
+    // A history of fewer points than the column is wide has `·` where there is no sample, before them.
+    const metricFigure = (t: TeamView, m: TeamMetric) => figure(`${t.team}-${m.key}`, m.label, format(m), m.history.length > 1 ? spark(thin(m.history)).padStart(SPARK_CELLS, '·') : '')
     const absent = (m: TeamMetric) => `${m.label}: ${m.reason}`
 
     /** The daily counts that have a day to draw. */
@@ -433,10 +451,15 @@ export function registerTeam(on: On, options: Options): void {
       ...[...LINES.flat(), ...MORE].map(k => metricOf(t, k)).filter(m => m.value === null).map(absent),
     ]
 
-    const line = (key: string, figures: readonly unknown[]) =>
+    /** The figures of one group, at most `across` to a line, so that each starts in the column of the one above it. */
+    const grid = (key: string, figures: readonly unknown[]) =>
       figures.length === 0 ? null : (
-        <Box key={key} flexDirection="row" gap={2} flexWrap="wrap">
-          {figures as never}
+        <Box key={key} flexDirection="column">
+          {Array.from({ length: Math.ceil(figures.length / across) }, (_, i) => (
+            <Box key={`${key}-${i}`} flexDirection="row" gap={FIGURE_GAP}>
+              {figures.slice(i * across, (i + 1) * across) as never}
+            </Box>
+          ))}
         </Box>
       )
 
@@ -448,7 +471,7 @@ export function registerTeam(on: On, options: Options): void {
       return (
         <Box key={`${t.team}-more`} flexDirection="column">
           <Button key={key} plain label={`${opened.includes(key) ? '▾' : '▸'} more`} onPress={press(key)} />
-          {opened.includes(key) && held.map(m => <Box key={`${key}-${m.key}`} paddingLeft={2}>{metricFigure(t, m)}</Box>)}
+          {opened.includes(key) && grid(`${key}-figures`, held.map(m => metricFigure(t, m)))}
           {lines(key, covered)}
         </Box>
       )
@@ -456,8 +479,8 @@ export function registerTeam(on: On, options: Options): void {
 
     const rows = (t: TeamView) => (
       <Box key={`${t.team}-rows`} flexDirection="column">
-        {line(`${t.team}-daily`, dailyFigures(t))}
-        {LINES.map(keys => line(`${t.team}-${keys[0]}`, keys.map(k => metricOf(t, k)).filter(m => m.value !== null).map(m => metricFigure(t, m))))}
+        {grid(`${t.team}-daily`, dailyFigures(t))}
+        {LINES.map(keys => grid(`${t.team}-${keys[0]}`, keys.map(k => metricOf(t, k)).filter(m => m.value !== null).map(m => metricFigure(t, m))))}
         {more(t)}
       </Box>
     )
@@ -468,7 +491,8 @@ export function registerTeam(on: On, options: Options): void {
       return (
         <Box key={t.team} flexDirection="column">
           {heading(`why-${t.team}`, t.team, missingOf(t), <Button key={key} plain label={opened.includes(key) ? '▾' : '▸'} onPress={press(key)} />, 'no team key')}
-          {opened.includes(key) && rows(t)}
+          {/* Indented as far as a team's card is, so that these figures stand in the same columns. */}
+          {opened.includes(key) && <Box flexDirection="column" paddingLeft={1}>{rows(t)}</Box>}
         </Box>
       )
     }

@@ -2,7 +2,8 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { trace } from './trace'
 
-import { classesOf } from '../hooks/team'
+import { FIGURE_CELLS, classesOf } from '../hooks/team'
+import { paint } from './paint'
 import { FP, drawBand, out, startSession, world } from './world'
 import type { World } from './world'
 
@@ -178,7 +179,7 @@ test('each figure draws its history: the last six hours, and for what shipped th
   const w = await setup($, on, { published: [...SERIES, ...daily('merged_prs_day', { 2: 12, 1: 2, 0: 124 }), series('merged_prs_day', [40], { day: 4, ago: 600 })] })
   const d = await draw($, w)
   expect(after(d.lines, 'PR cycle')).toBe('1.5h')
-  expect(d.lines[d.lines.indexOf('PR cycle') + 2]).toMatch(/^[▁▂▃▄▅▆▇█]+$/)
+  expect(d.lines[d.lines.indexOf('PR cycle') + 2]).toMatch(/^·{10}[▁▂▃▄▅▆▇█]{2}$/)
   // Seven days, oldest first and today last; `·` for a day with no current sample.
   expect(d.lines[d.lines.indexOf('closed') + 2]).toBe('▂▁·▆·▃█')
   expect(after(d.lines, 'merged')).toBe('124')
@@ -676,5 +677,41 @@ for (const [name, published, text] of [
     await w.clock!.advance(1000)
     expect(await textsOf(ui)).toContain(text)
     await ui.unmount()
+  })
+}
+
+/** The cell each figure's sparkline starts at, by line of the drawn pane. */
+async function sparkColumns($: $t, on: Parameters<TestBody>[1], bodyColumns: number) {
+  const zero = Array<number>(72).fill(0)
+  const w = await setup($, on, { arrange: declaring({ focus: 'team', teams: ['QSL'] }), published: [
+    ...['wip_active', 'blocked_issues', 'stage_oldest_age_seconds', 'ready_issues', 'new_pr_first_review_median_seconds_24h', 'pr_cycle_median_seconds_24h', 'scope_leaf_remaining', 'prs_ready_unmerged', 'review_findings_confirmed_high_24h', 'review_findings_confirmed_medium_24h', 'review_findings_confirmed_low_24h', 'pr_changes_requested_share'].map((n, i) => series(n, i % 2 === 0 ? zero : [0.2, 0.4, 0.9], { id: 'full', key: 'QSL' })),
+    ...daily('closures_day', { 1: 0, 0: 0 }, { id: 'full', key: 'QSL' }),
+    ...daily('merged_prs_day', { 1: 3, 0: 124 }, { id: 'full', key: 'QSL' }),
+    // An id with no key, whose opened rows stand in the same columns.
+    series('wip_active', [1, 2], { id: 'loose' }),
+    series('blocked_issues', zero, { id: 'loose' }),
+  ] })
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns }, surface: 'terminal' } as never)
+  await w.clock!.advance(1000)
+  await openKeyless(ui)
+  for (const b of await buttonsOf(ui)) if (b.key.startsWith('more-')) await ui.press({ key: b.key })
+  const drawn = paint((await ui.findAll({ type: 'Box' }))[0])
+  await ui.unmount()
+  // Where each sparkline of a line begins: the first mark after a cell that is none.
+  const starts = drawn.map(l => [...l.matchAll(/(?<![·▁▂▃▄▅▆▇█])[·▁▂▃▄▅▆▇█]{7,12}/g)].map(m => m.index!)).filter(s => s.length > 0)
+  return { drawn, starts }
+}
+
+for (const [columns, across] of [[60, 1], [90, 2]] as const) {
+  test(`at ${columns} columns every figure, more and the keyless rows too, starts in the same ${across === 1 ? 'column' : 'two columns'}`, async ($, on) => {
+    trace("FR-029-AC-38")
+    const { drawn, starts } = await sparkColumns($, on, columns)
+    const all = new Set(starts.flat())
+    expect(all.size).toBe(across)
+    expect(starts.every(s => s[0] === Math.min(...all))).toBe(true)
+    if (across === 2) expect([...all].sort((a, b) => a - b)[1]! - Math.min(...all)).toBe(FIGURE_CELLS + 2)
+    // Daily rows, the six-hour figures, those behind more and the keyless team's are all among them.
+    for (const label of ['closed', 'merged', 'in progress', 'ready', 'PR cycle', 'findings low', 'changes requested']) expect(drawn.some(l => l.includes(label))).toBe(true)
+    expect(Math.max(...drawn.map(l => l.trimEnd().length))).toBeLessThanOrEqual(Math.max(columns, 80))
   })
 }

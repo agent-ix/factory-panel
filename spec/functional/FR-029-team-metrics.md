@@ -23,10 +23,13 @@ The Team view SHALL show, for each selected team ([Selected teams](#selected-tea
 ### Figures
 
 - Each team drawn SHALL show its figures on lines, each figure under its own name and no line or group under a label of its own.
-- The first line SHALL hold tickets closed (`closed`, `ix_team_closures_day`) and PRs merged (`merged`, `ix_team_merged_prs_day`), each today's count and a sparkline of the last 7 UTC days.
-- The second SHALL hold `in progress` (`ix_team_wip_active`), `blocked` (`ix_team_blocked_issues`) and `oldest`, the oldest age in a stage (`ix_team_stage_oldest_age_seconds`).
-- The third SHALL hold `ready` (`ix_team_ready_issues`).
-- The fourth SHALL hold `first review` (`ix_team_new_pr_first_review_median_seconds_24h`) and `PR cycle` (`ix_team_pr_cycle_median_seconds_24h`).
+- Every figure, those behind `more` and of an opened row with no team key among them, SHALL stand in one grid: its name in a column of one width, its value right-aligned in a column of one width, and its sparkline in a column of one width, so that sparklines start in the same column.
+- Two figures SHALL stand on a line where the pane is wide enough for two, the second of every line starting in the same column, and one where it is not. A group of more figures than fit a line SHALL take further lines.
+- A sparkline of the last 6 hours with fewer points than its column is wide SHALL have `·` before them for each cell with no sample.
+- The first group SHALL hold tickets closed (`closed`, `ix_team_closures_day`) and PRs merged (`merged`, `ix_team_merged_prs_day`), each today's count and a sparkline of the last 7 UTC days.
+- The second group SHALL hold `in progress` (`ix_team_wip_active`), `blocked` (`ix_team_blocked_issues`) and `oldest`, the oldest age in a stage (`ix_team_stage_oldest_age_seconds`).
+- The third group SHALL hold `ready` (`ix_team_ready_issues`).
+- The fourth group SHALL hold `first review` (`ix_team_new_pr_first_review_median_seconds_24h`) and `PR cycle` (`ix_team_pr_cycle_median_seconds_24h`).
 - A button `more` SHALL open and close the leaf work remaining, ready unmerged PRs, confirmed findings of high, medium and low severity, and the share of PRs with changes requested.
 - Each figure below the first line SHALL have a sparkline of its samples of the last 6 hours.
 - The view SHALL NOT show verified closures, effort per closure, merges per hour, the share of PRs with findings or executing agents, and SHALL NOT ask Prometheus for them.
@@ -142,6 +145,7 @@ The Team view SHALL show, for each selected team ([Selected teams](#selected-tea
 | FR-029-AC-35 | With a stage coverage of 0 and no age above zero no oldest age is drawn; below 1 with an age it reads `≥`; with every stage covered it reads exactly. | Test |
 | FR-029-AC-36 | A teams choice or declaration selects the Team view's teams under the focus `all` and a name; with none chosen each of those selects the session's own team. | Test |
 | FR-029-AC-37 | The team’s `○` lists each missing figure, `more`’s included, with why: no series published, no current sample, or an age not measured. | Test |
+| FR-029-AC-38 | At 60 columns every figure, `more`'s and the opened keyless rows' too, has its sparkline in one column, and at 90 columns in one of two columns a grid cell apart. | Test |
 | FR-029-AC-25 | Against the factory’s Prometheus the Team view shows the values and days Prometheus answers. | Demonstration |
 
 ## Dependencies
