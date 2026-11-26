@@ -915,7 +915,8 @@ test('with the shipped defaults a fullscreen session opens no pane and draws no 
   await drawBand($, FULLSCREEN)
   await $.session.attach({ surface: 'terminal', clientId: 'terminal:default', viewport: FULLSCREEN })
   expect(opens).toEqual([])
-
+  // No pane source is read: no ix-board call and no agent-msg read of work, escalations or who.
+  expect(ran.filter(a => a[0] === 'ix-board' || (a[0] === 'agent-msg' && ['who', 'work', 'escalations', 'escalation'].includes(a[1] ?? '')))).toEqual([])
   const ui = await $.ui.mount({ ...pane('focus', 'Focus'), surface: 'terminal' })
   await ui.unmount()
 })
@@ -924,4 +925,5 @@ test('the options default to quiet: panes closed at start and no band', async ()
   expect(readOptions({})).toMatchObject({ openOnStart: false, inlineView: 'off' })
   expect(readOptions({ openOnStart: true, inlineView: 'band' })).toMatchObject({ openOnStart: true, inlineView: 'band' })
   expect(readOptions({ openOnStart: 'false' }).openOnStart).toBe(false)
+  expect(readOptions({ inlineView: 'bogus' }).inlineView).toBe('off')
 })
