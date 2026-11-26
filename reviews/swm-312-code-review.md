@@ -45,3 +45,4 @@ Ticket: SWM-312 (also SWM-313). Reviewed PR #18 at head a09a711b354da8a9f474c344
 | FND-006 | fixed | the host stuck count takes every stuck lead of the host (head 945ad1d) |
 | FND-007 | fixed | each sparkline cell is its own half hour and an empty one is a dot (head 945ad1d) |
 | FND-008 | still-open | found in this pass |
+| FND-008 | fixed | closing the lead or its host clears the warning; a lead that leaves the view without a press, as on a teams change, can still keep it until a lead is opened, accepted as an edge (head 0e1a314) |
